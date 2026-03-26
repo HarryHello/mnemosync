@@ -2,3 +2,10 @@
 .vscode
 .vs
 .venv
+__pycache__/
+*.pyc
+data/
+*.db
+.env
+*.log
+.DS_Store
