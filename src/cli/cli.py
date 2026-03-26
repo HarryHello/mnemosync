@@ -45,23 +45,33 @@ def run_docker_command(args: list[str], capture: bool = False) -> subprocess.Com
 
 def cmd_init(args: argparse.Namespace) -> int:
     """初始化."""
-    print("Mnemosync initializing...\n")
-    
+    print("Mnemosync initializing...")
+
     if not is_docker_installed():
         print("❌ Docker not found. Please install Docker first.\n")
         return 1
-    
+
     # 构建
     print("Building Docker image...")
-    result = run_docker_command(["build", "--quiet"])
+    result = run_docker_command(["build"])
     if result.returncode != 0:
         print("❌ Build failed.\n")
         return 1
-    
+
+    # 启动容器并执行内部初始化
+    print("Initializing database...")
+    result = subprocess.run([
+        "docker", "compose", "run", "--rm", "--entrypoint", "",
+        "mnemosync", "uv", "run", "python", "-m", "src.main", "init-internal"
+    ])
+    if result.returncode != 0:
+        print("❌ Initialization failed.\n")
+        return 1
+
     print("Success!\n")
     print("Use `mnemosync login` to start the cli environment,")
     print("or use `mnemosync help` to get more information.\n")
-    
+
     return 0
 
 
@@ -70,7 +80,7 @@ def cmd_login(args: argparse.Namespace) -> int:
     if not is_docker_installed():
         print("❌ Docker not found.\n")
         return 1
-    
+
     # 确保服务已启动
     if not is_container_running():
         print("Starting Mnemosync service...")
@@ -78,14 +88,13 @@ def cmd_login(args: argparse.Namespace) -> int:
         if result.returncode != 0:
             print("❌ Failed to start service.\n")
             return 1
-    
+
     # 进入交互式 CLI
-    print("Starting Mnemosync CLI...\n")
     subprocess.run([
-        "docker", "compose", "exec", "-T", "mnemosync",
-        "uv", "run", "mnemosync", "cli-internal"
+        "docker", "compose", "exec", "mnemosync",
+        "uv", "run", "python", "-m", "src.main", "cli-internal"
     ])
-    
+
     return 0
 
 
