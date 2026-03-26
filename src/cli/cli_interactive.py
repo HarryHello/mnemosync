@@ -4,9 +4,35 @@ import asyncio
 import getpass
 import sys
 import os
+import signal
 from typing import Optional
 
 from src.storage import SqliteAuthService, SqliteApiKeyStore, ApiKey, InvalidCredentialsError, PasswordTooWeakError
+
+
+# 全局退出标志
+_exit_requested = False
+
+
+def setup_exit_handler():
+    """设置全局退出处理器."""
+    global _exit_requested
+    
+    def signal_handler(sig, frame):
+        _exit_requested = True
+        # 抛出异常以中断当前输入
+        raise KeyboardInterrupt("Ctrl+C pressed")
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+
+def check_exit_requested():
+    """检查是否请求退出."""
+    if _exit_requested:
+        print("\n\n👋 Exiting CLI (Mnemosync service keeps running in background).\n")
+        return True
+    return False
 
 
 class MnemosyncCLI:
@@ -22,7 +48,7 @@ class MnemosyncCLI:
 │  \\_│  │_╱╲_│ ╲_╱╲____╱╲_│  │_╱╲___╱╲____╱  \\_/ ╲_│ ╲_╱╲____╱  │
 │                                                               │
 │                         Mnemosync                             │
-│                         v0.1.0                                │
+│                         v0.0.0                                │
 │                                                               │
 ╰───────────────────────────────────────────────────────────────╯
 """
@@ -78,9 +104,23 @@ Models Commands:
 
         max_attempts = 5
         for attempt in range(max_attempts):
+            # 检查是否请求退出
+            if check_exit_requested():
+                return False
+            
             try:
                 username = input("Account: ").strip()
+                
+                # 检查是否请求退出
+                if check_exit_requested():
+                    return False
+                    
                 password = getpass.getpass("Password: ")
+                
+                # 检查是否请求退出
+                if check_exit_requested():
+                    return False
+                    
             except KeyboardInterrupt:
                 print("\n\n👋 Ctrl+C detected. Exiting CLI (Mnemosync service keeps running in background).\n")
                 return False
@@ -106,9 +146,6 @@ Models Commands:
                 else:
                     print("❌ Too many failed attempts. Exiting.\n")
                     return False
-            except KeyboardInterrupt:
-                print("\n\n👋 Ctrl+C detected. Exiting CLI (Mnemosync service keeps running in background).\n")
-                return False
 
         return False
 
@@ -117,13 +154,36 @@ Models Commands:
         print("Please change your account and password.")
 
         while True:
+            # 检查是否请求退出
+            if check_exit_requested():
+                self.running = False
+                return
+                
             try:
                 new_username = input("New account: ").strip()
+                
+                # 检查是否请求退出
+                if check_exit_requested():
+                    self.running = False
+                    return
+                    
                 if not new_username:
                     new_username = self.current_user.username
 
                 new_password = getpass.getpass("New Password: ")
+                
+                # 检查是否请求退出
+                if check_exit_requested():
+                    self.running = False
+                    return
+                    
                 confirm = getpass.getpass("Confirm Password: ")
+                
+                # 检查是否请求退出
+                if check_exit_requested():
+                    self.running = False
+                    return
+                    
             except KeyboardInterrupt:
                 print("\n\n👋 Ctrl+C detected. Exiting CLI (Mnemosync service keeps running in background).\n")
                 self.running = False
@@ -184,9 +244,19 @@ Models Commands:
 
     async def cmd_generate_key(self):
         """生成新的 API Key."""
-        print("It is recommanded to map one key to one platform.")
+        print("It is recommended to map one key to one platform.")
+        
+        # 检查是否请求退出
+        if check_exit_requested():
+            return
+            
         try:
             annotation = input("Please enter the annotation for the new key:\n> ").strip()
+            
+            # 检查是否请求退出
+            if check_exit_requested():
+                return
+                
         except KeyboardInterrupt:
             print("\n\n👋 Cancelled.\n")
             return
@@ -210,7 +280,7 @@ Models Commands:
     async def cmd_stop(self):
         """停止服务（预留）."""
         print("\n🛑 Stopping Mnemosync server...\n")
-        # 这里需要调用 Docker 停止命令
+        # TODO: Stop Docker Service
         self.running = False
 
     async def cmd_help(self):
@@ -234,8 +304,18 @@ Models Commands:
         """添加服务."""
         # TODO: Implement LLM service provider storage
         print("Add new llm service provider:")
+        
+        # 检查是否请求退出
+        if check_exit_requested():
+            return
+            
         try:
             service_id = input("Custom service id: ").strip()
+            
+            # 检查是否请求退出
+            if check_exit_requested():
+                return
+                
         except KeyboardInterrupt:
             print("\n\n👋 Cancelled.\n")
             return
@@ -245,13 +325,22 @@ Models Commands:
             print("This id has been already used!\n")
             return
 
+        # 检查是否请求退出
+        if check_exit_requested():
+            return
+            
         try:
             base_url = input("base URL: ").strip()
             api_key = getpass.getpass("API key: ")
+            
+            # 检查是否请求退出
+            if check_exit_requested():
+                return
+                
         except KeyboardInterrupt:
             print("\n\n👋 Cancelled.\n")
             return
-        
+
         print(f"\nLLM service provider '{service_id}' has been added!\n")
 
     async def cmd_rm_service(self, service_id: str):
@@ -353,15 +442,9 @@ Models Commands:
 
     async def run(self):
         """运行 CLI."""
-        import signal
-        
-        # 设置信号处理器
-        def signal_handler(sig, frame):
-            print("\n\n👋 Ctrl+C detected. Exiting CLI (Mnemosync service keeps running in background).\n")
-            self.running = False
+        # 设置全局退出处理器
+        setup_exit_handler()
 
-        signal.signal(signal.SIGINT, signal_handler)
-        
         # 登录
         if not await self.login():
             # 如果是修改密码后需要重新登录
@@ -372,6 +455,11 @@ Models Commands:
 
         # 交互循环
         while self.running:
+            # 检查是否请求退出
+            if check_exit_requested():
+                print("\n\n👋 Exiting CLI (Mnemosync service keeps running in background).\n")
+                break
+                
             try:
                 line = input("Mnemosync > ").strip()
                 if line:
@@ -380,8 +468,8 @@ Models Commands:
                 print("\n\n👋 Goodbye!\n")
                 break
             except KeyboardInterrupt:
-                print("\n\n👋 Exiting CLI (Mnemosync service keeps running in background).\n")
-                break
+                # 不再在这里处理，由全局处理器处理
+                pass
 
 
 async def main():
