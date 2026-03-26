@@ -218,13 +218,57 @@ class SqliteAuthService(AuthService):
 
                 await db.execute(
                     """
-                    UPDATE users 
+                    UPDATE users
                     SET password_hash = ?, must_change_password = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
                         user.password_hash,
                         1 if user.must_change_password else 0,
+                        user.updated_at.isoformat(),
+                        user.id,
+                    )
+                )
+                await db.commit()
+
+                return user
+
+    async def change_username_and_password(self, user_id: str, new_username: str, new_password: str) -> User:
+        """修改用户名和密码（用于首次登录强制修改）."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT * FROM users WHERE id = ?",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+
+                if not row:
+                    raise UserNotFoundError("用户不存在")
+
+                user = self._row_to_user(row)
+
+                # 验证新密码强度
+                is_valid, error = validate_password_strength(new_password)
+                if not is_valid:
+                    raise PasswordTooWeakError(error)
+
+                # 更新用户名和密码
+                new_password_hash = hash_password(new_password)
+                user.username = new_username
+                user.password_hash = new_password_hash
+                user.must_change_password = False
+                user.updated_at = datetime.now(timezone.utc)
+
+                await db.execute(
+                    """
+                    UPDATE users
+                    SET username = ?, password_hash = ?, must_change_password = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        user.username,
+                        user.password_hash,
+                        0,  # must_change_password = False
                         user.updated_at.isoformat(),
                         user.id,
                     )

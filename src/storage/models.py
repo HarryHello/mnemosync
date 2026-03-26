@@ -16,6 +16,7 @@ class ApiKey:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_used_at: datetime | None = None
     is_active: bool = True
+    key_full: str | None = None  # 存储完整 key (仅生成时保存一次，用于显示)
 
     @staticmethod
     def generate(note: str) -> "ApiKey":
@@ -29,6 +30,7 @@ class ApiKey:
             key_hash=key_hash,
             key_prefix=key_prefix,
             note=note,
+            key_full=raw_key,  # 仅在此时保存完整 key
         )
 
     def mark_used(self) -> None:

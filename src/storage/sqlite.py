@@ -23,7 +23,8 @@ class SqliteApiKeyStore(ApiKeyStore):
                     note TEXT NOT NULL,
                     created_at TIMESTAMP NOT NULL,
                     last_used_at TIMESTAMP,
-                    is_active INTEGER NOT NULL DEFAULT 1
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    key_full TEXT
                 )
             """)
             await db.execute("""
@@ -39,9 +40,9 @@ class SqliteApiKeyStore(ApiKeyStore):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
-                INSERT OR REPLACE INTO api_keys 
-                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO api_keys
+                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     api_key.id,
@@ -51,6 +52,7 @@ class SqliteApiKeyStore(ApiKeyStore):
                     api_key.created_at.isoformat(),
                     api_key.last_used_at.isoformat() if api_key.last_used_at else None,
                     1 if api_key.is_active else 0,
+                    api_key.key_full,
                 ),
             )
             await db.commit()
@@ -122,4 +124,5 @@ class SqliteApiKeyStore(ApiKeyStore):
             else datetime.now(timezone.utc),
             last_used_at=datetime.fromisoformat(row[5]) if row[5] else None,
             is_active=bool(row[6]),
+            key_full=row[7] if len(row) > 7 else None,
         )
