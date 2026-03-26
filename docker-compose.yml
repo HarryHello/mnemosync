@@ -1,0 +1,11 @@
+services:
+  mnemosync:
+    build: .
+    ports:
+      - "16125:16125"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=16125
+      - HOST=0.0.0.0
+    restart: unless-stopped
