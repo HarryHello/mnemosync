@@ -4,5 +4,6 @@
       "Bash(.venv/bin/python *)",
       "Bash(uv *)"
     ]
-  }
+  },
+  "$version": 3
 }
