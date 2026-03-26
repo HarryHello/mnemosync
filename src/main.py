@@ -12,8 +12,8 @@ def serve() -> None:
 
     app = FastAPI(
         title="Mnemosync API",
-        description="智能代理中间件 - LLM 上下文编排与社交记忆管理",
-        version="0.1.0",
+        description="智能代理中间件 - LLM 上下文编排与人格记忆管理",
+        version="0.0.0",
     )
     app.include_router(api_router)
 
@@ -32,14 +32,14 @@ def main() -> int:
             return 0
         elif cmd == "cli-internal":
             # 容器内运行交互式 CLI
-            from .cli_interactive import main as cli_main
+            from src.cli.cli_interactive import main as cli_main
             import asyncio
             asyncio.run(cli_main())
             return 0
         elif cmd == "init-internal":
             # 容器内初始化
-            from .storage import SqliteAuthService, SqliteApiKeyStore, ApiKey
-            
+            from .storage import SqliteAuthService, SqliteApiKeyStore
+
             async def _init():
                 os.makedirs("data", exist_ok=True)
                 
