@@ -1,3 +1,5 @@
+# 使用官方 Python 镜像
+# 如果网络问题，请先配置 Docker 镜像加速器
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -27,6 +29,6 @@ ENV HOST=0.0.0.0
 # 暴露端口
 EXPOSE 16125
 
-# 默认命令
-ENTRYPOINT ["uv", "run", "mnemosync"]
-CMD ["serve"]
+# 默认命令 - 使用 src.main 作为入口以支持 serve 命令
+ENTRYPOINT ["uv", "run", "python", "-m", "src.main"]
+CMD []
