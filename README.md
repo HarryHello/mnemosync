@@ -9,6 +9,20 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-green.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-red.svg)](https://fastapi.tiangolo.com/)
 
+```text
+╭───────────────────────────────────────────────────────────────╮
+│                                                               │
+│  │  ╲╱  ││ \ │ ││  ___│  ╲╱  │  _  ╱  ___\ ╲ ╱ / ╲ │ /  __ ╲  │
+│  │ .  . ││  \│ ││ │__ │ .  . │ │ │ ╲ `──. \ V /│  ╲│ │ /  ╲╱  │
+│  │ │╲╱│ ││ . ` ││  __││ │╲╱│ │ │ │ │`──. ╲ ╲ / │ . ` │ │      │
+│  │ │  │ ││ │\  ││ │___│ │  │ │ \_/ ╱╲__╱ ╱ │ │ │ │╲  │ \__╱╲  │
+│  \_│  │_╱╲_│ ╲_╱╲____╱╲_│  │_╱╲___╱╲____╱  \_/ ╲_│ ╲_╱╲____╱  │
+│                                                               │
+│                         Mnemosync                             │
+│                         v0.0.0                                │
+│                                                               │
+╰───────────────────────────────────────────────────────────────╯
+```
 **同一人格，任意前端 | One Persona, Any Frontend**
 
 </div>
@@ -78,10 +92,7 @@ graph LR
 
 ## 🚀 快速开始
 
-> ⚠️ **注意**：本项目目前处于早期开发阶段，架构设计已定型，代码实现中。
-
-### 1. 部署准备
-确保您拥有 Docker 环境。
+### 方式一：Docker 部署（推荐）
 
 ```bash
 # 克隆仓库
@@ -90,18 +101,73 @@ cd Mnemosync
 
 # 启动服务
 docker compose up -d
+
+# 查看日志
+docker compose logs -f
+
+# 初始化服务（首次运行）
+docker compose exec mnemosync uv run mnemosync init
 ```
 
-### 2. 配置人格
-访问 WebUI 配置页（默认 `http://localhost:8080`），创建人格配置：
-- 设置 System Prompt
-- 配置上游 API Key
-- 定义记忆策略（压缩阈值、保留条数）
+### 方式二：源码部署
 
-### 3. 接入前端
+```bash
+# 安装 uv（如果未安装）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 克隆并安装
+git clone https://github.com/Mnemosync/Mnemosync.git
+cd Mnemosync
+uv sync
+
+# 初始化服务
+uv run mnemosync init
+
+# 启动服务器
+uv run mnemosync serve
+```
+
+### 首次使用流程
+
+```bash
+# 1. 初始化服务
+$ mnemosync init
+
+🔧 正在初始化 Mnemosync...
+  ✓ API Key 数据库初始化完成
+  ✓ 用户认证数据库初始化完成
+  ✓ 默认用户已创建 (用户名/密码：mnemosync)
+  ✓ 默认 API Key 已生成：sk-xxxxx
+
+✅ 初始化完成!
+🌐 访问 WebUI: http://localhost:16125/webui
+📝 或使用 CLI 登录：mnemosync login
+
+# 2. CLI 登录（可选）
+$ mnemosync login
+
+📝 CLI 登录 (默认账号密码：mnemosync)
+账号：mnemosync
+密码：********
+✅ 登录成功!
+⚠️  首次登录，请修改密码
+新账号：[自定义账号]
+新密码：********
+确认密码：********
+✅ 密码修改成功!
+
+# 3. 生成 API Key
+$ mnemosync generate "我的密钥"
+✅ API Key 生成成功!
+Key: sk-xxxxx
+⚠️  请妥善保管 Key，它只会显示这一次!
+```
+
+### 接入前端
+
 在您的对话前端（如 AstrBot）修改模型提供商设置：
-- **API 地址**: `http://your-server:8000/v1`
-- **API Key**: `your-mnemosync-key`
+- **API 地址**: `http://your-server:16125/v1`
+- **API Key**: `sk-xxxxx` (从上一步获取)
 - **模型名**: `any` (由代理层统一接管)
 
 ---
