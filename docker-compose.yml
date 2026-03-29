@@ -5,6 +5,7 @@ services:
       - "16125:16125"
     volumes:
       - ./data:/app/data
+      - ./src:/app/src:ro
     environment:
       - PORT=16125
       - HOST=0.0.0.0
