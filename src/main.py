@@ -8,14 +8,20 @@ def serve() -> None:
     """运行 FastAPI 服务器."""
     import uvicorn
     from fastapi import FastAPI
-    from .api import api_router
+    from .api import api_router, forward_router
 
     app = FastAPI(
         title="Mnemosync API",
         description="智能代理中间件 - LLM 上下文编排与人格记忆管理",
         version="0.0.0",
     )
+    
+    # 内部 API 路由 (Mnemosync 自身管理用)
     app.include_router(api_router)
+    
+    # OpenAI 兼容的路由 (对外服务用)
+    # 直接挂载到根路径，不使用前缀，保持与 OpenAI API 完全兼容
+    app.include_router(forward_router)
 
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "16125"))
