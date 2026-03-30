@@ -1,53 +1,300 @@
-# 转发模块
+# 上游转发模块 (Forward Module)
 
-> **系统版本**: v0.0.0  
-> **文档状态**: 初稿  
-> **创建时间**: 2026-03-24  
-> **最后更新**: 2026-03-27  
-> **作者**: HarryHelloo  
-> **最后更新**: HarryHelloo
+> **模块版本**: v0.1.0
+> **创建时间**: 2026-03-29
+> **作者**: HarryHelloo
+
+---
 
 ## 概述
-转发模块是本系统中最简单又最基础的功能. 我们提供与 OpenAI API 完全相同的接口供前端应用使用, 并将前端的对话经过处理后再发送给模型服务提供平台.  
-具体的 API 信息应参考[官方文档](https://openai.apifox.cn/). 
 
-## 接口
-我们假设用户将 Mnemosync 部署到 ip 为 `114.51.4.191` 的服务器并使用默认端口 `16125`. 当然, 用户也可能使用自己的域名, 例如 `api.mnemosync.top`. 这种情况下将 `http://114.51.4.191:16125` 替换为 `https://api.mnemosync.top` 即可.  
+`forward` 模块负责将处理后的消息转发给上游模型提供商 (OpenAI/OneAPI/本地模型等).
 
-那么, 我们应该提供以下接口.
+**核心功能**:
+- 发送请求到上游模型
+- 支持流式 (SSE) 和非流式响应
+- 连接池管理，复用 HTTP 连接
+- 统一的错误处理
 
-### /v1
-`http://114.51.4.191:16125/v1`  
+---
 
-单独的 `/v1` 接口没有任何作用. 为了兼容性, 我们完全复制 OpenAI API 的接口格式.
+## 快速开始
 
-### 创建聊天补全 `POST`
-`http://114.51.4.191:16125/v1/chat/completions`
+### 基本用法
 
-https://openai.apifox.cn/api-67883981
+```python
+from src.modules.forward import Forwarder, ForwarderConfig
 
-这是必须实现的接口. 通过这个接口, 我们接受前端的聊天补全请求并返回模型回应结果. 中间的清洗等过程就对前端应用隐藏了.
+# 1. 配置转发器
+config = ForwarderConfig(
+    base_url="https://api.openai.com/v1",
+    api_key="sk-your-openai-key",
+    default_model="gpt-4",
+)
 
-### 列出模型 `GET`
-`http://114.51.4.191:16125/v1/models`
+# 2. 创建转发器
+forwarder = Forwarder(config)
 
-https://openai.apifox.cn/api-55352403
+# 3. 发送请求 (非流式)
+messages = [
+    {"role": "system", "content": "你是一个 AI 助手"},
+    {"role": "user", "content": "你好"},
+]
 
-绝大多数前端应用都会提供加载模型列表的功能. 在 Mnemosync 的早期版本中, 我们将模型选择完全放在 Mnemosync 服务器中, 并对前端隐藏. 因此, 对于这个接口请求我们返回一个无关模型, 如 `mnemosync-any`.
+response = await forwarder.send(messages=messages)
+print(response["choices"][0]["message"]["content"])
 
-在未来的更新中, 我们或许可以列出用户加入的所有模型. 这项需求优先级较低.
+# 4. 发送请求 (流式)
+async for chunk in forwarder.send_stream(messages=messages):
+    print(chunk.decode(), end="")
 
-#### 响应示例
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "id": "mnemosync-any",
-      "object": "model",
-      "created": 1686935002,
-      "owned_by": "mnemosync"
-    }
-  ]
-}
+# 5. 关闭连接
+await forwarder.close()
 ```
+
+### 使用连接池
+
+```python
+from src.modules.forward import Forwarder, ForwarderConfig, ConnectionPool
+
+# 创建连接池
+pool = ConnectionPool(
+    max_connections=50,
+    max_keepalive_connections=10,
+)
+
+# 创建转发器 (使用连接池)
+forwarder = Forwarder(config, pool=pool)
+
+# 使用完毕后关闭连接池
+await pool.close()
+```
+
+### 上下文管理器
+
+```python
+async with Forwarder(config) as forwarder:
+    response = await forwarder.send(messages=messages)
+    # 自动关闭连接
+```
+
+---
+
+## API 参考
+
+### ForwarderConfig
+
+转发器配置数据类.
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `base_url` | str | - | 上游模型基础 URL |
+| `api_key` | str | - | 上游模型 API Key |
+| `default_model` | str | - | 默认模型名称 |
+| `timeout` | float | 30.0 | 请求超时 (秒) |
+| `connect_timeout` | float | 10.0 | 连接超时 (秒) |
+
+### Forwarder
+
+上游转发器主类.
+
+#### 方法
+
+##### `send(messages, model, temperature, max_tokens, stream, **kwargs)`
+
+发送请求到上游模型 (非流式).
+
+**参数**:
+- `messages`: list[dict] - 处理后的消息列表 (OpenAI 格式)
+- `model`: str | None - 模型名称 (可选)
+- `temperature`: float - 温度 (0-2), 默认 1.0
+- `max_tokens`: int | None - 最大生成 token 数
+- `stream`: bool - 是否流式
+- `**kwargs`: 其他 OpenAI 兼容参数
+
+**返回**: dict - 上游模型响应 (OpenAI 兼容格式)
+
+**异常**:
+- `UpstreamError`: 上游服务错误
+- `UpstreamTimeout`: 上游超时
+
+##### `send_stream(messages, model, temperature, max_tokens, **kwargs)`
+
+发送请求到上游模型 (流式).
+
+**参数**: 同 `send()`
+
+**返回**: AsyncIterator[bytes] - SSE 格式的响应分块
+
+**异常**: 同 `send()`
+
+##### `close()`
+
+关闭转发器和连接.
+
+---
+
+### ConnectionPool
+
+HTTP 连接池.
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `max_connections` | int | 50 | 最大连接数 |
+| `max_keepalive_connections` | int | 10 | 最大保持活跃的连接数 |
+| `timeout` | float | 30.0 | 请求超时 |
+| `connect_timeout` | float | 10.0 | 连接超时 |
+
+---
+
+## 错误处理
+
+### UpstreamError
+
+上游服务错误.
+
+```python
+from src.modules.forward import UpstreamError, Forwarder
+
+try:
+    response = await forwarder.send(messages=messages)
+except UpstreamError as e:
+    print(f"上游错误：{e.status_code} - {e.message}")
+```
+
+### UpstreamTimeout
+
+上游服务超时.
+
+```python
+from src.modules.forward import UpstreamTimeout
+
+try:
+    response = await forwarder.send(messages=messages)
+except UpstreamTimeout as e:
+    print(f"上游超时：{e}")
+```
+
+---
+
+## 配置示例
+
+### OpenAI
+
+```python
+config = ForwarderConfig(
+    base_url="https://api.openai.com/v1",
+    api_key="sk-xxx",
+    default_model="gpt-4",
+)
+```
+
+### OneAPI
+
+```python
+config = ForwarderConfig(
+    base_url="https://your-oneapi.com/v1",
+    api_key="sk-xxx",
+    default_model="claude-3-opus",
+)
+```
+
+### 本地模型 (Ollama)
+
+```python
+config = ForwarderConfig(
+    base_url="http://localhost:11434/v1",
+    api_key="ollama",  # Ollama 不需要 API Key
+    default_model="qwen2.5:72b",
+)
+```
+
+### SiliconFlow
+
+```python
+config = ForwarderConfig(
+    base_url="https://api.siliconflow.cn/v1",
+    api_key="sk-xxx",
+    default_model="Qwen/Qwen2.5-72B-Instruct",
+)
+```
+
+---
+
+## 使用场景
+
+### 场景 1: 简单转发
+
+```python
+# 接收处理后的消息，直接转发
+response = await forwarder.send(
+    messages=processed_messages,
+    model="gpt-4",
+    temperature=0.7,
+)
+```
+
+### 场景 2: 流式响应
+
+```python
+# SSE 流式转发给前端
+async def stream_to_client():
+    async for chunk in forwarder.send_stream(
+        messages=processed_messages,
+        model="gpt-4",
+    ):
+        yield chunk
+```
+
+### 场景 3: 多模型路由
+
+```python
+# 根据配置选择不同上游
+if config.provider == "openai":
+    forwarder = Forwarder(openai_config)
+elif config.provider == "local":
+    forwarder = Forwarder(local_config)
+
+response = await forwarder.send(messages=messages)
+```
+
+---
+
+## 性能优化
+
+### 连接池
+
+```python
+# 推荐配置
+pool = ConnectionPool(
+    max_connections=50,              # 根据并发量调整
+    max_keepalive_connections=10,    # 保持活跃连接
+)
+```
+
+### 超时设置
+
+```python
+# 根据模型响应时间调整
+config = ForwarderConfig(
+    timeout=60.0,         # 长文本生成需要更长时间
+    connect_timeout=10.0, # 连接超时不宜过长
+)
+```
+
+---
+
+## 注意事项
+
+1. **消息格式**: 传入的 `messages` 必须是 OpenAI 兼容格式
+2. **流式响应**: 返回的是 bytes，需要前端按 SSE 格式解析
+3. **连接管理**: 使用完毕后调用 `close()` 或使用上下文管理器
+4. **错误处理**: 始终捕获 `UpstreamError` 和 `UpstreamTimeout`
+
+---
+
+## 版本历史
+
+| 版本 | 日期 | 变更说明 |
+|------|------|----------|
+| v0.1.0 | 2026-03-29 | 初始实现 |
