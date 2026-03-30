@@ -2,28 +2,40 @@
 
 import uuid
 import time
-from fastapi import APIRouter, HTTPException
+import json
+import asyncio
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse, JSONResponse
+
 from src.api.schemas.forward import (
     ModelList,
     ModelInfo,
     ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionChoice,
     ChatMessage,
     UsageInfo,
 )
+from src.modules.forward import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
+from src.modules.memory import SqliteMemoryStore, MemoryEntry, Visibility
 
 # OpenAI 兼容的路由，使用 /v1 前缀
 router = APIRouter(prefix="/v1")
 
+# 配置 (应从环境变量或配置文件加载)
+UPSTREAM_CONFIG = ForwarderConfig(
+    base_url="https://api.openai.com/v1",
+    api_key="sk-placeholder",  # TODO: 从环境变量加载
+    default_model="gpt-3.5-turbo",
+)
+
+# 记忆存储
+MEMORY_STORE = SqliteMemoryStore("data/memories.db")
+
 
 @router.get("/models", response_model=ModelList, tags=["Models"])
 async def list_models():
-    """
-    列出可用模型。
-    
-    目前返回一个占位模型 `mnemosync-any`，表示 Mnemosync 会自动选择合适的模型。
-    """
+    """列出可用模型."""
     return ModelList(
         object="list",
         data=[
@@ -31,77 +43,228 @@ async def list_models():
                 id="mnemosync-any",
                 object="model",
                 created=1686935002,
-                owned_by="mnemosync"
+                owned_by="mnemosync",
             )
-        ]
+        ],
     )
 
 
 @router.get("/models/{model_id}", response_model=ModelInfo, tags=["Models"])
 async def get_model(model_id: str):
-    """
-    获取特定模型信息。
-    """
+    """获取特定模型信息."""
     if model_id == "mnemosync-any":
         return ModelInfo(
             id="mnemosync-any",
             object="model",
             created=1686935002,
-            owned_by="mnemosync"
+            owned_by="mnemosync",
         )
     raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
 
-@router.post("/chat/completions", response_model=ChatCompletionResponse, tags=["Chat Completions"])
-async def create_chat_completion(request: ChatCompletionRequest):
+@router.post("/chat/completions", tags=["Chat Completions"])
+async def create_chat_completion(request: ChatCompletionRequest, http_request: Request):
+    """创建聊天补全.
+
+    处理流程:
+    1. 验证 API Key (中间件已完成)
+    2. 转发给上游模型
+    3. 存储对话记录 (异步)
+    4. 返回响应
     """
-    创建聊天补全。
-    
-    接受与 OpenAI API 相同格式的请求，返回模型回应。
-    
-    ## 处理流程（TODO）:
-    1. 验证 API Key
-    2. 根据请求中的模型或用户配置选择合适的后端模型
-    3. 对消息进行预处理（清洗、增强等）
-    4. 调用后端 LLM 服务
-    5. 对响应进行后处理
-    6. 返回结果
-    
-    ## 当前状态:
-    目前返回一个占位响应，用于测试接口连通性。
-    """
-    # TODO: 实现完整的聊天补全逻辑
-    
-    # 生成响应 ID
-    response_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
-    
-    # 创建占位响应
-    return ChatCompletionResponse(
-        id=response_id,
-        object="chat.completion",
-        created=int(time.time()),
+    # 初始化记忆存储
+    await MEMORY_STORE.init_db()
+
+    # 创建转发器
+    async with Forwarder(UPSTREAM_CONFIG) as forwarder:
+        try:
+            # 转换为 dict 格式
+            messages_dict = [msg.model_dump() for msg in request.messages]
+
+            if request.stream:
+                # 流式响应
+                return await _handle_stream(
+                    forwarder=forwarder,
+                    messages=messages_dict,
+                    request=request,
+                    http_request=http_request,
+                )
+            else:
+                # 非流式响应
+                return await _handle_non_stream(
+                    forwarder=forwarder,
+                    messages=messages_dict,
+                    request=request,
+                    http_request=http_request,
+                )
+
+        except UpstreamTimeout as e:
+            raise HTTPException(status_code=504, detail=str(e)) from e
+        except UpstreamError as e:
+            raise HTTPException(status_code=502, detail=f"Upstream error: {e.message}") from e
+
+
+async def _handle_non_stream(
+    forwarder: Forwarder,
+    messages: list[dict[str, Any]],
+    request: ChatCompletionRequest,
+    http_request: Request,
+) -> JSONResponse:
+    """处理非流式请求."""
+    # 发送到上游
+    response = await forwarder.send(
+        messages=messages,
         model=request.model,
-        choices=[
-            ChatCompletionChoice(
-                index=0,
-                message=ChatMessage(
-                    role="assistant",
-                    content=(
-                        "🔧 Mnemosync 占位响应\n\n"
-                        "聊天补全功能正在开发中。当前已接收到的请求:\n\n"
-                        f"- **Model**: `{request.model}`\n"
-                        f"- **Messages**: {len(request.messages)} 条\n"
-                        f"- **Temperature**: {request.temperature}\n"
-                        f"- **Max Tokens**: {request.max_tokens}\n\n"
-                        "请稍后再来查看完整实现！"
-                    )
-                ),
-                finish_reason="stop"
-            )
-        ],
-        usage=UsageInfo(
-            prompt_tokens=sum(len(msg.content or "") for msg in request.messages) // 4,
-            completion_tokens=50,
-            total_tokens=sum(len(msg.content or "") for msg in request.messages) // 4 + 50
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+    )
+
+    # 异步存储对话 (不阻塞响应)
+    asyncio.create_task(
+        _store_conversation(
+            messages=messages,
+            response=response,
+            api_key_id=http_request.state.api_key_id if hasattr(http_request.state, "api_key_id") else None,
         )
     )
+
+    # 返回响应
+    return JSONResponse(content=response)
+
+
+async def _handle_stream(
+    forwarder: Forwarder,
+    messages: list[dict[str, Any]],
+    request: ChatCompletionRequest,
+    http_request: Request,
+) -> StreamingResponse:
+    """处理流式请求."""
+    # 收集完整响应以便存储
+    collected_chunks = []
+
+    async def stream_generator():
+        async for chunk in forwarder.send_stream(
+            messages=messages,
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+        ):
+            collected_chunks.append(chunk)
+            yield chunk
+
+        # 异步存储对话
+        asyncio.create_task(
+            _store_streamed_conversation(
+                messages=messages,
+                chunks=collected_chunks,
+                api_key_id=http_request.state.api_key_id if hasattr(http_request.state, "api_key_id") else None,
+            )
+        )
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+    )
+
+
+async def _store_conversation(
+    messages: list[dict[str, Any]],
+    response: dict[str, Any],
+    api_key_id: str | None = None,
+) -> None:
+    """存储对话记录.
+
+    Args:
+        messages: 请求消息列表
+        response: 上游响应
+        api_key_id: API Key ID (用于标识来源)
+    """
+    try:
+        # 存储用户消息
+        for msg in messages:
+            if msg.get("role") == "user":
+                entry = MemoryEntry.create(
+                    content=msg.get("content", ""),
+                    role="user",
+                    source_user=api_key_id,
+                    visibility=Visibility.SOURCE_RESTRICTED,
+                )
+                await MEMORY_STORE.save(entry)
+
+        # 存储助手回复
+        if response.get("choices"):
+            assistant_content = response["choices"][0]["message"].get("content", "")
+            entry = MemoryEntry.create(
+                content=assistant_content,
+                role="assistant",
+                source_user="assistant",
+                visibility=Visibility.SOURCE_RESTRICTED,
+            )
+            await MEMORY_STORE.save(entry)
+
+    except Exception as e:
+        # 存储失败不影响响应，仅记录日志
+        print(f"Failed to store conversation: {e}")
+
+
+async def _store_streamed_conversation(
+    messages: list[dict[str, Any]],
+    chunks: list[bytes],
+    api_key_id: str | None = None,
+) -> None:
+    """存储流式对话记录."""
+    try:
+        # 解析流式响应，提取完整内容
+        assistant_content = _parse_stream_chunks(chunks)
+
+        # 存储用户消息
+        for msg in messages:
+            if msg.get("role") == "user":
+                entry = MemoryEntry.create(
+                    content=msg.get("content", ""),
+                    role="user",
+                    source_user=api_key_id,
+                    visibility=Visibility.SOURCE_RESTRICTED,
+                )
+                await MEMORY_STORE.save(entry)
+
+        # 存储助手回复
+        if assistant_content:
+            entry = MemoryEntry.create(
+                content=assistant_content,
+                role="assistant",
+                source_user="assistant",
+                visibility=Visibility.SOURCE_RESTRICTED,
+            )
+            await MEMORY_STORE.save(entry)
+
+    except Exception as e:
+        print(f"Failed to store streamed conversation: {e}")
+
+
+def _parse_stream_chunks(chunks: list[bytes]) -> str:
+    """解析流式响应分块，提取完整内容."""
+    content_parts = []
+
+    for chunk in chunks:
+        try:
+            # 跳过 [DONE] 标记
+            if chunk.strip() == b"data: [DONE]":
+                continue
+
+            # 解析 SSE 格式
+            if chunk.startswith(b"data: "):
+                data = chunk[6:]  # 移除 "data: " 前缀
+                parsed = json.loads(data)
+
+                # 提取内容
+                if parsed.get("choices"):
+                    delta = parsed["choices"][0].get("delta", {})
+                    if delta.get("content"):
+                        content_parts.append(delta["content"])
+
+        except (json.JSONDecodeError, KeyError, IndexError):
+            # 跳过无效分块
+            continue
+
+    return "".join(content_parts)

@@ -44,25 +44,25 @@ def main() -> int:
             return 0
         elif cmd == "init-internal":
             # 容器内初始化
-            from .storage import SqliteAuthService, SqliteApiKeyStore
+            from .accounts import SqliteAuthService, SqliteApiKeyStore
 
             async def _init():
                 os.makedirs("data", exist_ok=True)
-                
+
                 auth_db = SqliteAuthService(os.getenv("AUTH_DB_PATH", "data/auth.db"))
                 api_key_db = SqliteApiKeyStore(os.getenv("MNEMOSYNC_DB_PATH", "data/api_keys.db"))
-                
+
                 await auth_db.init_db()
                 await api_key_db.init_db()
-                
+
                 # 创建默认用户
                 try:
                     await auth_db.create_default_user("mnemosync")
                 except Exception:
                     pass  # 用户已存在
-                
+
                 print("Success!")
-            
+
             import asyncio
             asyncio.run(_init())
             return 0

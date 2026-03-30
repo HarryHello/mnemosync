@@ -12,7 +12,7 @@ from ..schemas.auth import (
     UserInfoResponse,
     MessageResponse,
 )
-from ...storage import (
+from ...accounts import (
     SqliteAuthService,
     InvalidCredentialsError,
     UserNotFoundError,
