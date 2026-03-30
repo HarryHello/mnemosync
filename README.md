@@ -83,10 +83,26 @@ graph LR
 
 ### 关键流程
 1.  **拦截**：接收前端发送的 OpenAI 兼容请求。
-2.  **合成**：根据 API Key 识别用户，加载对应的人格配置与历史记忆。
-3.  **清洗**：执行哈希去重、时间戳标准化、长上下文压缩。
+2.  **合成**：根据 API Key 识别前端来源，加载统一的人格配置与历史记忆。
+3.  **清洗**：执行哈希去重、时间戳标准化、长上下文压缩。（可根据前端来源差异化处理）
 4.  **转发**：将处理后的 `messages` 发送给上游模型（OpenAI/OneAPI/本地模型）。
 5.  **透传**：将模型响应流式返回给前端，无感知延迟。
+
+---
+
+## 🔑 API Key 说明
+
+> **重要**：当前版本为**单人格架构** —— 一个 Mnemosync 实例对应一个人格配置。
+>
+> API Key 的作用是**区分不同前端来源**，而非多用户隔离：
+>
+> | Key | 前端 | 用途 |
+> |-----|------|------|
+> | `sk-abc...` | AstrBot 机器人 | 机器人格式清洗 |
+> | `sk-def...` | AIRI 桌宠 | 桌宠交互优化 |
+> | `sk-ghi...` | Web 聊天室 | 网页聊天适配 |
+>
+> 所有 Key 共享同一份记忆池和人格配置。多人格支持是未来规划。
 
 ---
 
@@ -133,34 +149,48 @@ uv run mnemosync serve
 # 1. 初始化服务
 $ mnemosync init
 
-🔧 正在初始化 Mnemosync...
-  ✓ API Key 数据库初始化完成
-  ✓ 用户认证数据库初始化完成
-  ✓ 默认用户已创建 (用户名/密码：mnemosync)
-  ✓ 默认 API Key 已生成：sk-xxxxx
+Mnemosync initializing...
+Building Docker image...
+Initializing database...
+Success!
 
-✅ 初始化完成!
-🌐 访问 WebUI: http://localhost:16125/webui
-📝 或使用 CLI 登录：mnemosync login
+Use `mnemosync login` to start the cli environment,
+or use `mnemosync help` to get more information.
 
-# 2. CLI 登录（可选）
+# 2. CLI 登录
 $ mnemosync login
 
-📝 CLI 登录 (默认账号密码：mnemosync)
-账号：mnemosync
-密码：********
+Starting Mnemosync service...
+╭───────────────────────────────────────────────────────────────╮
+│                                                               │
+│  │  ╲╱  ││ \ │ ││  ___│  ╲╱  │  _  ╱  ___\ ╲ ╱ / ╲ │ /  __ ╲  │
+│  │ .  . ││  \│ ││ │__ │ .  . │ │ │ ╲ `──. \ V /│  ╲│ │ /  ╲╱  │
+│  │ │╲╱│ ││ . ` ││  __││ │╲╱│ │ │ │ │`──. ╲ ╲ / │ . ` │ │      │
+│  │ │  │ ││ │\  ││ │___│ │  │ │ \_/ ╱╲__╱ ╱ │ │ │ │╲  │ \__╱╲  │
+│  \_│  │_╱╲_│ ╲_│ ╲_╱╲____╱╲_│  │_╱╲___╱╲____╱  \_/ ╲_│ ╲_╱╲____╱  │
+│                                                               │
+│                         Mnemosync                             │
+│                         v0.0.0                                │
+│                                                               │
+╰───────────────────────────────────────────────────────────────╯
+
+Welcome to Mnemosync!
+Please login with account and password.
+The default account and password are all 'mnemosync'.
+Account: mnemosync
+Password: ********
 ✅ 登录成功!
-⚠️  首次登录，请修改密码
-新账号：[自定义账号]
-新密码：********
-确认密码：********
-✅ 密码修改成功!
 
 # 3. 生成 API Key
-$ mnemosync generate "我的密钥"
-✅ API Key 生成成功!
-Key: sk-xxxxx
-⚠️  请妥善保管 Key，它只会显示这一次!
+Mnemosync > generate-key
+It is recommanded to map one key to one platform.
+Please enter the annotation for the new key:
+> AstrBot
+
+Your new api-key is:
+sk-qwertyuiopasdfghjklzxcvbnm
+
+Do not let others get your keys!
 ```
 
 ### 接入前端

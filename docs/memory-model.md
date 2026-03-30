@@ -282,6 +282,181 @@ sequenceDiagram
 
 ---
 
+## 3.3 记忆存储流程 (Memory Storage)
+
+### 存储时机
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  消息处理流程                                                │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ① 接收请求 → ② 鉴权 → ③ 加载记忆 → ④ 清洗 → ⑤ 转发上游    │
+│                                                          ↓   │
+│  ⑦ 存储记忆 ← ⑥ 上游响应 ← ⑧ 返回前端                      │
+│   (异步，不阻塞)                                             │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**关键原则**:
+1. **异步存储** - 不阻塞响应返回，使用后台任务执行
+2. **错误隔离** - 存储失败不影响用户响应
+3. **完整记录** - 同时存储用户消息和助手回复
+4. **默认隐私** - 默认可见性为 `source_restricted`
+
+### 存储内容
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `content` | 消息内容 | "我叫马达，最近工作压力大" |
+| `role` | 消息角色 | `user` / `assistant` / `system` |
+| `source_user` | 来源标识 | API Key ID 或用户标识 |
+| `visibility` | 可见性 | `source_restricted` (默认) |
+| `custom_policies` | 自定义策略 | `["deny:user:flower"]` |
+| `emotional_tags` | 情感标签 | `["stress", "sad"]` |
+| `created_at` | 创建时间 | ISO 8601 格式 |
+
+### 异步存储实现
+
+```python
+# 伪代码示例
+async def create_chat_completion(request, http_request):
+    # 1. 发送到上游
+    response = await forwarder.send(messages=...)
+    
+    # 2. 立即返回响应
+    return JSONResponse(content=response)
+    
+    # 3. 异步存储 (不阻塞)
+    asyncio.create_task(
+        _store_conversation(
+            messages=request.messages,
+            response=response,
+            api_key_id=http_request.state.api_key_id,
+        )
+    )
+```
+
+### 存储失败处理
+
+| 失败场景 | 处理策略 |
+|---------|---------|
+| 数据库锁定 | 重试 3 次，每次间隔 100ms |
+| 磁盘空间不足 | 记录错误日志，跳过存储 |
+| 数据格式错误 | 记录错误日志，跳过存储 |
+| 连接超时 | 重试 1 次，失败后放弃 |
+
+**错误日志示例**:
+```
+[ERROR] Failed to store conversation: database is locked
+  - messages: 2 entries
+  - response: 1 entry
+  - api_key_id: abc123...
+  - action: Retrying in 100ms (attempt 1/3)
+```
+
+### 流式响应存储
+
+对于流式响应，需要收集完整内容后存储：
+
+```
+数据流:
+上游 → [分块 1][分块 2][分块 3]...[DONE] → 前端
+              ↓
+        收集所有分块
+              ↓
+        解析完整内容
+              ↓
+        异步存储
+```
+
+**解析逻辑**:
+1. 跳过 `data: [DONE]` 标记
+2. 提取每个分块的 `delta.content`
+3. 拼接完整回复内容
+4. 创建 MemoryEntry 存储
+
+---
+
+## 3.4 实现示例 (Implementation Example)
+
+### 存储用户消息
+
+```python
+from src.modules.memory import MemoryEntry, Visibility, SqliteMemoryStore
+
+# 初始化存储
+store = SqliteMemoryStore("data/memories.db")
+await store.init_db()
+
+# 存储用户消息
+entry = MemoryEntry.create(
+    content="我叫马达，最近工作压力大",
+    role="user",
+    source_user="api-key-abc123",  # API Key ID
+    visibility=Visibility.SOURCE_RESTRICTED,
+)
+await store.save(entry)
+```
+
+### 存储助手回复
+
+```python
+# 存储模型响应
+entry = MemoryEntry.create(
+    content="你好马达，听说你最近工作压力大，还好吗？",
+    role="assistant",
+    source_user="assistant",  # 助手标识
+    visibility=Visibility.SOURCE_RESTRICTED,
+)
+await store.save(entry)
+```
+
+### 带情感标签的存储
+
+```python
+# 分析情感后存储
+entry = MemoryEntry.create(
+    content="用户说工作压力大，心情低落",
+    role="user",
+    source_user="api-key-abc123",
+    visibility=Visibility.CONFIDENTIAL,  # 隐私级别更高
+)
+entry.emotional_tags = ["stress", "sad"]  # 情感标签
+await store.save(entry)
+```
+
+### 带自定义策略的存储
+
+```python
+# 用户说"不要告诉小花这件事"
+entry = MemoryEntry.create(
+    content="用户失业了，心情低落",
+    role="user",
+    source_user="api-key-abc123",
+    visibility=Visibility.CONFIDENTIAL,
+)
+entry.custom_policies = ["deny:user:flower"]  # 禁止特定用户访问
+await store.save(entry)
+```
+
+### 查询记忆
+
+```python
+# 查询用户的历史记忆
+memories = await store.query(
+    source_user="api-key-abc123",
+    visibility=[Visibility.SOURCE_RESTRICTED, Visibility.PUBLIC],
+    limit=20,
+)
+
+for mem in memories:
+    print(f"[{mem.created_at}] {mem.content}")
+```
+
+---
+
 ## 4. 配置设计 (Configuration)
 
 ### 4.1 关系演化配置
