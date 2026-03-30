@@ -1,12 +1,44 @@
-"""SQLite 存储实现."""
+"""API Key 存储层."""
 
 import aiosqlite
+from typing import Protocol
 
-from .base import ApiKeyStore
-from .models import ApiKey
+from .api_key_models import ApiKey
 
 
-class SqliteApiKeyStore(ApiKeyStore):
+class ApiKeyStore(Protocol):
+    """API Key 存储协议."""
+
+    async def save(self, api_key: ApiKey) -> None:
+        """保存 API Key."""
+        ...
+
+    async def get_by_id(self, key_id: str) -> ApiKey | None:
+        """根据 ID 获取 API Key."""
+        ...
+
+    async def get_by_key_hash(self, key_hash: str) -> ApiKey | None:
+        """根据密钥哈希获取 API Key."""
+        ...
+
+    async def list_all(self) -> list[ApiKey]:
+        """列出所有 API Key."""
+        ...
+
+    async def delete(self, key_id: str) -> bool:
+        """删除 API Key."""
+        ...
+
+    async def update_last_used(self, key_id: str) -> None:
+        """更新最后使用时间."""
+        ...
+
+    async def init_db(self) -> None:
+        """初始化数据库表."""
+        ...
+
+
+class SqliteApiKeyStore:
     """SQLite API Key 存储实现."""
 
     def __init__(self, db_path: str):
@@ -101,8 +133,6 @@ class SqliteApiKeyStore(ApiKeyStore):
     async def update_last_used(self, key_id: str) -> None:
         """更新最后使用时间."""
         async with aiosqlite.connect(self.db_path) as db:
-            from datetime import datetime, timezone
-
             await db.execute(
                 "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
                 (datetime.now(timezone.utc).isoformat(), key_id),

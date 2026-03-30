@@ -1,4 +1,4 @@
-"""数据模型定义."""
+"""API Key 数据模型."""
 
 import secrets
 from dataclasses import dataclass, field
@@ -11,7 +11,7 @@ class ApiKey:
 
     id: str
     key_hash: str  # 存储哈希值而非明文
-    key_prefix: str  # 存储前 8 位用于识别 (如 sk-abc12345...)
+    key_prefix: str  # 存储前 12 位用于识别 (如 sk-abc12345...)
     note: str  # 备注
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_used_at: datetime | None = None

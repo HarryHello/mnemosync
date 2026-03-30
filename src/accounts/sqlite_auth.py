@@ -2,6 +2,8 @@
 
 import aiosqlite
 import bcrypt
+import secrets
+from datetime import datetime, timezone
 
 from .auth_service import (
     AuthService,
@@ -27,7 +29,7 @@ def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 
-class SqliteAuthService(AuthService):
+class SqliteAuthService:
     """SQLite 认证服务实现."""
 
     def __init__(self, db_path: str):
@@ -126,7 +128,7 @@ class SqliteAuthService(AuthService):
                 # 更新最后登录时间
                 await db.execute(
                     "UPDATE users SET last_login_at = ? WHERE id = ?",
-                    (user.mark_logged_in() or datetime.now(timezone.utc).isoformat(), user.id)
+                    (datetime.now(timezone.utc).isoformat(), user.id)
                 )
                 await db.commit()
 
@@ -157,12 +159,10 @@ class SqliteAuthService(AuthService):
 
     async def get_session(self, token: str) -> SessionToken:
         """获取会话."""
-        token_hash = secrets.token_hex(32)  # 这里需要存储的是哈希，实际应该用传入 token 的哈希
-
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
                 """
-                SELECT * FROM sessions 
+                SELECT * FROM sessions
                 WHERE token_hash = ? AND is_valid = 1
                 """,
                 (token,)  # 简化：直接存储原始 token 作为哈希
@@ -299,8 +299,6 @@ class SqliteAuthService(AuthService):
 
     def _row_to_user(self, row: tuple) -> User:
         """将数据库行转换为 User 对象."""
-        from datetime import datetime, timezone
-
         return User(
             id=row[0],
             username=row[1],
@@ -314,8 +312,6 @@ class SqliteAuthService(AuthService):
 
     def _row_to_session(self, row: tuple) -> SessionToken:
         """将数据库行转换为 SessionToken 对象."""
-        from datetime import datetime, timezone
-
         return SessionToken(
             id=row[0],
             user_id=row[1],
@@ -324,8 +320,3 @@ class SqliteAuthService(AuthService):
             created_at=datetime.fromisoformat(row[4]) if row[4] else datetime.now(timezone.utc),
             is_valid=bool(row[5]),
         )
-
-
-# 需要导入 secrets
-import secrets
-from datetime import datetime, timezone
