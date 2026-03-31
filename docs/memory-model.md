@@ -381,12 +381,14 @@ async def create_chat_completion(request, http_request):
 
 ## 3.4 实现示例 (Implementation Example)
 
-### 存储用户消息
+> **注意**: 当前版本为单人格架构，所有对话方视为同一人。
+> `source_user` 字段预留用于未来多对话方扩展。
+
+### 存储对话记录
 
 ```python
 from src.modules.memory import MemoryEntry, Visibility, SqliteMemoryStore
 
-# 初始化存储
 store = SqliteMemoryStore("data/memories.db")
 await store.init_db()
 
@@ -394,65 +396,38 @@ await store.init_db()
 entry = MemoryEntry.create(
     content="我叫马达，最近工作压力大",
     role="user",
-    source_user="api-key-abc123",  # API Key ID
+    source_user="default",  # 当前版本固定值，未来扩展为对话方标识
     visibility=Visibility.SOURCE_RESTRICTED,
 )
 await store.save(entry)
-```
 
-### 存储助手回复
-
-```python
-# 存储模型响应
+# 存储助手回复 (属于同一对话)
 entry = MemoryEntry.create(
     content="你好马达，听说你最近工作压力大，还好吗？",
     role="assistant",
-    source_user="assistant",  # 助手标识
+    source_user="default",  # 与用户消息相同的 source_user
     visibility=Visibility.SOURCE_RESTRICTED,
 )
-await store.save(entry)
-```
-
-### 带情感标签的存储
-
-```python
-# 分析情感后存储
-entry = MemoryEntry.create(
-    content="用户说工作压力大，心情低落",
-    role="user",
-    source_user="api-key-abc123",
-    visibility=Visibility.CONFIDENTIAL,  # 隐私级别更高
-)
-entry.emotional_tags = ["stress", "sad"]  # 情感标签
-await store.save(entry)
-```
-
-### 带自定义策略的存储
-
-```python
-# 用户说"不要告诉小花这件事"
-entry = MemoryEntry.create(
-    content="用户失业了，心情低落",
-    role="user",
-    source_user="api-key-abc123",
-    visibility=Visibility.CONFIDENTIAL,
-)
-entry.custom_policies = ["deny:user:flower"]  # 禁止特定用户访问
 await store.save(entry)
 ```
 
 ### 查询记忆
 
 ```python
-# 查询用户的历史记忆
+# 查询所有记忆 (当前版本只有一个默认对话方)
 memories = await store.query(
-    source_user="api-key-abc123",
-    visibility=[Visibility.SOURCE_RESTRICTED, Visibility.PUBLIC],
+    source_user="default",
     limit=20,
 )
 
 for mem in memories:
-    print(f"[{mem.created_at}] {mem.content}")
+    print(f"[{mem.created_at}] [{mem.role}] {mem.content}")
+```
+
+**输出示例**:
+```
+[2026-03-29 10:00:00] [user] 我叫马达，最近工作压力大
+[2026-03-29 10:00:15] [assistant] 你好马达，听说你最近工作压力大，还好吗？
 ```
 
 ---

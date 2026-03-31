@@ -14,11 +14,11 @@
 
 ### 1.1 核心原则
 
-| 原则 | 说明 |
-|------|------|
-| **预处理优先** | 所有记忆加载、清洗、合并必须在转发前完成 |
-| **流式透传** | 上游的 SSE 流式响应零缓冲透传给前端 |
-| **无状态转发** | 不维护运行时状态，状态持久化至存储层 |
+| 原则            | 说明                        |
+|---------------|---------------------------|
+| **预处理优先**     | 所有记忆加载、清洗、合并必须在转发前完成      |
+| **流式透传**      | 上游的 SSE 流式响应零缓冲透传给前端      |
+| **无状态转发**     | 不维护运行时状态，状态持久化至存储层        |
 | **OpenAI 兼容** | 请求/响应格式严格遵循 OpenAI API 标准 |
 
 ### 1.2 处理流程总览
@@ -121,11 +121,11 @@ sk-ghi11111...  →  Web 聊天室
 
 **可见性规则**:
 
-| 可见性 | 说明 |
-|--------|------|
-| `public` | 所有用户可见 |
-| `friends_only` | 仅好友及以上关系可见 |
-| `confidential` | 仅高信任度用户可见 |
+| 可见性                 | 说明           |
+|---------------------|--------------|
+| `public`            | 所有用户可见       |
+| `friends_only`      | 仅好友及以上关系可见   |
+| `confidential`      | 仅高信任度用户可见    |
 | `source_restricted` | 仅来源用户可见 (默认) |
 
 **新消息筛选**:
@@ -471,76 +471,55 @@ def _parse_stream_chunks(chunks: list[bytes]) -> str:
 
 ### 4.6 错误处理策略
 
-| 失败场景 | 处理策略 |
-|---------|---------|
-| **数据库锁定** | 重试 3 次，每次间隔 100ms |
-| **磁盘空间不足** | 记录错误日志，跳过存储 |
-| **数据格式错误** | 记录错误日志，跳过存储 |
-| **连接超时** | 重试 1 次，失败后放弃 |
+| 失败场景       | 处理策略              |
+|------------|-------------------|
+| **数据库锁定**  | 重试 3 次，每次间隔 100ms |
+| **磁盘空间不足** | 记录错误日志，跳过存储       |
+| **数据格式错误** | 记录错误日志，跳过存储       |
+| **连接超时**   | 重试 1 次，失败后放弃      |
 
 **错误日志格式**:
 ```
 [ERROR] Failed to store conversation: database is locked
   - messages: 2 entries
   - response: 1 entry
-  - api_key_id: abc123...
   - action: Retrying in 100ms (attempt 1/3)
 ```
 
 ---
 
-### 4.7 使用示例
+### 4.7 存储逻辑说明
 
-**存储用户消息**:
-```python
-from src.modules.memory import MemoryEntry, Visibility, SqliteMemoryStore
+**source_user 字段设计**:
+| 字段 | 说明 | 当前版本 | 未来扩展 |
+|------|------|---------|---------|
+| `source_user` | 对话方标识 | 可固定为默认值 | 支持多对话方 |
+| `role` | 消息角色 | `user` / `assistant` | 不变 |
 
-store = SqliteMemoryStore("data/memories.db")
-await store.init_db()
+**示例**:
+```
+对话：马达 (用户) ↔ 墨小末 (人格)
 
-entry = MemoryEntry.create(
-    content="我叫马达，最近工作压力大",
-    role="user",
-    source_user="api-key-abc123",
-    visibility=Visibility.SOURCE_RESTRICTED,
-)
-await store.save(entry)
+存储:
+- MemoryEntry(content="我叫马达", role="user", source_user="马达")
+- MemoryEntry(content="你好马达", role="assistant", source_user="马达")
+                                      ↑ 助手回复也属于马达的对话
 ```
 
-**存储助手回复**:
-```python
-entry = MemoryEntry.create(
-    content="你好马达，听说你最近工作压力大，还好吗？",
-    role="assistant",
-    source_user="assistant",
-    visibility=Visibility.SOURCE_RESTRICTED,
-)
-await store.save(entry)
-```
-
-**查询记忆**:
-```python
-memories = await store.query(
-    source_user="api-key-abc123",
-    visibility=[Visibility.SOURCE_RESTRICTED, Visibility.PUBLIC],
-    limit=20,
-)
-
-for mem in memories:
-    print(f"[{mem.created_at}] {mem.content}")
-```
+> **注意**: 当前版本 `source_user` 可暂不实现，所有记忆存储为同一默认值。
+> 未来支持多对话方时，再根据 API Key 或 `request.user` 字段提取对话方标识。
 
 ---
 
 ## 5. 错误处理
 
-| 错误 | HTTP 状态码 | 说明 |
-|------|------------|------|
-| 无效 API Key | 401 | API Key 不存在或已撤销 |
-| 请求格式错误 | 400 | 请求体不符合 Schema |
-| 上游服务错误 | 502 | 上游模型返回错误 |
-| 上游超时 | 504 | 上游模型超时 |
-| 服务器内部错误 | 500 | Mnemosync 内部错误 |
+| 错误         | HTTP 状态码 | 说明              |
+|------------|----------|-----------------|
+| 无效 API Key | 401      | API Key 不存在或已撤销 |
+| 请求格式错误     | 400      | 请求体不符合 Schema   |
+| 上游服务错误     | 502      | 上游模型返回错误        |
+| 上游超时       | 504      | 上游模型超时          |
+| 服务器内部错误    | 500      | Mnemosync 内部错误  |
 
 **错误响应格式**:
 ```json

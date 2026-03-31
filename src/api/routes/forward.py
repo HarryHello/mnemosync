@@ -177,27 +177,35 @@ async def _store_conversation(
     Args:
         messages: 请求消息列表
         response: 上游响应
-        api_key_id: API Key ID (用于标识来源)
+        api_key_id: API Key ID (用于标识前端来源)
+
+    Note:
+        当前版本 source_user 使用固定值，所有对话视为同一对话方。
+        未来扩展时可根据 api_key_id 或 request.user 字段区分对话方。
     """
     try:
+        # 当前版本：所有记忆属于同一对话方
+        # TODO: 未来根据 request.user 或 api_key_id 映射到对话方标识
+        source_user = "default"
+
         # 存储用户消息
         for msg in messages:
             if msg.get("role") == "user":
                 entry = MemoryEntry.create(
                     content=msg.get("content", ""),
                     role="user",
-                    source_user=api_key_id,
+                    source_user=source_user,
                     visibility=Visibility.SOURCE_RESTRICTED,
                 )
                 await MEMORY_STORE.save(entry)
 
-        # 存储助手回复
+        # 存储助手回复 (属于同一对话)
         if response.get("choices"):
             assistant_content = response["choices"][0]["message"].get("content", "")
             entry = MemoryEntry.create(
                 content=assistant_content,
                 role="assistant",
-                source_user="assistant",
+                source_user=source_user,  # 与用户消息相同的 source_user
                 visibility=Visibility.SOURCE_RESTRICTED,
             )
             await MEMORY_STORE.save(entry)
@@ -217,23 +225,26 @@ async def _store_streamed_conversation(
         # 解析流式响应，提取完整内容
         assistant_content = _parse_stream_chunks(chunks)
 
+        # 当前版本：所有记忆属于同一对话方
+        source_user = "default"
+
         # 存储用户消息
         for msg in messages:
             if msg.get("role") == "user":
                 entry = MemoryEntry.create(
                     content=msg.get("content", ""),
                     role="user",
-                    source_user=api_key_id,
+                    source_user=source_user,
                     visibility=Visibility.SOURCE_RESTRICTED,
                 )
                 await MEMORY_STORE.save(entry)
 
-        # 存储助手回复
+        # 存储助手回复 (属于同一对话)
         if assistant_content:
             entry = MemoryEntry.create(
                 content=assistant_content,
                 role="assistant",
-                source_user="assistant",
+                source_user=source_user,  # 与用户消息相同的 source_user
                 visibility=Visibility.SOURCE_RESTRICTED,
             )
             await MEMORY_STORE.save(entry)
