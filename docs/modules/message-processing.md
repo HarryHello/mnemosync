@@ -109,11 +109,25 @@ sk-ghi11111...  →  Web 聊天室
 - 按时间倒序 (最新的优先)
 - 限制返回数量 (默认 20 条)
 
+**当前实现**:
+```python
+# 当前版本：加载所有记忆，不区分用户
+memories = await MEMORY_STORE.query(
+    source_user=None,  # TODO: 根据 api_key_id 过滤
+    limit=20,
+)
+```
+
 **记忆类型**:
 - 用户偏好/习惯
 - 情感事件
 - 事实信息
 - 对话片段
+
+**时间戳**:
+- `created_at`: 记忆创建时间 (自动生成)
+- `last_accessed`: 最后访问时间 (预留)
+- `expires_at`: 过期时间 (预留)
 
 ---
 
@@ -170,6 +184,40 @@ sk-ghi11111...  →  Web 聊天室
 [3] assistant: 历史回复 1
 [4] user:   当前消息
 ```
+
+**设计说明**:
+
+| 决策 | 说明 |
+|------|------|
+| **记忆放在 system 段末尾** | 与人格提示词合并为一个 system 消息，避免多个 system 消息导致模型混淆 |
+| **记忆加载与合并分离** | `MemoryLoader` 负责查询，`ContextMerger` 负责合并，职责清晰 |
+| **按时间倒序加载** | 最新的记忆优先，限制数量 (默认 20 条) 控制 Token 消耗 |
+
+**实现示例**:
+
+```python
+# 1. 加载历史记忆
+memories = await MEMORY_STORE.query(
+    source_user="default",
+    limit=20,
+)
+
+# 2. 合并上下文
+merged = merge_context(
+    memories=memories,      # 历史记忆
+    messages=current_msg,   # 当前消息
+    system_prompt=persona,  # 人格提示词
+)
+
+# 3. 发送给上游
+response = await forwarder.send(messages=merged)
+```
+
+**去重处理**:
+
+在合并前，对前端消息进行去重：
+- 从后向前遍历，保留每条消息的最后一次出现
+- 基于 `(role, content)` 哈希比对
 
 ---
 
