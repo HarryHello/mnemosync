@@ -390,8 +390,8 @@ CREATE INDEX idx_persona_user ON relationships(persona_id, user_id);
     *   自定义记忆可见性决策逻辑。
     *   实现接口：`can_access(memory, current_user, relationship) -> bool`
 5.  **情境匹配 (`ContextMatcher`)**:
-    *   未来用于三层记忆模型的情境激活逻辑。
-    *   实现接口：`match(request_meta) -> list[layer_names]`
+    *   未来用于记忆相关性排序和情境激活。
+    *   实现接口：`match(context: str) -> list[MemoryEntry]`
 
 ---
 
