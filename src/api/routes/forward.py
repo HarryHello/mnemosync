@@ -18,6 +18,7 @@ from src.api.schemas.forward import (
 )
 from src.modules.forward import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
 from src.modules.memory import SqliteMemoryStore, MemoryEntry, Visibility
+from src.modules.extraction import extract_latest_user_message
 
 # OpenAI 兼容的路由，使用 /v1 前缀
 router = APIRouter(prefix="/v1")
@@ -188,16 +189,18 @@ async def _store_conversation(
         # TODO: 未来根据 request.user 或 api_key_id 映射到对话方标识
         source_user = "default"
 
-        # 存储用户消息
-        for msg in messages:
-            if msg.get("role") == "user":
-                entry = MemoryEntry.create(
-                    content=msg.get("content", ""),
-                    role="user",
-                    source_user=source_user,
-                    visibility=Visibility.SOURCE_RESTRICTED,
-                )
-                await MEMORY_STORE.save(entry)
+        # 提取最新的一条用户消息
+        latest_user_msg = extract_latest_user_message(messages)
+
+        # 存储最新用户消息
+        if latest_user_msg:
+            entry = MemoryEntry.create(
+                content=latest_user_msg.get("content", ""),
+                role="user",
+                source_user=source_user,
+                visibility=Visibility.SOURCE_RESTRICTED,
+            )
+            await MEMORY_STORE.save(entry)
 
         # 存储助手回复 (属于同一对话)
         if response.get("choices"):
@@ -228,16 +231,18 @@ async def _store_streamed_conversation(
         # 当前版本：所有记忆属于同一对话方
         source_user = "default"
 
-        # 存储用户消息
-        for msg in messages:
-            if msg.get("role") == "user":
-                entry = MemoryEntry.create(
-                    content=msg.get("content", ""),
-                    role="user",
-                    source_user=source_user,
-                    visibility=Visibility.SOURCE_RESTRICTED,
-                )
-                await MEMORY_STORE.save(entry)
+        # 提取最新的一条用户消息
+        latest_user_msg = extract_latest_user_message(messages)
+
+        # 存储最新用户消息
+        if latest_user_msg:
+            entry = MemoryEntry.create(
+                content=latest_user_msg.get("content", ""),
+                role="user",
+                source_user=source_user,
+                visibility=Visibility.SOURCE_RESTRICTED,
+            )
+            await MEMORY_STORE.save(entry)
 
         # 存储助手回复 (属于同一对话)
         if assistant_content:
