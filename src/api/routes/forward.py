@@ -19,6 +19,7 @@ from src.api.schemas.forward import (
 from src.modules.forward import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
 from src.modules.memory import SqliteMemoryStore, MemoryEntry, Visibility
 from src.modules.extraction import extract_latest_user_message
+from src.modules.context import merge_context, deduplicate_messages
 
 # OpenAI 兼容的路由，使用 /v1 前缀
 router = APIRouter(prefix="/v1")
@@ -69,24 +70,46 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
 
     处理流程:
     1. 验证 API Key (中间件已完成)
-    2. 转发给上游模型
-    3. 存储对话记录 (异步)
-    4. 返回响应
+    2. 加载历史记忆
+    3. 合并上下文 (历史记忆 + 当前消息)
+    4. 转发给上游模型
+    5. 存储对话记录 (异步)
+    6. 返回响应
     """
     # 初始化记忆存储
     await MEMORY_STORE.init_db()
 
+    # 转换为 dict 格式
+    messages_dict = [msg.model_dump() for msg in request.messages]
+
+    # 去重
+    messages_dict = deduplicate_messages(messages_dict)
+
+    # 加载历史记忆 (所有记忆，当前版本不区分用户)
+    # TODO: 根据 api_key_id 或 user_identifier 过滤
+    memories = await MEMORY_STORE.query(
+        source_user=None,  # 加载所有记忆
+        limit=20,          # 最多 20 条历史
+    )
+    memories_dict = [
+        {"role": mem.role, "content": mem.content}
+        for mem in memories
+    ]
+
+    # 合并上下文
+    merged_messages = merge_context(
+        memories=memories_dict,
+        messages=messages_dict,
+    )
+
     # 创建转发器
     async with Forwarder(UPSTREAM_CONFIG) as forwarder:
         try:
-            # 转换为 dict 格式
-            messages_dict = [msg.model_dump() for msg in request.messages]
-
             if request.stream:
                 # 流式响应
                 return await _handle_stream(
                     forwarder=forwarder,
-                    messages=messages_dict,
+                    messages=merged_messages,  # 使用合并后的上下文
                     request=request,
                     http_request=http_request,
                 )
@@ -94,7 +117,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
                 # 非流式响应
                 return await _handle_non_stream(
                     forwarder=forwarder,
-                    messages=messages_dict,
+                    messages=merged_messages,  # 使用合并后的上下文
                     request=request,
                     http_request=http_request,
                 )
