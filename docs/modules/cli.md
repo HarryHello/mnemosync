@@ -1,14 +1,15 @@
 # 命令行环境
 
-> **系统版本**: v0.0.0  
-> **文档状态**: 初稿  
-> **创建时间**: 2026-03-25  
-> **最后更新**: 2026-03-26  
-> **作者**: HarryHelloo  
-> **最后更新**: HarryHelloo
+> **系统版本**: v0.2.0
+> **文档状态**: 设计中
+> **创建时间**: 2026-03-25
+> **最后更新**: 2026-07-12
+> **作者**: HarryHelloo
 
 ## 目的
 为了方便无GUI环境的运行以及开发测试, 我们选择提供属于 Mnemosync 的命令行应用.
+
+> **v0.2.0 关键变化**：CLI 中的 LLM 服务管理命令（`ad-service` / `set-main-model` / `set-assist-model` 等）现在用于配置**多 Agent 系统使用的模型**——主模型供主对话 Agent 使用，辅助模型供记忆分析/关系分析/代理思考 Agent 使用。详见 [LLM 服务管理文档](llm-service.md)。
 
 ## 运行示例
 理想情况下, 命令行运行应当类似如下流程:  
@@ -235,3 +236,22 @@ Mnemosync > set-assist-model siliconflow1 Qwen/Qwen3-8B
 ```terminaloutput
 Change assist model to Qwen/Qwen3-8B from siliconflow1 successfully!
 ```
+
+#### 测试模型连接
+在配置模型前，可用 `test-model` 验证服务商和模型是否可达：
+```shell
+Mnemosync > test-model siliconflow Qwen/Qwen3.5-397B-A17B
+```
+
+```terminaloutput
+✓ Connection successful. Response time: 234ms.
+```
+
+---
+
+## 版本历史
+
+| 版本 | 日期 | 变更说明 |
+|------|------|----------|
+| v0.0.0 | 2026-03-25 | 初始 CLI 设计 |
+| v0.2.0 | 2026-07-12 | 补全 LLM 服务管理命令文档；说明命令在多 Agent 架构中的作用（配置主/辅助模型）；新增 test-model 示例 |

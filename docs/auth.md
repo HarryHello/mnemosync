@@ -1,6 +1,7 @@
 # 认证 API 文档
 
-> **最后更新**: 2026-03-29
+> **最后更新**: 2026-07-12
+> **系统版本**: v0.2.0
 
 ---
 
@@ -264,3 +265,6 @@ A: 可以生成多个 API Key，但它们共享同一人格配置。API Key 用�
 
 ### Q: 未来会支持多用户吗？
 A: 多人格/多用户支持是未来规划（v1.0+），当前专注于单人格场景的完善。
+
+### Q: API Key 鉴权和代理思考模式是什么关系？
+A: 两者独立。API Key 用于鉴权（验证前端身份），代理思考模式由请求头 `X-Enable-Proxy-Thinking: true` 单独控制——鉴权通过后，主对话 Agent 前是否插入代理思考 Agent 取决于该请求头。详见 [Agent 设计文档 §4](modules/agents.md#4-agent-3-代理思考-agent-proxy-thinking-agent) 和 [配置文档 §6](configuration.md#6-agent-编排配置)。
