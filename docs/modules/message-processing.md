@@ -1,617 +1,357 @@
-# 消息处理流程
+# 消息处理流程 | Message Processing Flow
 
-> **模块版本**: v0.1.0
-> **文档状态**: 初稿
+> **系统版本**: v0.2.0
+> **文档状态**: 设计中
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-03-29
+> **最后更新**: 2026-07-12
 > **作者**: HarryHelloo
 
 ---
 
 ## 1. 概述 (Overview)
 
-本文档描述 Mnemosync 从接收前端请求到转发给上游模型的完整消息处理流程。
+本文档描述 Mnemosync v0.2.0 从接收前端请求到返回回复、再到异步记忆处理的完整流程。
 
-### 1.1 核心原则
+### 1.1 核心变化 (v0.1.0 → v0.2.0)
 
-| 原则            | 说明                        |
-|---------------|---------------------------|
-| **预处理优先**     | 所有记忆加载、清洗、合并必须在转发前完成      |
-| **流式透传**      | 上游的 SSE 流式响应零缓冲透传给前端      |
-| **无状态转发**     | 不维护运行时状态，状态持久化至存储层        |
-| **OpenAI 兼容** | 请求/响应格式严格遵循 OpenAI API 标准 |
+| 维度 | v0.1.0（确定性管道） | v0.2.0（Agent 编排） |
+|------|---------------------|---------------------|
+| **处理模型** | 10 步线性管道 | LangGraph StateGraph 多节点编排 |
+| **记忆加载** | SQL 查询 + 关键词匹配 | embedding 语义检索 + reranker 精排 |
+| **记忆存储** | 直接 SQLite INSERT | 记忆分析 Agent (ReAct: 提取 + 衰减评估) → ChromaDB + SQLite |
+| **短期记忆** | 无 | LangGraph checkpoint |
+| **去重** | MD5 哈希 | 消息提取（精确匹配）+ Agent 语义查重（embedding） |
+| **关系更新** | 无 | 关系分析 Agent (CoT) 并行执行 |
 
-### 1.2 处理流程总览
+### 1.2 核心原则
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  消息处理流水线 (Message Processing Pipeline)                        │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ① 接收请求 → ② API 鉴权 → ③ 解析消息 → ④ 加载记忆                  │
-│       ↓                                                              │
-│  ⑧ 转发上游 ← ⑦ 合并上下文 ← ⑥ 清洗提示词 ← ⑤ 筛选新消息            │
-│       ↓                                                              │
-│  ⑨ 流式响应 ← ⑩ 存储记忆                                             │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 2. 流程步骤详解
-
-### 步骤 1: 接收请求
-
-**端点**: `POST /v1/chat/completions`
-
-**请求头**:
-- `Authorization: Bearer sk-<api-key>`
-- `Content-Type: application/json`
-
-**请求体** (OpenAI 兼容格式):
-```json
-{
-  "model": "gpt-4",
-  "messages": [...],
-  "stream": true,
-  "temperature": 0.7
-}
-```
-
----
-
-### 步骤 2: API 鉴权
-
-**验证内容**:
-1. API Key 格式验证 (必须以 `sk-` 开头)
-2. API Key 有效性验证 (存在于数据库且状态为 active)
-3. 记录 API Key 使用时间 (异步，不阻塞请求)
-
-**失败处理**:
-- 格式错误 → `401 Invalid API key format`
-- 无效/已撤销 → `401 Invalid or inactive API key`
-
-**前端来源识别**:
-```
-API Key         →  前端来源
-sk-abc12345...  →  AstrBot 机器人
-sk-def67890...  →  AIRI 桌宠
-sk-ghi11111...  →  Web 聊天室
-
-所有 Key 共享同一人格配置和记忆池
-```
-
----
-
-### 步骤 3: 解析消息
-
-**消息分类**:
-| 角色 | 用途 |
-|------|------|
-| `system` / `developer` | 人格提示词、系统指令 |
-| `user` | 用户消息 |
-| `assistant` | 助手回复 |
-| `tool` | 工具调用结果 |
-
-**用户标识提取**:
-1. 优先使用 `request.user` 字段
-2. 从 `user` 消息的 `name` 字段提取
-3. 无标识则视为匿名用户
-
----
-
-### 步骤 4: 加载记忆
-
-**查询条件**:
-- 按来源用户筛选 (`source_user`)
-- 按可见性过滤 (`visibility`)
-- 按时间倒序 (最新的优先)
-- 限制返回数量 (默认 20 条)
-
-**当前实现**:
-```python
-# 当前版本：加载所有记忆，不区分用户
-memories = await MEMORY_STORE.query(
-    source_user=None,  # TODO: 根据 api_key_id 过滤
-    limit=20,
-)
-```
-
-**记忆类型**:
-- 用户偏好/习惯
-- 情感事件
-- 事实信息
-- 对话片段
-
-**时间戳**:
-- `created_at`: 记忆创建时间 (自动生成)
-- `last_accessed`: 最后访问时间 (预留)
-- `expires_at`: 过期时间 (预留)
-
----
-
-### 步骤 5: 可见性检查与消息筛选
-
-**可见性规则**:
-
-| 可见性                 | 说明           |
-|---------------------|--------------|
-| `public`            | 所有用户可见       |
-| `friends_only`      | 仅好友及以上关系可见   |
-| `confidential`      | 仅高信任度用户可见    |
-| `source_restricted` | 仅来源用户可见 (默认) |
-
-**新消息筛选**:
-- 计算每条消息的哈希值
-- 与数据库中已有哈希比对
-- 哈希不存在的即为新消息
-
----
-
-### 步骤 6: 提示词清洗
-
-**清洗流水线**:
-
-```
-┌──────────────┐
-│ 1. 去重       │  移除内容哈希重复的消息
-└──────┬───────┘
-       ↓
-┌──────────────┐
-│ 2. 排序       │  按时间戳统一时序 (旧→新)
-└──────┬───────┘
-       ↓
-┌──────────────┐
-│ 3. 压缩       │  截断超出 Token 限制的早期消息
-└──────┬───────┘
-       ↓
-┌──────────────┐
-│ 4. 人格注入   │  插入/替换 system prompt
-└──────────────┘
-```
-
----
-
-### 步骤 7: 合并上下文
-
-**合并顺序**:
-
-```
-[0] system: 人格提示词 ("你是墨小末...")
-[1] system: 相关记忆 ("- 用户叫马达\n- 用户最近压力大...")
-[2] user:   历史对话 1
-[3] assistant: 历史回复 1
-[4] user:   当前消息
-```
-
-**设计说明**:
-
-| 决策 | 说明 |
-|------|------|
-| **记忆放在 system 段末尾** | 与人格提示词合并为一个 system 消息，避免多个 system 消息导致模型混淆 |
-| **记忆加载与合并分离** | `MemoryLoader` 负责查询，`ContextMerger` 负责合并，职责清晰 |
-| **按时间倒序加载** | 最新的记忆优先，限制数量 (默认 20 条) 控制 Token 消耗 |
-
-**实现示例**:
-
-```python
-# 1. 加载历史记忆
-memories = await MEMORY_STORE.query(
-    source_user="default",
-    limit=20,
-)
-
-# 2. 合并上下文
-merged = merge_context(
-    memories=memories,      # 历史记忆
-    messages=current_msg,   # 当前消息
-    system_prompt=persona,  # 人格提示词
-)
-
-# 3. 发送给上游
-response = await forwarder.send(messages=merged)
-```
-
-**去重处理**:
-
-在合并前，对前端消息进行去重：
-- 从后向前遍历，保留每条消息的最后一次出现
-- 基于 `(role, content)` 哈希比对
-
----
-
-### 步骤 8: 转发上游
-
-**连接管理**:
-- 使用连接池复用 HTTP 连接
-- 配置超时时间 (连接 10s, 读取 30s)
-- 限制最大连接数 (默认 100)
-
-**请求格式**:
-```json
-{
-  "model": "gpt-4",
-  "messages": ["合并后的消息列表"],
-  "stream": true,
-  "temperature": 0.7
-}
-```
-
----
-
-### 步骤 9: 流式响应透传
-
-**SSE 格式**:
-```
-data: {"choices":[{"delta":{"content":"你"}}]}
-
-data: {"choices":[{"delta":{"content":"好"}}]}
-
-data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
-
-data: [DONE]
-```
-
-**透传原则**:
-- 零缓冲，收到即转发
-- 保持原始格式不变
-- 确保首字延迟 (TTFT) 最小化
-
----
-
-### 步骤 10: 异步记忆存储
-
-**存储原则**:
 | 原则 | 说明 |
 |------|------|
-| **异步执行** | 不阻塞响应返回，使用 `asyncio.create_task()` |
-| **错误隔离** | 存储失败不影响用户响应，仅记录日志 |
-| **完整记录** | 同时存储用户消息和助手回复 |
-| **默认隐私** | 默认可见性为 `source_restricted` |
-
-**存储流程**:
-```
-上游响应 → 收集完整内容 → 创建 MemoryEntry → SQLite 存储
-                                    ↓
-                              失败重试 (3 次)
-                                    ↓
-                              失败则记录日志
-```
-
-**存储内容**:
-| 字段 | 说明 | 示例 |
-|------|------|------|
-| `content` | 消息内容 | "我叫马达，最近工作压力大" |
-| `role` | 消息角色 | `user` / `assistant` |
-| `source_user` | 来源标识 | API Key ID |
-| `visibility` | 可见性 | `source_restricted` |
-| `emotional_tags` | 情感标签 | `["stress", "sad"]` |
-| `created_at` | 创建时间 | ISO 8601 格式 |
-
-**流式响应处理**:
-1. 收集所有 SSE 分块
-2. 解析 `delta.content` 并拼接
-3. 创建 MemoryEntry 存储
-
-**关系更新** (异步):
-- 调用小模型分析对话语义
-- 更新亲密度/信任度
-- 记录互动次数
-
-**错误处理**:
-| 失败场景 | 处理策略 |
-|---------|---------|
-| 数据库锁定 | 重试 3 次，每次间隔 100ms |
-| 磁盘空间不足 | 记录错误日志，跳过存储 |
-| 数据格式错误 | 记录错误日志，跳过存储 |
+| **预处理优先** | 所有记忆加载、合并必须在转发前完成 |
+| **流式透传** | 上游 SSE 流式响应零缓冲透传给前端 |
+| **异步后处理** | 记忆分析、入库不阻塞响应返回 |
+| **Agent 隔离** | 单个 Agent 失败不影响其他 Agent 和主流程 |
 
 ---
 
-## 3. 完整时序图
+## 2. 流程总览
+
+```
+                            ┌─────────────┐
+                            │  前端请求    │
+                            │  POST /v1/  │
+                            │  chat/      │
+                            │  completions│
+                            └──────┬──────┘
+                                   │
+                            ┌──────▼──────┐
+                            │  API Gateway │
+                            │  鉴权 + 消息  │
+                            │  提取        │
+                            └──────┬──────┘
+                                   │ state.messages, state.extracted_new
+                                   │
+                     (可选) 代理思考 Agent (CoT) ← state.proxy_thinking_enabled
+                            ┌──────▼──────┐
+                            │ 主对话 Agent │ ← vector_search (工具调用)
+                            │  加载记忆    │ ← LangGraph checkpoint
+                            │  拼装上下文  │
+                            │  生成回复    │
+                            └──┬──────┬───┘
+                               │      │
+                   流式返回给用户      │ state.extracted_new
+                               │      │ （异步，不阻塞）
+                               │      ▼
+                               │ ┌──────────────┐
+                               │ │ 记忆分析 Agent│ ← ReAct
+                               │ │ 提取候选记忆  │ ← vector_search (查重/关联)
+                               │ │ 判断等级+标签 │ ← emotion_analyzer
+                               │ │ 衰减评估     │ ← time_decay_calculator
+                               │ └──────┬───────┘
+                               │        │
+                               │   ┌────┴────┐
+                               │   ▼         ▼
+                               │ ┌──────┐ ┌──────────┐
+                               │ │ 入库  │ │ 关系分析  │ （并行）
+                               │ │向量化 │ │ Agent     │
+                               │ │+索引 │ │ CoT       │
+                               │ └──┬───┘ └────┬──────┘
+                               │    │          │
+                               │    └────┬─────┘
+                               │         ▼
+                               │ ┌──────────────┐
+                               │ │ ChromaDB     │
+                               │ │ + SQLite     │
+                               │ └──────────────┘
+                               │
+┌──────────────────────────────┘
+│  整个流程结束
+│  用户早已收到回复
+└──────────────────────────────
+```
+
+---
+
+## 3. 流程步骤详解
+
+### 阶段 1: 请求接收与预处理（基础设施）
+
+**执行者**: API Gateway（非 Agent）
+
+```
+1. 接收 POST /v1/chat/completions
+2. 验证 Authorization: Bearer sk-<api-key>
+3. 解析 source_user（从 API Key 映射或 request.user 字段）
+4. 读取 proxy_thinking_enabled（请求头 X-Enable-Proxy-Thinking）
+5. 消息提取：messages → 剔除历史 → extracted_new
+6. 写入 state: {messages, extracted_new, source_user, persona, thread_id, proxy_thinking_enabled}
+```
+
+**延迟约束**: 鉴权 < 10ms, 消息提取 < 10ms, 总计 < 20ms
+
+---
+
+### 阶段 2: 主对话生成（同步，阻塞流式返回）
+
+**执行者**: 主对话 Agent（含可选的代理思考 Agent 前置步骤）
+
+```
+0. [可选] 若 proxy_thinking_enabled:
+   → 代理思考 Agent (CoT): 理解意图 → 回顾记忆 → 分析需求 → 制定策略
+   → 输出注入主对话 Agent 的 system prompt
+
+1. 加载永久记忆（importance=1.0, memory_type=PERMANENT）
+   → SQLite 直接查询，不经过 embedding（永久记忆始终全量加载）
+
+2. 加载用户关系状态
+   → SQLite 查询: {type, intimacy_score, trust_level, notes}
+
+3. 语义检索相关普通记忆
+   → 调用 vector_search(query=最新用户消息, top_k=5, source_user=...)
+   → 内部流程: embedding → ChromaDB 粗筛 → reranker 精排 → 返回 top 5
+
+4. 加载短期记忆
+   → LangGraph checkpoint（同一 thread_id 的历史消息）
+
+5. 拼装上下文
+   [0] system: 人格 prompt + 永久记忆列表 + 检索记忆 + 关系摘要 (+ 代理思考结果)
+   [1+] user/assistant: 当前对话历史（来自 checkpoint）
+
+6. 调用主模型生成回复
+   （代理思考模式下可用 qwen-turbo 替代 qwen-max）
+
+7. 流式透传 SSE 响应给前端
+   → 零缓冲：收到即转发
+   → 同步收集完整回复内容（供异步存储使用）
+
+8. 异步触发阶段 3（不等待）
+   → asyncio.create_task(阶段3)
+```
+
+**延迟约束**: 嵌入检索 < 150ms（可跳过 reranker 降至 50ms），TTFT（含上游模型）< 1s
+
+---
+
+### 阶段 3: 记忆分析（异步）
+
+**执行者**: 记忆分析 Agent (ReAct)
+
+**第一部分：提取新记忆**
+
+```
+ReAct 循环:
+
+第 1 轮:
+  Think: "用户说了什么新信息？有什么值得记的吗？"
+  Act: vector_search(extracted_new 的文本, top_k=10)
+  Observe: 已有记忆列表 → 判断是否重复/冲突/关联
+
+第 2 轮（如有候选记忆）:
+  Think: "这条信息是什么类型？重要性如何？是否永久？"
+  Act: emotion_analyzer(候选记忆的原文)
+  Observe: {emotion, intensity, category}
+
+第 3 轮（如涉及永久记忆）:
+  Think: "设为永久记忆需要检查限额。如超出需选一条覆盖。"
+  Act: 输出最终决策（含 overrides 字段）
+```
+
+**第二部分：衰减评估（合并入同一 Agent）**
+
+```
+对每条需评估的已有普通记忆:
+
+1. Act: time_decay_calculator(memory_id) → 理论优先级基线
+2. Think: 综合 5 维度（时间基线、访问频率、情绪强度、关联性、对话佐证）
+3. Think: Reflection 自检（是否过于依赖公式？是否遗漏情绪因素？）
+4. Act: 输出衰减决策 {memory_id, new_priority, decision, factors, reflection}
+
+自动跳过: 新创建（< 24h）的记忆
+```
+
+**输出**:
+```json
+{
+  "new_memories": [...],
+  "decay_evaluations": [...],
+  "decay_summary": {...}
+}
+```
+
+**约束**: 提取阶段 1-5 轮，衰减阶段 1-2 轮；异步执行，不阻塞用户
+
+---
+
+### 阶段 4: 关系分析 + 入库（异步，并行）
+
+**并行节点 A**: 关系分析 Agent (CoT)
+
+```
+1. 调用 emotion_analyzer(本轮对话文本片段)
+2. 识别信号: 称呼变化 / 隐私分享 / 情感表达 / 疏远信号
+3. 量化影响: 每个信号 → 亲密度/信任度 delta
+4. 综合计算: 当前值 + delta → 新值
+5. 输出: {signals_detected, intimacy_delta, trust_delta, new_intimacy_score, new_relationship_type}
+```
+
+**并行节点 B**: 入库（向量检索 Agent）
+
+```
+1. 接收阶段 3 输出: 新记忆 + 衰减决策
+2. 新记忆: content → text-embedding-v3 → ChromaDB.add + SQLite INSERT
+3. 衰减更新: SQLite UPDATE priority, is_forgotten
+4. 关系更新: SQLite UPSERT relationships
+5. 更新消息历史（供消息提取使用）
+```
+
+**并行说明**: 两个节点无数据依赖，可完全并行执行。一个失败不影响另一个。
+
+---
+
+## 4. 完整时序图
 
 ```mermaid
 sequenceDiagram
-    participant Client as 前端客户端
-    participant Gateway as API Gateway
-    participant Auth as 认证中间件
-    participant Memory as 记忆管理器
-    participant Pipeline as 清洗流水线
-    participant Forwarder as 上游转发器
-    participant Upstream as 上游模型
-    participant Store as 记忆存储
+    participant Client as 前端
+    participant GW as API Gateway
+    participant PT as 代理思考 Agent
+    participant Main as 主对话 Agent
+    participant VS as 向量检索 Agent
+    participant Embed as DashScope embedding
+    participant Rerank as DashScope reranker
+    participant Upstream as 主模型
+    participant MA as 记忆分析 Agent
+    participant EA as 情绪分析工具
+    participant TD as 时间衰减工具
+    participant RA as 关系分析 Agent
+    participant ChDB as ChromaDB
+    participant SQL as SQLite
 
-    Client->>Gateway: POST /v1/chat/completions
-    Gateway->>Auth: 验证 API Key
-    Auth-->>Gateway: 验证通过
+    Note over Client,SQL: ═══════ 阶段 1: 请求接收 (同步, <20ms) ═══════
+    Client->>GW: POST /v1/chat/completions
+    GW->>GW: API Key 鉴权 + 消息提取
 
-    Gateway->>Memory: 查询相关记忆
-    Memory-->>Gateway: list[MemoryEntry]
+    Note over Client,SQL: ═══════ 阶段 2: 主对话 (同步, 等待流式返回) ═══════
 
-    Gateway->>Pipeline: 执行清洗流水线
-    Pipeline->>Pipeline: 1. 去重
-    Pipeline->>Pipeline: 2. 排序
-    Pipeline->>Pipeline: 3. 压缩
-    Pipeline->>Pipeline: 4. 人格注入
-    Pipeline-->>Gateway: 最终 messages
-
-    Gateway->>Forwarder: 转发请求
-    Forwarder->>Upstream: POST /chat/completions
-    
-    alt 流式响应
-        Upstream-->>Forwarder: SSE Stream
-        Forwarder-->>Gateway: 流式分块
-        Gateway-->>Client: SSE Stream
-    else 非流式
-        Upstream-->>Forwarder: JSON Response
-        Forwarder-->>Gateway: JSON
-        Gateway-->>Client: JSON
+    opt 代理思考模式
+        GW->>PT: extracted_new + source_user
+        PT->>VS: vector_search (背景检索)
+        VS-->>PT: 相关记忆
+        PT->>EA: emotion_analyzer (用户消息)
+        EA-->>PT: 情绪标签
+        PT-->>Main: CoT 推理结果
     end
 
-    rect rgb(255, 240, 245)
-        Note over Gateway, Store: 异步存储 (不阻塞响应)
-        Gateway->>Store: 存储用户消息
-        Gateway->>Store: 存储助手回复
-        Note over Store: 失败重试 (3 次)<br/>失败则记录日志
+    GW->>Main: state
+    Main->>SQL: 加载永久记忆
+    SQL-->>Main: [永久记忆 × 7]
+    Main->>SQL: 加载关系状态
+    SQL-->>Main: {intimacy, trust, type}
+    Main->>VS: vector_search(query, top_k=5)
+    VS->>Embed: text-embedding-v3(query)
+    Embed-->>VS: query_vector
+    VS->>ChDB: similarity_search(query_vector, 10)
+    ChDB-->>VS: top 10 候选
+    VS->>Rerank: gte-rerank(query, candidates)
+    Rerank-->>VS: 精排 top 5
+    VS-->>Main: [相关记忆 × 5]
+    Main->>Main: 拼装上下文
+    Main->>Upstream: 完整 messages
+    Upstream-->>Main: SSE Stream
+    Main-->>Client: 透传 SSE
+
+    Note over Client,SQL: ═══════ 阶段 3: 异步记忆分析 ═══════
+    Main->>MA: 异步: 新对话内容
+
+    rect rgb(255,248,240)
+        loop ReAct (1-5 轮, 提取新记忆)
+            MA->>MA: Think
+            MA->>VS: vector_search (查重/关联)
+            VS-->>MA: 相关已有记忆
+            MA->>MA: Observe
+            MA->>EA: emotion_analyzer (文本)
+            EA-->>MA: {emotion, intensity}
+            MA->>MA: Observe → Think → Act
+        end
+        rect rgb(248,240,255)
+            loop 衰减评估 (1-2 轮)
+                MA->>TD: time_decay_calculator(memory_id)
+                TD-->>MA: 理论优先级基线
+                MA->>MA: CoT: 5 维度分析 + Reflection 自检
+                MA->>MA: Act: 输出衰减决策
+            end
+        end
+        MA-->>VS: new_memories + decay_evaluations
+        MA-->>RA: 对话内容（并行）
+    end
+
+    rect rgb(240,248,255)
+        par 关系分析
+            RA->>EA: emotion_analyzer (对话片段)
+            EA-->>RA: {emotion, intensity}
+            RA->>RA: CoT: 信号识别 → 量化
+            RA-->>SQL: relationship_delta
+        and 入库
+            VS->>Embed: text-embedding-v3 (每条新记忆)
+            Embed-->>VS: vectors
+            VS->>ChDB: 入库 (id, vector, metadata)
+            VS->>SQL: 元数据 + 衰减更新 + 关系更新
+        end
     end
 ```
-
----
-
-## 4. 记忆存储详解 (Memory Storage Details)
-
-### 4.1 为什么需要存储？
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Mnemosync 记忆同步原理                                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  用户在前端 A 说："我叫马达，最近工作压力大"                   │
-│         ↓                                                    │
-│  存储到 Mnemosync 记忆池                                     │
-│         ↓                                                    │
-│  用户在前端 B 问："你还记得我吗？"                           │
-│         ↓                                                    │
-│  从记忆池加载 → 模型回答："记得，你叫马达，最近工作压力大"    │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-如果不存储，就失去了 Mnemosync 的核心价值——**跨平台人格记忆同步**。
-
----
-
-### 4.2 存储架构
-
-```
-src/modules/memory/
-├── __init__.py          # 导出模块
-├── models.py            # MemoryEntry, Visibility 枚举
-└── store.py             # MemoryStore 协议，SqliteMemoryStore 实现
-```
-
-**MemoryEntry 数据结构**:
-```python
-@dataclass
-class MemoryEntry:
-    id: str                    # 唯一标识
-    content: str               # 记忆内容
-    role: str                  # user / assistant / system
-    source_user: str | None    # 来源用户标识
-    visibility: Visibility     # 可见性
-    custom_policies: list[str] # 自定义策略
-    emotional_tags: list[str]  # 情感标签
-    created_at: datetime       # 创建时间
-    last_accessed: datetime    # 最后访问时间
-    expires_at: datetime       # 过期时间
-```
-
-**Visibility 枚举**:
-| 值 | 说明 |
-|------|------|
-| `PUBLIC` | 公开，所有用户可见 |
-| `FRIENDS_ONLY` | 仅好友可见 |
-| `CONFIDENTIAL` | 仅高信任度用户可见 |
-| `SOURCE_RESTRICTED` | 仅来源用户可见 (默认) |
-
----
-
-### 4.3 SQLite 表结构
-
-```sql
-CREATE TABLE memory_entries (
-    id TEXT PRIMARY KEY,
-    content TEXT NOT NULL,
-    role TEXT NOT NULL,
-    source_user TEXT,
-    visibility TEXT NOT NULL DEFAULT 'source_restricted',
-    custom_policies TEXT,       -- JSON 数组，逗号分隔
-    emotional_tags TEXT,        -- JSON 数组，逗号分隔
-    created_at TIMESTAMP NOT NULL,
-    last_accessed TIMESTAMP,
-    expires_at TIMESTAMP
-);
-
--- 索引优化
-CREATE INDEX idx_source_user ON memory_entries(source_user);
-CREATE INDEX idx_visibility ON memory_entries(visibility);
-CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
-```
-
----
-
-### 4.4 异步存储实现
-
-```python
-# src/api/routes/forward.py
-
-async def create_chat_completion(request, http_request):
-    """处理聊天请求."""
-    
-    # 1. 发送到上游
-    response = await forwarder.send(messages=...)
-    
-    # 2. 立即返回响应
-    return JSONResponse(content=response)
-    
-    # 3. 异步存储 (不阻塞)
-    asyncio.create_task(
-        _store_conversation(
-            messages=request.messages,
-            response=response,
-            api_key_id=http_request.state.api_key_id,
-        )
-    )
-```
-
-**关键点**:
-- 使用 `asyncio.create_task()` 创建后台任务
-- 响应已经返回，存储失败不影响用户
-- 错误仅记录日志，不抛出异常
-
----
-
-### 4.5 流式响应存储
-
-```python
-async def _handle_stream(forwarder, messages, request):
-    """处理流式请求."""
-    
-    collected_chunks = []
-    
-    async def stream_generator():
-        async for chunk in forwarder.send_stream(messages=messages):
-            collected_chunks.append(chunk)
-            yield chunk
-        
-        # 流式结束后，异步存储
-        asyncio.create_task(
-            _store_streamed_conversation(
-                messages=messages,
-                chunks=collected_chunks,
-            )
-        )
-    
-    return StreamingResponse(stream_generator(), media_type="text/event-stream")
-```
-
-**解析逻辑**:
-```python
-def _parse_stream_chunks(chunks: list[bytes]) -> str:
-    """从 SSE 分块提取完整内容."""
-    content_parts = []
-    
-    for chunk in chunks:
-        if chunk == b"data: [DONE]":
-            continue
-        
-        data = json.loads(chunk[6:])  # 移除 "data: "
-        if data.get("choices"):
-            delta = data["choices"][0].get("delta", {})
-            if delta.get("content"):
-                content_parts.append(delta["content"])
-    
-    return "".join(content_parts)
-```
-
----
-
-### 4.6 错误处理策略
-
-| 失败场景       | 处理策略              |
-|------------|-------------------|
-| **数据库锁定**  | 重试 3 次，每次间隔 100ms |
-| **磁盘空间不足** | 记录错误日志，跳过存储       |
-| **数据格式错误** | 记录错误日志，跳过存储       |
-| **连接超时**   | 重试 1 次，失败后放弃      |
-
-**错误日志格式**:
-```
-[ERROR] Failed to store conversation: database is locked
-  - messages: 2 entries
-  - response: 1 entry
-  - action: Retrying in 100ms (attempt 1/3)
-```
-
----
-
-### 4.7 存储逻辑说明
-
-**source_user 字段设计**:
-| 字段 | 说明 | 当前版本 | 未来扩展 |
-|------|------|---------|---------|
-| `source_user` | 对话方标识 | 可固定为默认值 | 支持多对话方 |
-| `role` | 消息角色 | `user` / `assistant` | 不变 |
-
-**示例**:
-```
-对话：马达 (用户) ↔ 墨小末 (人格)
-
-存储:
-- MemoryEntry(content="我叫马达", role="user", source_user="马达")
-- MemoryEntry(content="你好马达", role="assistant", source_user="马达")
-                                      ↑ 助手回复也属于马达的对话
-```
-
-> **注意**: 当前版本 `source_user` 可暂不实现，所有记忆存储为同一默认值。
-> 未来支持多对话方时，再根据 API Key 或 `request.user` 字段提取对话方标识。
 
 ---
 
 ## 5. 错误处理
 
-| 错误         | HTTP 状态码 | 说明              |
-|------------|----------|-----------------|
-| 无效 API Key | 401      | API Key 不存在或已撤销 |
-| 请求格式错误     | 400      | 请求体不符合 Schema   |
-| 上游服务错误     | 502      | 上游模型返回错误        |
-| 上游超时       | 504      | 上游模型超时          |
-| 服务器内部错误    | 500      | Mnemosync 内部错误  |
+| 失败节点 | 影响范围 | 处理策略 |
+|----------|----------|----------|
+| **消息提取失败** | 阻塞主流程 | 返回 400 错误 |
+| **代理思考失败** | 退化为正常模式 | 跳过，直接主对话 |
+| **永久记忆加载失败** | 主对话缺少永久记忆 | 跳过，仅用 checkpoint + 检索记忆 |
+| **vector_search 失败** | 主对话缺少语义记忆 | 跳过，仅用永久记忆 + checkpoint |
+| **主模型调用失败** | 阻塞 | 返回 502 错误（UpstreamError） |
+| **记忆分析 Agent 失败** | 本次对话不存储 | 记录日志，不阻塞回复 |
+| **衰减评估失败** | 本次不更新衰减 | 记录日志，下次定期任务补做 |
+| **关系分析 Agent 失败** | 本次不更新关系 | 记录日志 |
+| **向量入库失败** | 记忆丢失 | 重试 3 次 + 记录日志 |
 
-**错误响应格式**:
-```json
-{
-  "error": {
-    "message": "Invalid API key",
-    "type": "invalid_request_error",
-    "code": "invalid_api_key"
-  }
-}
-```
+核心原则：**主路径上的失败 → 阻塞返回错误。异步路径上的失败 → 记录日志，不影响用户。**
 
 ---
 
-## 5. 性能指标
+## 6. 性能指标
 
 | 指标 | 目标值 | 说明 |
 |------|--------|------|
-| API 鉴权延迟 | < 10ms | 数据库查询 |
-| 记忆加载延迟 | < 50ms | SQLite 查询 |
-| 清洗流水线延迟 | < 50ms | 确定性算法 |
-| 首字延迟 (TTFT) | < 500ms | 包含上游响应时间 |
-
----
-
-## 6. 数据流向
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  数据流概览                                                  │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  前端请求 → API Gateway → 认证 → 消息解析                   │
-│                              ↓                               │
-│  记忆存储 ← 关系更新 ← 异步存储 ← 响应处理                  │
-│       ↑                        ↑                            │
-│       └────── 记忆加载 ────────┘                            │
-│                              ↓                               │
-│  上游模型 ← 连接池 ← 清洗流水线 ← 上下文合并                │
-│       ↓                                                       │
-│  流式响应 → 前端                                              │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
+| 鉴权 + 消息提取 | < 20ms | SQLite 查询 + 精确匹配 |
+| 代理思考（如启用） | +200-500ms | turbo 推理，不影响 TTFT（在主对话之前） |
+| 永久记忆加载 | < 10ms | SQLite 索引查询 |
+| embedding 检索（含 reranker） | < 300ms | DashScope API + ChromaDB 本地 |
+| embedding 检索（不含 reranker，低精度模式） | < 100ms | 仅 ChromaDB cosine |
+| 上下文拼装 | < 5ms | 内存操作 |
+| 首字延迟 (TTFT) | < 1s | 含上游模型响应时间 |
+| 异步后处理（阶段 3-4） | 1-5s | 不阻塞用户，后台执行 |
 
 ---
 
@@ -619,12 +359,15 @@ def _parse_stream_chunks(chunks: list[bytes]) -> str:
 
 | 模块 | 关系说明 |
 |------|----------|
-| **API Key 管理** | 提供请求鉴权，标识来源用户 |
-| **记忆管理** | 提供记忆加载与存储 |
-| **关系认知** | 提供可见性检查依据 (未来) |
-| **访问策略** | 提供记忆过滤规则 (未来) |
-| **上下文清洗** | 执行去重/排序/压缩 |
-| **上游转发** | 连接模型提供商 |
+| **API Gateway** | 提供鉴权 + 消息提取，写入 state |
+| **代理思考 Agent** | 阶段 2 的可选前置步骤 |
+| **主对话 Agent** | 阶段 2 的执行者 |
+| **记忆分析 Agent** | 阶段 3 的执行者（包含提取和衰减评估） |
+| **关系分析 Agent** | 阶段 4 的并行节点 |
+| **向量检索 Agent** | 阶段 2（检索）+ 阶段 4（入库） |
+| **Forwarder** | 主对话 Agent 通过它转发请求给上游模型 |
+| **LangGraph StateGraph** | 整个流程的编排骨架 |
+| **ChromaDB + SQLite** | 持久化层 |
 
 ---
 
@@ -632,11 +375,13 @@ def _parse_stream_chunks(chunks: list[bytes]) -> str:
 
 | 版本 | 日期 | 变更说明 |
 |------|------|----------|
-| v0.1.0 | 2026-03-29 | 初始流程设计 |
+| v0.1.0 | 2026-03-29 | 初始设计：10 步线性管道 (Gateway → Pipeline → Forwarder) |
+| v0.2.0 | 2026-07-12 | 重构：LangGraph 多 Agent 编排；同步主路径 + 异步后处理；embedding 语义检索；ReAct/CoT 推理；衰减评估合并入记忆分析 Agent；新增代理思考 Agent |
 
 ---
 
 > **维护者提示**:
-> - 任何修改核心数据流的 PR，必须引用本文档并说明理由
-> - 确保所有预处理在转发前完成，严禁依赖上游处理上下文
-> - 流式响应必须零缓冲透传，保证首字延迟不受影响
+> - 主路径（阶段 1-2）的任何改动必须确保 TTFT < 1s 的约束。
+> - 异步路径（阶段 3-4）的 Agent 顺序和并行关系由 LangGraph 节点/边定义，修改前确认无循环依赖。
+> - 代理思考增加约 200-500ms 延迟——此模式应在请求头显式启用，而非默认。
+> - 阶段 4 的两个并行节点（关系分析 + 入库）互不依赖，一个失败不应影响另一个。
