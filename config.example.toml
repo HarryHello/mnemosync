@@ -1,0 +1,95 @@
+# Mnemosync 本地开发配置模板
+#
+# 使用方法：
+#   1. 复制本文件为 config.local.toml：  cp config.example.toml config.local.toml
+#   2. 在 config.local.toml 中填写真实凭证
+#   3. config.local.toml 已被 .gitignore 忽略，不会被提交
+#
+# 本文件可安全提交（不含真实密钥），仅作模板。
+
+# ============================================================================
+# 模型服务商配置
+# ============================================================================
+# Mnemosync 需要四类模型能力（可来自同一服务商，也可来自不同服务商）：
+#   - chat       对话模型（主对话 Agent + 记忆分析/关系分析/代理思考 Agent）
+#   - embedding  嵌入模型（向量检索 Agent 的语义检索）
+#   - rerank     重排序模型（向量检索 Agent 的候选精排）
+#
+# 注意：rerank 端点通常与 chat/embeding 不同！
+#   - DashScope: chat/embedding 走 /compatible-mode/v1，rerank 走 /compatible-api/v1
+#   - 其他服务商（如硅基流动）可能共用同一 base_url
+# 所以 rerank 单独配置 base_url。若服务商无 rerank，注释掉整个 [rerank] 段即可（降级为纯 embedding 检索）。
+
+# ----------------------------------------------------------------------------
+# 服务商 1：对话 + 嵌入（主用）
+# ----------------------------------------------------------------------------
+[chat]
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key  = "sk-your-dashscope-api-key-here"
+
+# 主对话 Agent 用的模型（参数较大，保证回复质量）
+main_model = "qwen-max"
+
+# 辅助 Agent 用的模型（记忆分析/关系分析/代理思考，需支持 function_call）
+# 注意：DashScope 下 qwen-turbo / qwen-plus / qwen-max 支持 function calling
+assist_model = "qwen-turbo"
+
+# ----------------------------------------------------------------------------
+# 嵌入模型（可与 chat 同服务商或不同）
+# ----------------------------------------------------------------------------
+[embedding]
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key  = "sk-your-dashscope-api-key-here"
+model    = "text-embedding-v3"
+# 维度由所选模型决定，不写死。text-embedding-v3 支持 1024(默认)/768/512/256/128/64
+# 若服务商要求显式指定维度，填这里；否则留空由模型默认值决定
+dimensions = 1024
+
+# ----------------------------------------------------------------------------
+# 重排序模型（可选；无则降级为纯 embedding cosine 检索）
+# ----------------------------------------------------------------------------
+[rerank]
+# ⚠️ DashScope 的 rerank 端点与 chat 不同！是 /compatible-api/v1
+base_url = "https://dashscope.aliyuncs.com/compatible-api/v1"
+api_key  = "sk-your-dashscope-api-key-here"
+# gte-rerank 已于 2026-05-30 下线，改用 qwen3-rerank
+model    = "qwen3-rerank"
+# 若你的服务商不提供 rerank，把整个 [rerank] 段注释掉：
+# [rerank]  # disabled
+
+
+# ============================================================================
+# 可选：第二个 chat 服务商（如用硅基流动做对话，DashScope 做嵌入）
+# ============================================================================
+# 取消注释以使用
+# [chat_alt]
+# base_url = "https://api.siliconflow.cn/v1"
+# api_key  = "sk-your-siliconflow-key"
+# main_model = "Qwen/Qwen3-72B"
+# assist_model = "Qwen/Qwen3-8B"
+
+
+# ============================================================================
+# 运行时配置（可选，均有默认值）
+# ============================================================================
+[runtime]
+host = "0.0.0.0"
+port = 16125
+log_level = "info"
+
+[storage]
+# 数据库与持久化目录（相对项目根）
+memory_db_path   = "data/memory.db"
+llm_db_path      = "data/llm_service.db"
+auth_db_path     = "data/auth.db"
+chroma_dir       = "data/chroma"
+
+[memory]
+permanent_limit = 15          # 永久记忆条数上限
+permanent_load_top = 7        # 主对话加载的永久记忆条数
+retrieval_top_k = 5           # 语义检索返回条数
+decay_batch_size = 50         # 衰减 Agent 每次评估条数
+
+[graph]
+checkpoint_backend = "memory" # memory | sqlite
+proxy_thinking_default = false

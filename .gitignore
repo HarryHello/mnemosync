@@ -7,6 +7,10 @@ __pycache__/
 data/
 *.db
 .env
+.env.local
+config.local.toml
+config.local.yaml
+config.local.json
 *.log
 .DS_Store
 .qwen
