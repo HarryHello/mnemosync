@@ -18,7 +18,37 @@
 
 > **当前版本 (v0.2.x)** 为**单人格架构** — 一个 Mnemosync 实例对应一个人格配置。多个 API Key 用于区分不同前端来源（如 AstrBot、AIRI 桌宠、Web 聊天室），而非多用户隔离。所有前端共享同一份记忆池和人格配置。
 
-### 1.2 核心价值主张
+### 1.2 架构哲学：本地组装 + 远端推理
+
+> ⚠️ **重要**：Mnemosync **本地不运行任何大模型**。所有模型推理（包括 Agent 的"思考"）都发生在远端模型服务商上。Mnemosync 本质上仍是一个中间件。
+
+本系统的 Agent 并非本地可执行程序，而是按 LangChain/LangGraph 标准形态构建：
+
+```
+Agent（本地） =  prompt 模板
+              + 工具定义（LangChain Tool 接口）
+              + 推理循环驱动逻辑（ReAct/CoT）
+              + 共享状态（LangGraph StateGraph）
+
+Agent 的"思考" = 远端模型推理（由模型服务商执行）
+```
+
+**职责分工**：
+
+| 层 | 位置 | 职责 |
+|----|------|------|
+| **编排层** | 本地（LangGraph） | 决定何时调用哪个 Agent、如何在 Agent 间传递状态、驱动 ReAct/CoT 循环 |
+| **组装层** | 本地（Agent 节点） | 拼 prompt、序列化工具定义、解析模型返回的 function_call |
+| **传输层** | 本地（Forwarder） | 所有模型调用的唯一 HTTP 出口；管理连接池、超时、SSE 流式 |
+| **推理层** | 远端（模型服务商） | 模型实际执行推理决策，包括 Think/Act/Observe 的"Think"本身 |
+
+**关键推论**：
+
+1. **Forwarder 是所有 Agent 的共用通道** — 每个 Agent 执行时都要通过 Forwarder 把组装好的请求送到服务商。Forwarder 不属于任何单个 Agent，它是模型调用基础设施。
+2. **ReAct/CoT 的循环在本地驱动，推理在远端执行** — 本地代码负责"模型返回 function_call → 执行工具 → 把结果喂回模型 → 再请求"的循环；每一轮的"Think"是模型在远端完成的。
+3. **工具调用由模型自主决策** — 调用哪个工具、调用几次，由远端模型通过 function_call 协议决定，本地不做硬编码顺序。这是 Agent 区别于确定性管道的本质。
+
+### 1.3 核心价值主张
 
 | 维度 | 传统方案 | Mnemosync 方案 |
 |------|----------|---------------|
@@ -118,12 +148,12 @@ v0.2.0（新）：LangGraph 多 Agent 编排
 | 模块 | 类型 | 职责 |
 |------|------|------|
 | **API Gateway** | 基础设施 | API Key 鉴权、请求格式校验、前端来源识别、消息提取 |
+| **Forwarder** | 基础设施（模型调用通道） | **所有 Agent 调用模型的唯一 HTTP 出口**；连接池、超时、SSE 透传；不属于任何单个 Agent |
 | **主对话 Agent** | Agent | 加载人格+记忆+关系状态，生成回复 |
 | **记忆分析 Agent** | Agent (ReAct) | 分析对话提取记忆候选 + 评估已有记忆衰减状态 |
 | **代理思考 Agent** | Agent (CoT) | 可选启用；在弱推理模型上显式 CoT，注入主对话上下文 |
 | **向量检索 Agent** | Agent (工具) | embedding 语义检索 + reranker 精排 + 入库索引 |
 | **关系分析 Agent** | Agent (CoT) | 分析亲密度变化，更新关系状态 |
-| **Forwarder** | 基础设施 | 上游连接池、SSE 透传（保留旧架构） |
 | **消息提取** | 基础设施 | OpenAI messages 格式 → 新内容提取（协议适配） |
 
 ### 3.4 LangGraph StateGraph 设计
@@ -303,18 +333,20 @@ sequenceDiagram
 
 ## 8. 技术栈 (Tech Stack)
 
-| 组件 | 技术选型 | 说明 |
-|------|----------|------|
+| 组件 | 角色 / 能力要求 | 说明 |
+|------|----------------|------|
 | **Agent 编排** | LangGraph + LangChain | StateGraph, node/edge, 条件路由, checkpoint |
-| **主模型（主对话）** | DashScope qwen-max | 高质量对话生成 |
-| **辅助模型（分析/衰减）** | DashScope qwen-turbo | 低成本推理，ReAct/CoT |
-| **嵌入模型** | DashScope text-embedding-v3 | 文本 → 向量 |
-| **重排序模型** | DashScope gte-rerank | 候选精排 |
+| **主模型** | 高质量对话生成 | 用于主对话 Agent；参数较大，保证回复质量 |
+| **辅助模型** | 低成本推理 + function_call 支持 | 用于记忆分析、关系分析、代理思考 Agent；ReAct/CoT |
+| **嵌入模型** | 文本 → 向量 | 用于语义检索；要求与重排序模型配套使用 |
+| **重排序模型** | 候选列表精排 | 用于向量检索精排 |
 | **向量存储** | ChromaDB | 嵌入式向量数据库，轻量部署 |
 | **元数据存储** | SQLite + aiosqlite | 记忆元数据、关系状态、配置 |
 | **API 服务** | FastAPI | API Gateway 层 |
-| **HTTP 客户端** | httpx | 上游转发、DashScope API 调用 |
+| **HTTP 客户端** | httpx | Forwarder 上游转发、模型 API 调用 |
 | **Python** | ≥ 3.12 | |
+
+> **模型选型说明**：具体模型由部署时配置决定（推荐 DashScope 系列模型）。设计文档只规定角色和能力要求，不绑定具体模型名 — 这样切换模型或服务商时无需改动设计。
 
 ---
 
@@ -322,7 +354,7 @@ sequenceDiagram
 
 | 旧模块 | 处理方式 |
 |--------|----------|
-| **Forwarder** (`src/modules/forward/`) | ✅ 保留 — 仍是基础设施，上游转发逻辑不变 |
+| **Forwarder** (`src/modules/forward/`) | ✅ 保留 — API 不变；定位从"Pipeline 末端转发"升级为"所有 Agent 的模型调用通道" |
 | **消息提取** (`src/modules/extraction/`) | ✅ 保留 — 协议适配层，归入 API Gateway |
 | **上下文合并** (`src/modules/context/`) | ❌ 替换 — 由主对话 Agent 内部完成 |
 | **MemoryStore** (`src/modules/memory/store.py`) | ♻️ 重构 — SQLite 部分保留，新增 ChromaDB 向量存储 |
@@ -337,7 +369,7 @@ sequenceDiagram
 1. **Agent 替换**：每个 Agent 实现为独立的 LangGraph 节点，可独立替换 prompt 或模型
 2. **工具扩展**：新工具只需实现 LangChain Tool 接口，注册到对应 Agent 即可
 3. **存储后端**：ChromaDB 可替换为 Milvus/Weaviate 等
-4. **嵌入模型**：text-embedding-v3 可替换为其他 embedding 服务
+4. **嵌入模型**：嵌入模型可替换为其他 embedding 服务（切换时需重新生成全量向量）
 5. **多人格支持（未来）**：当前单人格架构预留了 persona_id 字段
 
 ---

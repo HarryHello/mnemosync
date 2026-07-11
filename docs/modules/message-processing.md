@@ -138,7 +138,7 @@
    [1+] user/assistant: 当前对话历史（来自 checkpoint）
 
 6. 调用主模型生成回复
-   （代理思考模式下可用 qwen-turbo 替代 qwen-max）
+   （代理思考模式下可用辅助模型替代主模型）
 
 7. 流式透传 SSE 响应给前端
    → 零缓冲：收到即转发
@@ -218,7 +218,7 @@ ReAct 循环:
 
 ```
 1. 接收阶段 3 输出: 新记忆 + 衰减决策
-2. 新记忆: content → text-embedding-v3 → ChromaDB.add + SQLite INSERT
+2. 新记忆: content → 嵌入模型 → ChromaDB.add + SQLite INSERT
 3. 衰减更新: SQLite UPDATE priority, is_forgotten
 4. 关系更新: SQLite UPSERT relationships
 5. 更新消息历史（供消息提取使用）
@@ -237,8 +237,8 @@ sequenceDiagram
     participant PT as 代理思考 Agent
     participant Main as 主对话 Agent
     participant VS as 向量检索 Agent
-    participant Embed as DashScope embedding
-    participant Rerank as DashScope reranker
+    participant Embed as 嵌入模型
+    participant Rerank as 重排序模型
     participant Upstream as 主模型
     participant MA as 记忆分析 Agent
     participant EA as 情绪分析工具
@@ -268,11 +268,11 @@ sequenceDiagram
     Main->>SQL: 加载关系状态
     SQL-->>Main: {intimacy, trust, type}
     Main->>VS: vector_search(query, top_k=5)
-    VS->>Embed: text-embedding-v3(query)
+    VS->>Embed: 嵌入模型生成向量(query)
     Embed-->>VS: query_vector
     VS->>ChDB: similarity_search(query_vector, 10)
     ChDB-->>VS: top 10 候选
-    VS->>Rerank: gte-rerank(query, candidates)
+    VS->>Rerank: 精排(query, candidates)
     Rerank-->>VS: 精排 top 5
     VS-->>Main: [相关记忆 × 5]
     Main->>Main: 拼装上下文
@@ -312,7 +312,7 @@ sequenceDiagram
             RA->>RA: CoT: 信号识别 → 量化
             RA-->>SQL: relationship_delta
         and 入库
-            VS->>Embed: text-embedding-v3 (每条新记忆)
+            VS->>Embed: 嵌入模型生成向量 (每条新记忆)
             Embed-->>VS: vectors
             VS->>ChDB: 入库 (id, vector, metadata)
             VS->>SQL: 元数据 + 衰减更新 + 关系更新
@@ -347,7 +347,7 @@ sequenceDiagram
 | 鉴权 + 消息提取 | < 20ms | SQLite 查询 + 精确匹配 |
 | 代理思考（如启用） | +200-500ms | turbo 推理，不影响 TTFT（在主对话之前） |
 | 永久记忆加载 | < 10ms | SQLite 索引查询 |
-| embedding 检索（含 reranker） | < 300ms | DashScope API + ChromaDB 本地 |
+| embedding 检索（含 reranker） | < 300ms | 模型 API + ChromaDB 本地 |
 | embedding 检索（不含 reranker，低精度模式） | < 100ms | 仅 ChromaDB cosine |
 | 上下文拼装 | < 5ms | 内存操作 |
 | 首字延迟 (TTFT) | < 1s | 含上游模型响应时间 |

@@ -15,8 +15,8 @@
 
 | # | 工具名 | 调用者 | 底层服务 | 函数签名 |
 |---|--------|--------|----------|----------|
-| 1 | `vector_search` | 主对话 Agent、记忆分析 Agent | DashScope embedding + ChromaDB + DashScope rerank | `(query, top_k, source_user) → list[MemoryEntry]` |
-| 2 | `emotion_analyzer` | 记忆分析 Agent、关系分析 Agent | DashScope qwen-turbo | `(text) → EmotionResult` |
+| 1 | `vector_search` | 主对话 Agent、记忆分析 Agent | 嵌入模型 + ChromaDB + 重排序模型 | `(query, top_k, source_user) → list[MemoryEntry]` |
+| 2 | `emotion_analyzer` | 记忆分析 Agent、关系分析 Agent | 辅助模型 | `(text) → EmotionResult` |
 | 3 | `time_decay_calculator` | 记忆分析 Agent | 本地计算（纯函数） | `(memory_id) → DecayResult` |
 
 ---
@@ -40,9 +40,9 @@
 vector_search(query: str, top_k: int = 5, source_user: str | None = None)
     │
     ▼
-1. query → DashScope text-embedding-v3 → query_vector
+1. query → 嵌入模型 → query_vector
     │  POST https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding
-    │  参数: model="text-embedding-v3", input=query, dimension=768
+    │  参数（示意）: input=query, dimension=768
     │  返回: {embedding: [0.23, -0.15, ...]}
     │
     ▼
@@ -52,9 +52,9 @@ vector_search(query: str, top_k: int = 5, source_user: str | None = None)
     │  返回: top 10 候选 (id, content, similarity_score, metadata)
     │
     ▼
-3. top 10 候选 → DashScope gte-rerank → 精排 top_k
+3. top 10 候选 → 重排序模型 → 精排 top_k
     │  POST https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank
-    │  参数: model="gte-rerank", query=query, documents=candidates
+    │  参数（示意）: query=query, documents=candidates
     │  返回: {results: [{index: 2, relevance_score: 0.94}, ...]}
     │
     ▼
@@ -71,7 +71,7 @@ vector_search(query: str, top_k: int = 5, source_user: str | None = None)
 
 | 阶段 | 预期延迟 | 说明 |
 |------|----------|------|
-| embedding API | ~50-100ms | DashScope 网络延迟 |
+| embedding API | ~50-100ms | 模型 API 网络延迟 |
 | ChromaDB 粗筛 | ~1-5ms | 本地操作，很快 |
 | reranker API | ~100-200ms | 批量 10 条，需传输文本 |
 | SQLite 补全 | ~1-5ms | 本地查询 |
@@ -132,7 +132,7 @@ def vector_search(query: str, top_k: int = 5, source_user: str | None = None) ->
 
 ### 3.1 功能
 
-调用辅助小模型（qwen-turbo）分析文本的情绪内容，输出情绪标签、强度和类别。
+调用辅助小模型分析文本的情绪内容，输出情绪标签、强度和类别。
 
 ### 3.2 调用方
 
@@ -150,7 +150,7 @@ emotion_analyzer(text: str) → EmotionResult
 1. 构建分析 prompt（系统指令 + 目标文本）
     │
     ▼
-2. 调用 DashScope qwen-turbo (assist model)
+2. 调用辅助模型 (assist model)
     │  temperature=0.1（低温度保证一致性）
     │  response_format=json_object
     │
@@ -427,7 +427,7 @@ Agent Node                    Tool Node
 ---
 
 > **维护者提示**:
-> - `vector_search` 是性能瓶颈所在（~150-300ms），需关注 DashScope API 延迟。
+> - `vector_search` 是性能瓶颈所在（~150-300ms），需关注模型 API 延迟。
 > - `emotion_analyzer` 依赖小模型推理质量，prompt 需要根据实际效果迭代。
 > - `time_decay_calculator` 是纯函数，输出是 Agent 的参考基线而非最终决策。
 > - 嵌入模型切换时需重新生成 ChromaDB 全量向量，建议做好版本标记。

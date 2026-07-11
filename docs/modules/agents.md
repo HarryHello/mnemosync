@@ -12,6 +12,25 @@
 
 本文档描述 Mnemosync 的 5 个 Agent 的详细设计，包括 prompt 模板、推理循环、工具绑定和输出格式。
 
+### 1.0 执行模型（重要）
+
+> **本地不运行大模型。** Agent 的"思考"发生在远端模型服务商，本地只负责组装请求、驱动循环、解析响应。
+
+每个 Agent 的本质是：
+
+```
+Agent 节点（本地）：
+  1. 拼 prompt + 注入 state 上下文
+  2. 序列化工具定义（LangChain Tool → function schema）
+  3. 通过 Forwarder 将请求送到模型服务商
+  4. 解析模型返回：
+     - 若是 function_call → 执行对应工具 → 把结果喂回模型 → 回到步骤 3
+     - 若是最终输出 → 写入 state，结束本节点
+  5. （ReAct/CoT 的多轮循环由此驱动）
+```
+
+因此本文中所有"Agent 判断""Agent 调用工具""Agent 输出"的表述，实际含义都是：**本地组装请求 → 远端模型推理决策 → 本地解析并执行**。Forwarder 是所有 Agent 调用模型的共用 HTTP 通道。
+
 ### 1.1 Agent 全景
 
 | # | Agent | 推理方法 | 工具 | 触发时机 |
@@ -59,9 +78,9 @@ START → parse_request → main_dialogue ──→ memory_analysis ──→ ve
 
 ### 2.2 推理方法
 
-**直接推理**（大模型自身的推理能力）。主对话 Agent 本身不执行显式的推理循环（ReAct/CoT），它就是一个被精心 prompt 过的大模型，拥有记忆上下文。对话生成的"推理"由上游 qwen-max 模型内部完成。
+**直接推理**（大模型自身的推理能力）。主对话 Agent 本身不执行显式的推理循环（无 ReAct/CoT 驱动）— 它把人格 prompt + 记忆 + 当前消息组装好，通过 Forwarder 交给主模型，由模型一次性生成回复。模型内部的隐式推理即视为"直接推理"。
 
-> **代理思考模式**：当用户启用代理思考时，代理思考 Agent 会在主对话之前完成推理，将显式的 CoT 推理过程注入主对话 Agent 的 system prompt 中。此时主对话 Agent 可以利用上游推理能力较弱的模型（如 qwen-turbo 替代 qwen-max），降低 token 成本。
+> **代理思考模式**：当用户启用代理思考时，代理思考 Agent 会在主对话之前完成显式 CoT 推理，将推理过程注入主对话 Agent 的 system prompt 中。此时主对话可改用参数较小的模型（辅助模型替代主模型），降低 token 成本。
 
 ### 2.3 工具
 
@@ -152,6 +171,8 @@ START → parse_request → main_dialogue ──→ memory_analysis ──→ ve
 ```
 Think → Act → Observe → Think → Act → Observe → ... → Final Answer
 ```
+
+> **执行说明**：每一轮的 Think 由远端辅助模型完成；本地 LangGraph 负责解析模型返回的 function_call、执行对应工具、把 Observe 结果喂回模型，驱动下一轮。循环何时结束由模型自行判断（输出最终 JSON 而非 function_call）。
 
 **ReAct 循环设计**：
 
@@ -329,7 +350,7 @@ Think → Act → Observe → Think → Act → Observe → ... → Final Answer
 代理思考 Agent 为**无推理/弱推理能力的上游模型**提供显式的链式思考（CoT），弥补模型自身推理不足。
 
 **使用场景**：
-- 上游模型是轻量模型（如 qwen-turbo）而非大参数模型（qwen-max）
+- 上游模型是轻量辅助模型而非大参数主模型
 - 用户希望降低 token 成本（turbo 的价格远低于 max）
 - 用户愿意接受额外的推理延迟来换取更低成本
 
@@ -339,14 +360,14 @@ Think → Act → Observe → Think → Act → Observe → ... → Final Answer
 
 ```
 正常模式（无代理思考）:
-  用户消息 → 主对话 Agent → qwen-max → 回复
+  用户消息 → 主对话 Agent → 主模型 → 回复
   成本: max 推理 = 隐式（黑盒）
   Token 消耗: 高（max 模型单价高）
 
 代理思考模式:
-  用户消息 → 代理思考 Agent → qwen-turbo → 显式 CoT 推理
+  用户消息 → 代理思考 Agent → 辅助模型 → 显式 CoT 推理
               ↓
-  主对话 Agent（注入推理结果）→ qwen-turbo → 回复
+  主对话 Agent（注入推理结果）→ 辅助模型 → 回复
   成本: turbo 推理 = 显式（可见）
   Token 消耗: 低（turbo 单价低，推理结果可缓存复用）
 ```
@@ -445,8 +466,8 @@ Think → Act → Observe → Think → Act → Observe → ... → Final Answer
 
 | 模式 | 模型调用 | 预估延迟 | 预估成本（相对） |
 |------|---------|---------|----------------|
-| **正常模式** | qwen-max × 1 | 基线 | 100% |
-| **代理思考模式** | qwen-turbo × 2 | +200-500ms | ~15-30% |
+| **正常模式** | 主模型 × 1 | 基线 | 100% |
+| **代理思考模式** | 辅助模型 × 2 | +200-500ms | ~15-30% |
 
 > 代理思考模式额外增加一轮 turbo 推理的延迟，但总成本可能降至正常模式的 1/5 以下。
 
@@ -464,7 +485,7 @@ Think → Act → Observe → Think → Act → Observe → ... → Final Answer
 
 ### 5.2 推理方法
 
-无推理循环。向量检索 Agent 是一个纯工具执行 Agent — 接收任务、调用 API、返回结果。
+无推理循环。向量检索 Agent 不调用对话模型，仅通过 Forwarder 调用 模型服务商的 embedding 和 rerank API（非对话接口）+ 本地 ChromaDB 检索。它是一个纯工具执行节点 — 接收任务、调用 API、返回结果。
 
 ### 5.3 工具
 
@@ -472,17 +493,17 @@ Think → Act → Observe → Think → Act → Observe → ... → Final Answer
 
 | 底层服务 | 用途 |
 |----------|------|
-| `text-embedding-v3` (DashScope) | 文本 → 向量 |
-| `gte-rerank` (DashScope) | 候选列表精排 |
+| 嵌入模型 | 文本 → 向量 |
+| 重排序模型 | 候选列表精排 |
 
 ### 5.4 检索流程
 
 ```
 1. 接收 query: str, top_k: int = 5
-2. query → text-embedding-v3 → query_vector (768 维或自定义维度)
+2. query → 嵌入模型 → query_vector (768 维或自定义维度)
 3. ChromaDB.similarity_search(query_vector, n_results=top_k * 2)
    → 粗筛 top 10（cosine 相似度）
-4. top 10 → gte-rerank(query, candidates) → 精排 top 5
+4. top 10 → 重排序模型(query, candidates) → 精排 top 5
 5. 返回 top 5 条 MemoryEntry（含 content, importance, emotional_tags）
 ```
 
@@ -490,7 +511,7 @@ Think → Act → Observe → Think → Act → Observe → ... → Final Answer
 
 ```
 1. 接收 MemoryEntry
-2. content → text-embedding-v3 → vector
+2. content → 嵌入模型 → vector
 3. ChromaDB.add(
      ids=[entry.id],
      embeddings=[vector],

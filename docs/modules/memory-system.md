@@ -235,7 +235,7 @@ v0.2.0: embed(query) → cosine_similarity → reranker → 语义匹配
 查询文本（最新用户消息）
     │
     ▼
-text-embedding-v3 → query_vector [768 维]
+嵌入模型 → query_vector [768 维]
     │
     ▼
 ChromaDB.similarity_search(query_vector, n_results=top_k * 2)
@@ -244,7 +244,7 @@ ChromaDB.similarity_search(query_vector, n_results=top_k * 2)
 candidate_list (top 10)
     │
     ▼
-gte-rerank(query, candidates) → 精排
+重排序模型(query, candidates) → 精排
     │  深度语义相关性打分
     ▼
 final_results (top 5)
