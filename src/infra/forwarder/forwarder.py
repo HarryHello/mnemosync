@@ -39,7 +39,7 @@ class ForwarderConfig:
     base_url: str
     api_key: str
     default_model: str = ""
-    timeout: float = 30.0
+    timeout: float = 60.0
     connect_timeout: float = 10.0
 
 
@@ -84,11 +84,15 @@ class Forwarder:
         tools: list[dict] | None = None,
         tool_choice: str | dict | None = None,
         response_format: dict | None = None,
+        extra_body: dict | None = None,
         **kwargs,
     ) -> dict[str, Any]:
         """非流式对话. 支持 function_call.
 
         注意: DashScope 等服务商 tools 与 stream=True 互斥, 本方法非流式可安全用 tools.
+
+        Args:
+            extra_body: 额外请求体字段（如 {"enable_thinking": False} 关闭 Qwen3 思考）
         """
         payload: dict[str, Any] = {
             "model": model or self.config.default_model,
@@ -103,6 +107,8 @@ class Forwarder:
             payload["tool_choice"] = tool_choice
         if response_format is not None:
             payload["response_format"] = response_format
+        if extra_body:
+            payload.update(extra_body)
         payload.update(kwargs)
 
         client = await self._get_client()
