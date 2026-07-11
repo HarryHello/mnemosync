@@ -1,5 +1,6 @@
 """OpenAI 兼容的转发 API 路由."""
 
+import os
 import uuid
 import time
 import json
@@ -20,19 +21,41 @@ from src.modules.forward import Forwarder, ForwarderConfig, UpstreamError, Upstr
 from src.modules.memory import SqliteMemoryStore, MemoryEntry, Visibility
 from src.modules.extraction import extract_latest_user_message
 from src.modules.context import merge_context, deduplicate_messages
+from src.storage.llm_service_store import LLMServiceStore
+from src.models.llm_service import ModelType
 
 # OpenAI 兼容的路由，使用 /v1 前缀
 router = APIRouter(prefix="/v1")
 
 # 配置 (应从环境变量或配置文件加载)
-UPSTREAM_CONFIG = ForwarderConfig(
-    base_url="https://api.openai.com/v1",
-    api_key="sk-placeholder",  # TODO: 从环境变量加载
-    default_model="gpt-3.5-turbo",
+# 默认配置作为回退
+DEFAULT_UPSTREAM_CONFIG = ForwarderConfig(
+    base_url=os.getenv("DEFAULT_LLM_BASE_URL", "https://api.openai.com/v1"),
+    api_key=os.getenv("DEFAULT_LLM_API_KEY", ""),
+    default_model=os.getenv("DEFAULT_LLM_MODEL", "gpt-3.5-turbo"),
 )
 
-# 记忆存储
-MEMORY_STORE = SqliteMemoryStore("data/memories.db")
+# 存储实例 (懒加载)
+_llm_service_store: LLMServiceStore | None = None
+_memory_store: SqliteMemoryStore | None = None
+
+
+def _get_llm_service_store() -> LLMServiceStore:
+    """获取 LLM 服务存储实例（单例模式）."""
+    global _llm_service_store
+    if _llm_service_store is None:
+        _llm_service_store = LLMServiceStore(
+            os.getenv("LLM_SERVICE_DB_PATH", "data/llm_services.db")
+        )
+    return _llm_service_store
+
+
+def _get_memory_store() -> SqliteMemoryStore:
+    """获取记忆存储实例（单例模式）."""
+    global _memory_store
+    if _memory_store is None:
+        _memory_store = SqliteMemoryStore("data/memories.db")
+    return _memory_store
 
 
 @router.get("/models", response_model=ModelList, tags=["Models"])

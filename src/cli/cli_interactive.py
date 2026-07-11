@@ -8,6 +8,11 @@ import signal
 from typing import Optional
 
 from src.accounts import SqliteApiKeyStore, ApiKey, ApiKeyService, SqliteAuthService, InvalidCredentialsError, PasswordTooWeakError
+from src.models.llm_service import LLMServiceProvider, ModelConfiguration, ModelType
+from src.storage.llm_service_store import LLMServiceStore
+from src.modules.forward import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
+from src.storage.llm_service_store import LLMServiceStore
+from src.models.llm_service import LLMServiceProvider, ModelConfiguration, ModelType
 
 
 # 全局退出标志
@@ -56,6 +61,7 @@ class MnemosyncCLI:
     def __init__(self):
         self.auth_db = SqliteAuthService(os.getenv("AUTH_DB_PATH", "data/auth.db"))
         self.api_key_db = SqliteApiKeyStore(os.getenv("MNEMOSYNC_DB_PATH", "data/api_keys.db"))
+        self.llm_service_store = LLMServiceStore(os.getenv("LLM_SERVICE_DB_PATH", "data/llm_services.db"))
         self.current_user = None
         self.running = True
 
@@ -63,6 +69,7 @@ class MnemosyncCLI:
         """初始化数据库."""
         await self.auth_db.init_db()
         await self.api_key_db.init_db()
+        await self.llm_service_store.init_db()
 
     def print_help(self):
         """打印帮助信息."""
@@ -289,20 +296,44 @@ Models Commands:
 
     async def cmd_ls_service(self):
         """列出服务."""
-        # TODO: Implement LLM service provider storage
-        print("service-id       base-url                     api-key")
-        print("openai           https://api.openai.com/v1    sk-********enai")
+        services = await self.llm_service_store.list_all()
+        
+        if not services:
+            print("No LLM service providers found.")
+            return
+        
+        print(f"{'service-id':<20} {'base-url':<30} {'api-key':<20}")
+        print("-" * 70)
+        for svc in services:
+            print(f"{svc.id:<20} {svc.base_url:<30} {svc.api_key_masked:<20}")
 
     async def cmd_show_service(self, service_id: str):
         """显示特定服务信息."""
-        # TODO: Implement LLM service provider storage
-        print(f"Service ID: {service_id}")
-        print(f"Base URL: https://api.{service_id}.com/v1")
-        print(f"API Key: sk-********\n")
+        service = await self.llm_service_store.get_by_id(service_id)
+        
+        if not service:
+            print(f"❌ Service '{service_id}' not found.")
+            return
+        
+        print(f"\nService ID: {service.id}")
+        print(f"Base URL: {service.base_url}")
+        print(f"API Key: {service.api_key}")  # 显示完整 Key（已解密）
+        print(f"Created: {service.created_at.isoformat()}")
+        print(f"Updated: {service.updated_at.isoformat()}")
+        print("\n⚠️  Do not let others get your keys!\n")
+        
+        # 显示关联的模型配置
+        main_model = await self.llm_service_store.get_main_model(service_id)
+        assist_model = await self.llm_service_store.get_assist_model(service_id)
+        
+        if main_model:
+            print(f"Main Model: {main_model.model}")
+        if assist_model:
+            print(f"Assist Model: {assist_model.model}")
+        print()
 
     async def cmd_ad_service(self):
         """添加服务."""
-        # TODO: Implement LLM service provider storage
         print("Add new llm service provider:")
         
         # 检查是否请求退出
@@ -320,9 +351,9 @@ Models Commands:
             print("\n\n👋 Cancelled.\n")
             return
 
-        # Simple duplicate check (stub)
-        if service_id == "openai":
-            print("This id has been already used!\n")
+        # 检查是否已存在
+        if await self.llm_service_store.exists(service_id):
+            print(f"❌ Service '{service_id}' already exists!\n")
             return
 
         # 检查是否请求退出
@@ -341,38 +372,122 @@ Models Commands:
             print("\n\n👋 Cancelled.\n")
             return
 
-        print(f"\nLLM service provider '{service_id}' has been added!\n")
+        # 创建并保存服务
+        service = LLMServiceProvider.create(
+            service_id=service_id,
+            base_url=base_url,
+            api_key=api_key,  # 明文，存储时会自动加密
+        )
+        
+        try:
+            await self.llm_service_store.save(service)
+            print(f"\n✅ LLM service provider '{service_id}' has been added!\n")
+        except Exception as e:
+            print(f"\n❌ Failed to add service: {e}\n")
 
     async def cmd_rm_service(self, service_id: str):
         """移除服务."""
-        # TODO: Implement LLM service provider storage
-        print(f"LLM service provider {service_id} has been removed!\n")
+        # 确认删除
+        confirm = input(f"Are you sure you want to delete service '{service_id}'? (yes/no): ").strip().lower()
+        if confirm != "yes":
+            print("Cancelled.\n")
+            return
+            
+        success = await self.llm_service_store.delete(service_id)
+        if success:
+            print(f"✅ LLM service provider '{service_id}' has been removed!\n")
+        else:
+            print(f"❌ Service '{service_id}' not found.\n")
 
     async def cmd_ls_models(self, service_id: str):
         """列出模型."""
-        # TODO: Implement model listing from provider
-        print(f"Available models for {service_id}:")
-        print("Pro/MiniMaxAI/MiniMax-M2.5")
-        print("Pro/zai-org/GLM-5")
-        print("Pro/moonshotai/Kimi-K2.5")
-        print("Qwen/Qwen3.5-397B-A17B")
-        print("...\n")
+        # 先检查服务是否存在
+        if not await self.llm_service_store.exists(service_id):
+            print(f"❌ Service '{service_id}' not found.")
+            return
+        
+        # 获取配置的模型
+        configs = await self.llm_service_store.list_models(service_id)
+        
+        if not configs:
+            print(f"No models configured for '{service_id}'.")
+            print("Use `set-main-model` or `set-assist-model` to configure.\n")
+            return
+        
+        print(f"Configured models for {service_id}:")
+        print("-" * 40)
+        for config in configs:
+            model_type = "Main" if config.model_type == ModelType.MAIN else "Assist"
+            print(f"  [{model_type}] {config.model}")
+        print()
 
     async def cmd_set_main_model(self, service_id: str, model: str):
         """设置主模型."""
-        # TODO: Implement model configuration storage
-        print(f"Change main model to {model} from {service_id} successfully!\n")
+        # 检查服务是否存在
+        if not await self.llm_service_store.exists(service_id):
+            print(f"❌ Service '{service_id}' not found.")
+            return
+        
+        config = ModelConfiguration.create(
+            service_id=service_id,
+            model=model,
+            model_type=ModelType.MAIN,
+        )
+        
+        await self.llm_service_store.save_model(config)
+        print(f"✅ Main model set to '{model}' for service '{service_id}'.\n")
 
     async def cmd_set_assist_model(self, service_id: str, model: str):
         """设置辅助模型."""
-        # TODO: Implement model configuration storage
-        print(f"Change assist model to {model} from {service_id} successfully!\n")
+        # 检查服务是否存在
+        if not await self.llm_service_store.exists(service_id):
+            print(f"❌ Service '{service_id}' not found.")
+            return
+        
+        config = ModelConfiguration.create(
+            service_id=service_id,
+            model=model,
+            model_type=ModelType.ASSIST,
+        )
+        
+        await self.llm_service_store.save_model(config)
+        print(f"✅ Assist model set to '{model}' for service '{service_id}'.\n")
 
     async def cmd_test_model(self, service_id: str, model: str):
         """测试模型."""
-        # TODO: Implement actual model connection test
+        # 获取服务配置
+        service = await self.llm_service_store.get_by_id(service_id)
+        if not service:
+            print(f"❌ Service '{service_id}' not found.")
+            return
+        
         print(f"Testing connection to {model} from {service_id}...")
-        print("✅ Connection successful!\n")
+        
+        # 简单的连接测试：发送一个最小请求
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{service.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {service.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 1,
+                    },
+                )
+                
+                if response.status_code == 200:
+                    print("✅ Connection successful!\n")
+                else:
+                    print(f"❌ Connection failed: {response.status_code} - {response.text[:200]}\n")
+        except httpx.RequestError as e:
+            print(f"❌ Connection error: {e}\n")
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}\n")
 
     async def process_command(self, line: str):
         """处理命令."""
