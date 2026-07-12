@@ -141,12 +141,12 @@ register_command() {
         echo "请将以下内容添加到你的 shell 配置文件:"
         echo ""
         echo "  # 对于 bash:"
-        echo '  echo \'export PATH="$HOME/.local/bin:$PATH"\' >> ~/.bashrc'
-        echo '  source ~/.bashrc'
+        echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
+        echo "  source ~/.bashrc"
         echo ""
         echo "  # 对于 zsh:"
-        echo '  echo \'export PATH="$HOME/.local/bin:$PATH"\' >> ~/.zshrc'
-        echo '  source ~/.zshrc'
+        echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc"
+        echo "  source ~/.zshrc"
         echo ""
     fi
 }
