@@ -13,7 +13,7 @@ set -e
 REPO_URL="https://github.com/HarryHello/mnemosync.git"
 INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-$HOME/.mnemosync}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
-BRANCH="${MNEMOSYNC_BRANCH:-main}"
+BRANCH="${MNEMOSYNC_BRANCH:-dev}"
 
 # 颜色
 RED='\033[0;31m'
