@@ -4,7 +4,11 @@ import asyncio
 import getpass
 import os
 import signal
+import sys
+import termios
+import tty
 
+from src.infra.forwarder.forwarder import Forwarder, ForwarderConfig
 from src.infra.llm_service.models import LLMServiceProvider, ModelConfiguration, ModelType
 from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
@@ -12,6 +16,47 @@ from src.persistence.auth_store import SqliteAuthStore
 
 # 全局退出标志
 _exit_requested = False
+
+
+def secure_input(prompt: str = "") -> str:
+    """安全输入，显示星号代替字符."""
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    chars = []
+
+    try:
+        tty.setraw(fd)
+        sys.stdout.write(prompt)
+        sys.stdout.flush()
+
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ('\r', '\n'):
+                sys.stdout.write('\n')
+                sys.stdout.flush()
+                break
+            elif ch == '\x7f' or ch == '\x08':  # Backspace
+                if chars:
+                    chars.pop()
+                    sys.stdout.write('\b \b')
+                    sys.stdout.flush()
+            elif ch == '\x03':  # Ctrl+C
+                raise KeyboardInterrupt
+            elif ch.isprintable():
+                chars.append(ch)
+                sys.stdout.write('*')
+                sys.stdout.flush()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    return ''.join(chars)
+
+
+def mask_api_key(key: str) -> str:
+    """遮蔽 API Key，只显示前4位和后4位."""
+    if len(key) <= 8:
+        return key
+    return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
 
 
 def setup_exit_handler():
@@ -299,7 +344,7 @@ Models Commands:
 
         print(f"\nService ID: {service.id}")
         print(f"Base URL: {service.base_url}")
-        print(f"API Key: {service.api_key}")
+        print(f"API Key: {mask_api_key(service.api_key)}")
         print(f"Created: {service.created_at.isoformat()}")
         print(f"Updated: {service.updated_at.isoformat()}")
         print("\n⚠️  Do not let others get your keys!\n")
@@ -337,7 +382,7 @@ Models Commands:
 
         try:
             base_url = input("base URL: ").strip()
-            api_key = getpass.getpass("API key: ")
+            api_key = secure_input("API key: ")
             if check_exit_requested():
                 return
         except KeyboardInterrupt:
@@ -373,24 +418,29 @@ Models Commands:
             print(f"❌ Service '{service_id}' not found.\n")
 
     async def cmd_ls_models(self, service_id: str):
-        """列出模型."""
-        if await self.llm_service_store.get_service(service_id) is None:
+        """列出服务商可用模型."""
+        service = await self.llm_service_store.get_service(service_id)
+        if not service:
             print(f"❌ Service '{service_id}' not found.")
             return
 
-        configs = await self.llm_service_store.list_models(service_id)
-
-        if not configs:
-            print(f"No models configured for '{service_id}'.")
-            print("Use `set-main-model` or `set-assist-model` to configure.\n")
-            return
-
-        print(f"Configured models for {service_id}:")
-        print("-" * 40)
-        for config in configs:
-            model_type = "Main" if config.model_type == ModelType.MAIN else "Assist"
-            print(f"  [{model_type}] {config.model}")
-        print()
+        try:
+            config = ForwarderConfig(
+                base_url=service.base_url,
+                api_key=service.api_key,
+            )
+            async with Forwarder(config) as forwarder:
+                models = await forwarder.list_models()
+                if not models:
+                    print(f"No models available for '{service_id}'.")
+                    return
+                print(f"Models for {service_id}:")
+                print("-" * 40)
+                for model in models:
+                    print(f"  {model}")
+                print()
+        except Exception as e:
+            print(f"❌ Failed to fetch models: {e}\n")
 
     async def cmd_set_main_model(self, service_id: str, model: str):
         """设置主模型."""
