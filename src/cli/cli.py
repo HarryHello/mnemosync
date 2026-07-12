@@ -357,7 +357,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     link_path = os.path.join(bin_dir, "mnemosync")
 
     if os.path.exists(venv_bin):
-        os.symlink(venv_bin, link_path, exist_ok=True)
+        if os.path.exists(link_path) or os.path.islink(link_path):
+            os.remove(link_path)
+        os.symlink(venv_bin, link_path)
         print("✅ Command registered")
 
     print()
