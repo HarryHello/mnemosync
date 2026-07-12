@@ -8,6 +8,7 @@ import sys
 import termios
 import tty
 
+from src.core.config_writer import update_chat_model, update_model, get_current_config
 from src.infra.forwarder.forwarder import Forwarder, ForwarderConfig
 from src.infra.llm_service.models import LLMServiceProvider, ModelConfiguration, ModelType
 from src.infra.llm_service.store import LLMServiceStore
@@ -121,6 +122,7 @@ Common Commands:
   help        Show this page
   logout      Exit this CLI environment
   stop        Stop the Mnemosync server
+  show-config Show current config.local.toml settings
 
 API-Key Commands:
   ls-keys                  List existing api-keys
@@ -132,11 +134,13 @@ LLM Service Commands:
   ad-service               Add a new llm service provider
   rm-service [srv_id]      Remove a llm service provider
   show-service             Show the information
-  ls-models [srv_id]       List available models
+  ls-models [srv_id]       List available models from provider API
 
-Models Commands:
-  set-main-model [srv_id] [model]      Set the main model for Mnemosync
-  set-assist-model [srv_id] [model]    Set the assist model for Mnemosync
+Models Commands (writes to config.local.toml):
+  set-main-model [srv_id] [model]      Set the main chat model
+  set-assist-model [srv_id] [model]    Set the assist chat model
+  set-embedding-model [srv_id] [model] Set the embedding model
+  set-rerank-model [srv_id] [model]    Set the rerank model (optional)
   test-model [srv_id] [model]          Test if able to connect to a model
 """
         print(help_text)
@@ -444,33 +448,82 @@ Models Commands:
 
     async def cmd_set_main_model(self, service_id: str, model: str):
         """设置主模型."""
-        if await self.llm_service_store.get_service(service_id) is None:
+        service = await self.llm_service_store.get_service(service_id)
+        if not service:
             print(f"❌ Service '{service_id}' not found.")
             return
 
-        config = ModelConfiguration.create(
-            service_id=service_id,
-            model=model,
-            model_type=ModelType.MAIN,
-        )
-
-        await self.llm_service_store.save_model(config)
-        print(f"✅ Main model set to '{model}' for service '{service_id}'.\n")
+        try:
+            update_chat_model(main_model=model, base_url=service.base_url, api_key=service.api_key)
+            print(f"✅ Main model set to '{model}'.")
+            print(f"   Updated config.local.toml [chat] section.\n")
+        except Exception as e:
+            print(f"❌ Failed to update config: {e}\n")
 
     async def cmd_set_assist_model(self, service_id: str, model: str):
         """设置辅助模型."""
-        if await self.llm_service_store.get_service(service_id) is None:
+        service = await self.llm_service_store.get_service(service_id)
+        if not service:
             print(f"❌ Service '{service_id}' not found.")
             return
 
-        config = ModelConfiguration.create(
-            service_id=service_id,
-            model=model,
-            model_type=ModelType.ASSIST,
-        )
+        try:
+            update_chat_model(assist_model=model, base_url=service.base_url, api_key=service.api_key)
+            print(f"✅ Assist model set to '{model}'.")
+            print(f"   Updated config.local.toml [chat] section.\n")
+        except Exception as e:
+            print(f"❌ Failed to update config: {e}\n")
 
-        await self.llm_service_store.save_model(config)
-        print(f"✅ Assist model set to '{model}' for service '{service_id}'.\n")
+    async def cmd_set_embedding_model(self, service_id: str, model: str):
+        """设置嵌入模型."""
+        service = await self.llm_service_store.get_service(service_id)
+        if not service:
+            print(f"❌ Service '{service_id}' not found.")
+            return
+
+        try:
+            update_model("embedding", "model", model, base_url=service.base_url, api_key=service.api_key)
+            print(f"✅ Embedding model set to '{model}'.")
+            print(f"   Updated config.local.toml [embedding] section.\n")
+        except Exception as e:
+            print(f"❌ Failed to update config: {e}\n")
+
+    async def cmd_set_rerank_model(self, service_id: str, model: str):
+        """设置重排序模型."""
+        service = await self.llm_service_store.get_service(service_id)
+        if not service:
+            print(f"❌ Service '{service_id}' not found.")
+            return
+
+        try:
+            update_model("rerank", "model", model, base_url=service.base_url, api_key=service.api_key)
+            print(f"✅ Rerank model set to '{model}'.")
+            print(f"   Updated config.local.toml [rerank] section.\n")
+        except Exception as e:
+            print(f"❌ Failed to update config: {e}\n")
+
+    async def cmd_show_config(self):
+        """显示当前配置."""
+        try:
+            config = get_current_config()
+            print("\nCurrent config.local.toml settings:")
+            print("-" * 50)
+
+            for section in ["chat", "embedding", "rerank"]:
+                if section in config:
+                    print(f"\n[{section}]")
+                    for key, value in config[section].items():
+                        if key == "api_key" and value:
+                            # 遮蔽 API key
+                            if len(value) > 8:
+                                value = f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
+                        print(f"  {key} = {value}")
+                else:
+                    print(f"\n[{section}] (not configured)")
+
+            print()
+        except Exception as e:
+            print(f"❌ Failed to read config: {e}\n")
 
     async def cmd_test_model(self, service_id: str, model: str):
         """测试模型."""
@@ -560,6 +613,18 @@ Models Commands:
                     await self.cmd_set_assist_model(args[0], args[1])
                 else:
                     print("❌ Usage: set-assist-model [srv_id] [model]\n")
+            elif cmd == "set-embedding-model":
+                if len(args) >= 2:
+                    await self.cmd_set_embedding_model(args[0], args[1])
+                else:
+                    print("❌ Usage: set-embedding-model [srv_id] [model]\n")
+            elif cmd == "set-rerank-model":
+                if len(args) >= 2:
+                    await self.cmd_set_rerank_model(args[0], args[1])
+                else:
+                    print("❌ Usage: set-rerank-model [srv_id] [model]\n")
+            elif cmd == "show-config":
+                await self.cmd_show_config()
             elif cmd == "test-model":
                 if len(args) >= 2:
                     await self.cmd_test_model(args[0], args[1])

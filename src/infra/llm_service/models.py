@@ -14,8 +14,10 @@ from enum import Enum
 class ModelType(str, Enum):
     """模型角色."""
 
-    MAIN = "main"        # 主模型：主对话 Agent
-    ASSIST = "assist"    # 辅助模型：记忆分析/关系分析/代理思考 Agent
+    MAIN = "main"            # 主模型：主对话 Agent
+    ASSIST = "assist"        # 辅助模型：记忆分析/关系分析/代理思考 Agent
+    EMBEDDING = "embedding"  # 嵌入模型：向量化
+    RERANK = "rerank"        # 重排序模型
 
 
 @dataclass
