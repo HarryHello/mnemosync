@@ -30,12 +30,12 @@ error() { printf "${RED}[ERROR]${NC} %s\n" "$1"; exit 1; }
 # ============================================================================
 check_dependencies() {
     # 检查 git
-    if ! command -v git &> /dev/null; then
+    if ! command -v git > /dev/null 2>&1; then
         error "git 未安装。请先安装 git:\n  Ubuntu/Debian: sudo apt-get install git\n  macOS: xcode-select --install"
     fi
 
     # 检查 Python
-    if ! command -v python3 &> /dev/null; then
+    if ! command -v python3 > /dev/null 2>&1; then
         error "python3 未安装。请先安装 Python 3.12+: https://www.python.org/downloads/"
     fi
 
@@ -55,7 +55,7 @@ check_dependencies() {
 # 安装 uv
 # ============================================================================
 install_uv() {
-    if command -v uv &> /dev/null; then
+    if command -v uv > /dev/null 2>&1; then
         info "uv 已安装 ✓"
         return
     fi
@@ -66,7 +66,7 @@ install_uv() {
     # 确保 uv 在 PATH 中
     export PATH="$HOME/.local/bin:$PATH"
 
-    if ! command -v uv &> /dev/null; then
+    if ! command -v uv > /dev/null 2>&1; then
         error "uv 安装失败"
     fi
 
