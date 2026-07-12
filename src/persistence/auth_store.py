@@ -255,6 +255,40 @@ class SqliteAuthStore:
             await db.commit()
         return user
 
+    async def change_username_and_password(
+        self, user_id: str, old_password: str, new_username: str, new_password: str
+    ) -> User:
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("用户不存在")
+        if not verify_password(old_password, user.password_hash):
+            raise ValueError("原密码错误")
+
+        existing = await self.get_user_by_username(new_username)
+        if existing and existing.id != user_id:
+            raise ValueError("用户名已被占用")
+
+        ok, err = validate_password_strength(new_password)
+        if not ok:
+            raise ValueError(err or "密码强度不足")
+
+        user.username = new_username
+        user.password_hash = hash_password(new_password)
+        user.must_change_password = False
+        user.updated_at = datetime.now(timezone.utc)
+
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                UPDATE users
+                SET username = ?, password_hash = ?, must_change_password = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (user.username, user.password_hash, 0, user.updated_at.isoformat(), user.id),
+            )
+            await db.commit()
+        return user
+
     def _row_to_user(self, row: tuple) -> User:
         return User(
             id=row[0], username=row[1], password_hash=row[2],

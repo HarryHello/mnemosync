@@ -58,6 +58,7 @@ class MnemosyncCLI:
         llm_db = os.getenv("LLM_SERVICE_DB_PATH", "data/llm_service.db")
         self.llm_service_store = LLMServiceStore(llm_db)
         self.current_user = None
+        self.current_password = None
         self.running = True
 
     async def init_db(self):
@@ -126,6 +127,7 @@ Models Commands:
             try:
                 user = await self.auth_db.authenticate(username, password)
                 self.current_user = user
+                self.current_password = password
                 print("\n✅ Login Successfully!\n")
                 print("Use `help` to get commands information.\n")
 
@@ -188,12 +190,14 @@ Models Commands:
                 continue
 
             try:
-                await self.auth_db.change_password(
+                await self.auth_db.change_username_and_password(
                     self.current_user.id,
-                    self.current_user.username,
+                    self.current_password,
+                    new_username,
                     new_password,
                 )
                 print("\n✅ Credentials changed successfully!\n")
+                self.current_password = new_password
                 return
             except Exception as e:
                 print(f"❌ Failed to change credentials: {e}\n")
