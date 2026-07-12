@@ -218,6 +218,76 @@ def cmd_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    """升级 Mnemosync."""
+    project_root = get_project_root()
+    branch = args.branch or os.getenv("MNEMOSYNC_BRANCH", "dev")
+
+    print(f"🔄 Upgrading Mnemosync (branch: {branch})...")
+    print()
+
+    # 检查是否是 git 仓库
+    if not os.path.exists(os.path.join(project_root, ".git")):
+        print("❌ Not a git repository. Please reinstall using install.sh")
+        return 1
+
+    # 拉取最新代码
+    print("📥 Pulling latest code...")
+    result = subprocess.run(
+        ["git", "fetch", "origin", branch],
+        cwd=project_root,
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        print(f"❌ Failed to fetch: {result.stderr}")
+        return 1
+
+    result = subprocess.run(
+        ["git", "reset", "--hard", f"origin/{branch}"],
+        cwd=project_root,
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        print(f"❌ Failed to reset: {result.stderr}")
+        return 1
+
+    print("✅ Code updated")
+
+    # 更新依赖
+    print("📦 Updating dependencies...")
+    result = subprocess.run(
+        ["uv", "sync"],
+        cwd=project_root,
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        print(f"❌ Failed to update dependencies: {result.stderr}")
+        return 1
+
+    print("✅ Dependencies updated")
+
+    # 重新注册命令
+    bin_dir = os.path.join(os.path.expanduser("~"), ".local", "bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    venv_bin = os.path.join(project_root, ".venv", "bin", "mnemosync")
+    link_path = os.path.join(bin_dir, "mnemosync")
+
+    if os.path.exists(venv_bin):
+        os.symlink(venv_bin, link_path, exist_ok=True)
+        print("✅ Command registered")
+
+    print()
+    print("✅ Upgrade complete!")
+    print()
+    print("If service is running, restart it:")
+    print("  mnemosync stop && mnemosync serve")
+    print()
+    return 0
+
+
 def cmd_help(args: argparse.Namespace) -> int:
     """显示帮助."""
     print("""
@@ -238,6 +308,10 @@ Mnemosync CLI
   login               进入交互式 CLI（本地模式）
   login --docker      进入交互式 CLI（Docker 模式）
 
+升级:
+  upgrade             拉取最新代码并更新依赖
+  upgrade --branch dev  指定分支（默认 dev）
+
 其他:
   stop                停止服务（Docker 模式）
   help                显示此帮助信息
@@ -246,6 +320,7 @@ Mnemosync CLI
   mnemosync init      # 首次使用，初始化数据库
   mnemosync serve     # 启动服务
   mnemosync login     # 进入交互式 CLI 管理 API Key 等
+  mnemosync upgrade   # 更新到最新版本
 
 配置:
   配置文件: config.local.toml（项目根目录）
@@ -286,6 +361,11 @@ def main(argv: list[str] | None = None) -> int:
     # ── stop ──
     stop_parser = subparsers.add_parser("stop", help="停止服务 (Docker 模式)")
     stop_parser.set_defaults(func=cmd_stop)
+
+    # ── upgrade ──
+    upgrade_parser = subparsers.add_parser("upgrade", help="升级 Mnemosync")
+    upgrade_parser.add_argument("--branch", default=None, help="指定分支 (默认: dev)")
+    upgrade_parser.set_defaults(func=cmd_upgrade)
 
     # ── help ──
     help_parser = subparsers.add_parser("help", help="显示帮助")
