@@ -14,11 +14,7 @@ from .forwarder import (
     parse_sse_stream,
 )
 
-# vector_store 依赖 chromadb, 延迟导入避免未安装时整体不可用
-try:
-    from .vector_store import VectorStore
-except ImportError:  # pragma: no cover
-    VectorStore = None  # type: ignore[assignment,misc]
+from .vector_store import VectorStore
 
 __all__ = [
     "Forwarder",

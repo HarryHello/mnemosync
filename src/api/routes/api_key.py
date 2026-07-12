@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, HTTPException, status
 
+from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
+
 from ..schemas.api_key import (
     ApiKeyCreateRequest,
     ApiKeyCreateResponse,
@@ -9,15 +11,15 @@ from ..schemas.api_key import (
     ApiKeyListResponse,
     ApiKeyRevokeRequest,
 )
-from ...accounts import ApiKeyService, SqliteApiKeyStore
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
+DB_PATH = "data/api_keys.db"
 
-def get_service() -> ApiKeyService:
-    """获取 API Key 服务实例 (依赖注入)."""
-    store = SqliteApiKeyStore("data/api_keys.db")
-    return ApiKeyService(store)
+
+def _get_store() -> SqliteApiKeyStore:
+    """获取 API Key 存储实例."""
+    return SqliteApiKeyStore(DB_PATH)
 
 
 @router.post(
@@ -28,25 +30,16 @@ def get_service() -> ApiKeyService:
     description="生成一个新的 API Key，需要提供备注信息",
 )
 async def create_api_key(request: ApiKeyCreateRequest) -> ApiKeyCreateResponse:
-    """生成新的 API Key.
+    """生成新的 API Key."""
+    store = _get_store()
+    await store.init_db()
 
-    Args:
-        request: 包含备注信息的请求体
-
-    Returns:
-        包含完整 API Key 的响应 (仅在创建时返回一次)
-
-    Raises:
-        HTTPException: 创建失败时抛出异常
-    """
-    service = get_service()
-    await service.store.init_db()
-
-    api_key = await service.create_key(note=request.note)
+    api_key = ApiKey.generate(note=request.note)
+    await store.save(api_key)
 
     return ApiKeyCreateResponse(
         id=api_key.id,
-        key=api_key.key_full,  # 直接使用 key_full
+        key=api_key.key_full,
         key_prefix=api_key.key_prefix,
         note=api_key.note,
         created_at=api_key.created_at.isoformat(),
@@ -60,15 +53,11 @@ async def create_api_key(request: ApiKeyCreateRequest) -> ApiKeyCreateResponse:
     description="获取所有 API Key 的信息 (不包含完整密钥)",
 )
 async def list_api_keys() -> ApiKeyListResponse:
-    """列出所有 API Key.
+    """列出所有 API Key."""
+    store = _get_store()
+    await store.init_db()
 
-    Returns:
-        API Key 列表 (仅包含前缀和元数据)
-    """
-    service = get_service()
-    await service.store.init_db()
-
-    api_keys = await service.list_keys()
+    api_keys = await store.list_all()
     items = [
         ApiKeyInfo(
             id=ak.id,
@@ -91,25 +80,18 @@ async def list_api_keys() -> ApiKeyListResponse:
     description="根据 ID 撤销 (删除) 一个 API Key",
 )
 async def revoke_api_key(key_id: str) -> None:
-    """撤销 API Key.
+    """撤销 API Key."""
+    store = _get_store()
+    await store.init_db()
 
-    Args:
-        key_id: API Key ID
-
-    Raises:
-        HTTPException: 当 API Key 不存在时抛出 404
-    """
-    service = get_service()
-    await service.store.init_db()
-
-    api_key = await service.get_key(key_id)
+    api_key = await store.get_by_id(key_id)
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"API Key '{key_id}' not found",
         )
 
-    await service.revoke_key(key_id)
+    await store.delete(key_id)
 
 
 @router.post(
@@ -119,22 +101,15 @@ async def revoke_api_key(key_id: str) -> None:
     description="通过请求体中的 key_id 撤销 API Key",
 )
 async def revoke_api_key_by_request(request: ApiKeyRevokeRequest) -> None:
-    """通过请求体撤销 API Key.
+    """通过请求体撤销 API Key."""
+    store = _get_store()
+    await store.init_db()
 
-    Args:
-        request: 包含 key_id 的请求体
-
-    Raises:
-        HTTPException: 当 API Key 不存在时抛出 404
-    """
-    service = get_service()
-    await service.store.init_db()
-
-    api_key = await service.get_key(request.key_id)
+    api_key = await store.get_by_id(request.key_id)
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"API Key '{request.key_id}' not found",
         )
 
-    await service.revoke_key(request.key_id)
+    await store.delete(request.key_id)

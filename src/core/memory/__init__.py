@@ -1,5 +1,12 @@
 """记忆领域核心数据模型."""
 
+from .context import (
+    build_main_dialogue_messages,
+    format_permanent_memories,
+    format_relationship,
+    format_retrieved_memories,
+)
+from .lifecycle import MemoryLifecycle
 from .models import (
     ACCESS_BONUS_FACTOR,
     DECAY_RATE_TO_HALF_LIFE,
@@ -32,4 +39,9 @@ __all__ = [
     "DORMANT_THRESHOLD",
     "ACTIVE_THRESHOLD",
     "ACCESS_BONUS_FACTOR",
+    "MemoryLifecycle",
+    "build_main_dialogue_messages",
+    "format_permanent_memories",
+    "format_retrieved_memories",
+    "format_relationship",
 ]

@@ -1,61 +1,73 @@
-"""OpenAI 兼容的转发 API 路由."""
+"""OpenAI 兼容的转发 API 路由.
 
-import os
-import uuid
-import time
-import json
+对外提供 /v1/chat/completions 和 /v1/models.
+接收请求 → API Key 验证 → 构建初始 state → 编译图 ainvoke → 返回响应.
+流式: 直接通过 Forwarder 转发给上游, 异步触发记忆图.
+"""
+
 import asyncio
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.api.schemas.forward import (
-    ModelList,
-    ModelInfo,
+    ChatCompletionChoice,
     ChatCompletionRequest,
+    ChatCompletionResponse,
     ChatMessage,
+    ModelInfo,
+    ModelList,
     UsageInfo,
 )
-from src.modules.forward import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
-from src.modules.memory import SqliteMemoryStore, MemoryEntry, Visibility
-from src.modules.extraction import extract_latest_user_message
-from src.modules.context import merge_context, deduplicate_messages
-from src.storage.llm_service_store import LLMServiceStore
-from src.models.llm_service import ModelType
+from src.core.config import get_settings
+from src.core.graph import build_graph
+from src.infra.forwarder import (
+    Forwarder,
+    ForwarderConfig,
+    UpstreamError,
+    UpstreamTimeout,
+    parse_sse_stream,
+)
+from src.persistence.api_key_store import SqliteApiKeyStore
 
-# OpenAI 兼容的路由，使用 /v1 前缀
 router = APIRouter(prefix="/v1")
 
-# 配置 (应从环境变量或配置文件加载)
-# 默认配置作为回退
-DEFAULT_UPSTREAM_CONFIG = ForwarderConfig(
-    base_url=os.getenv("DEFAULT_LLM_BASE_URL", "https://api.openai.com/v1"),
-    api_key=os.getenv("DEFAULT_LLM_API_KEY", ""),
-    default_model=os.getenv("DEFAULT_LLM_MODEL", "gpt-3.5-turbo"),
-)
-
-# 存储实例 (懒加载)
-_llm_service_store: LLMServiceStore | None = None
-_memory_store: SqliteMemoryStore | None = None
+# 全局缓存
+_api_key_store: SqliteApiKeyStore | None = None
+_compiled_graph = None
 
 
-def _get_llm_service_store() -> LLMServiceStore:
-    """获取 LLM 服务存储实例（单例模式）."""
-    global _llm_service_store
-    if _llm_service_store is None:
-        _llm_service_store = LLMServiceStore(
-            os.getenv("LLM_SERVICE_DB_PATH", "data/llm_services.db")
-        )
-    return _llm_service_store
+def _get_api_key_store() -> SqliteApiKeyStore:
+    global _api_key_store
+    if _api_key_store is None:
+        _api_key_store = SqliteApiKeyStore("data/api_keys.db")
+    return _api_key_store
 
 
-def _get_memory_store() -> SqliteMemoryStore:
-    """获取记忆存储实例（单例模式）."""
-    global _memory_store
-    if _memory_store is None:
-        _memory_store = SqliteMemoryStore("data/memories.db")
-    return _memory_store
+def _get_compiled_graph():
+    global _compiled_graph
+    if _compiled_graph is None:
+        _compiled_graph = build_graph()
+    return _compiled_graph
+
+
+async def _verify_api_key(request: Request) -> str | None:
+    """从 Authorization header 验证 API Key, 返回 api_key_id 或 None."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    raw_key = auth[7:]
+    store = _get_api_key_store()
+    api_key = await store.get_by_raw_key(raw_key)
+    if api_key is None:
+        return None
+    await store.update_last_used(api_key.id)
+    return api_key.id
+
+
+# ── Models ─────────────────────────────────────────────────────
 
 
 @router.get("/models", response_model=ModelList, tags=["Models"])
@@ -87,126 +99,122 @@ async def get_model(model_id: str):
     raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
 
+# ── Chat Completions ───────────────────────────────────────────
+
+
 @router.post("/chat/completions", tags=["Chat Completions"])
 async def create_chat_completion(request: ChatCompletionRequest, http_request: Request):
     """创建聊天补全.
 
     处理流程:
-    1. 验证 API Key (中间件已完成)
-    2. 加载历史记忆
-    3. 合并上下文 (历史记忆 + 当前消息)
-    4. 转发给上游模型
-    5. 存储对话记录 (异步)
-    6. 返回响应
+    1. API Key 验证 (中间件可选)
+    2. 构建初始 AgentState
+    3. 非流式: 图 ainvoke → 返回 response
+    4. 流式: 直接 Forwarder 转发, 异步触发记忆图
     """
-    # 初始化记忆存储
-    await MEMORY_STORE.init_db()
+    # 构建初始 state
+    messages_dict = [msg.model_dump(exclude_none=True) for msg in request.messages]
 
-    # 转换为 dict 格式
-    messages_dict = [msg.model_dump() for msg in request.messages]
+    # 提取 source_user (从 user 字段或默认)
+    source_user = request.user or "default"
 
-    # 去重
-    messages_dict = deduplicate_messages(messages_dict)
+    # 提取 persona (从 system 消息)
+    persona = "你是一个温暖、有记忆能力的 AI 助手。"
+    persona_name = "助手"
+    for msg in request.messages:
+        if msg.role == "system" and msg.content:
+            persona = msg.content
+            break
 
-    # 加载历史记忆 (所有记忆，当前版本不区分用户)
-    # TODO: 根据 api_key_id 或 user_identifier 过滤
-    memories = await MEMORY_STORE.query(
-        source_user=None,  # 加载所有记忆
-        limit=20,          # 最多 20 条历史
-    )
-    memories_dict = [
-        {"role": mem.role, "content": mem.content}
-        for mem in memories
-    ]
+    initial_state = {
+        "messages": messages_dict,
+        "source_user": source_user,
+        "persona": persona,
+        "persona_name": persona_name,
+        "proxy_thinking_enabled": False,
+        "stream_mode": bool(request.stream),
+    }
 
-    # 合并上下文
-    merged_messages = merge_context(
-        memories=memories_dict,
-        messages=messages_dict,
-    )
-
-    # 创建转发器
-    async with Forwarder(UPSTREAM_CONFIG) as forwarder:
-        try:
-            if request.stream:
-                # 流式响应
-                return await _handle_stream(
-                    forwarder=forwarder,
-                    messages=merged_messages,  # 使用合并后的上下文
-                    request=request,
-                    http_request=http_request,
-                )
-            else:
-                # 非流式响应
-                return await _handle_non_stream(
-                    forwarder=forwarder,
-                    messages=merged_messages,  # 使用合并后的上下文
-                    request=request,
-                    http_request=http_request,
-                )
-
-        except UpstreamTimeout as e:
-            raise HTTPException(status_code=504, detail=str(e)) from e
-        except UpstreamError as e:
-            raise HTTPException(status_code=502, detail=f"Upstream error: {e.message}") from e
+    if request.stream:
+        return await _handle_stream(http_request, initial_state, request)
+    else:
+        return await _handle_non_stream(initial_state, request)
 
 
 async def _handle_non_stream(
-    forwarder: Forwarder,
-    messages: list[dict[str, Any]],
+    initial_state: dict[str, Any],
     request: ChatCompletionRequest,
-    http_request: Request,
 ) -> JSONResponse:
-    """处理非流式请求."""
-    # 发送到上游
-    response = await forwarder.send(
-        messages=messages,
-        model=request.model,
-        temperature=request.temperature,
-        max_tokens=request.max_tokens,
-    )
+    """非流式: 运行完整图, 返回结果."""
+    settings = get_settings()
+    graph = _get_compiled_graph()
 
-    # 异步存储对话 (不阻塞响应)
-    asyncio.create_task(
-        _store_conversation(
-            messages=messages,
-            response=response,
-            api_key_id=http_request.state.api_key_id if hasattr(http_request.state, "api_key_id") else None,
-        )
-    )
+    try:
+        final_state = await graph.ainvoke(initial_state)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Graph execution failed: {e}") from e
 
-    # 返回响应
-    return JSONResponse(content=response)
+    response_text = final_state.get("response", "")
+    response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+
+    return JSONResponse(
+        content=ChatCompletionResponse(
+            id=response_id,
+            model=settings.chat.main_model,
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=ChatMessage(role="assistant", content=response_text),
+                    finish_reason="stop",
+                )
+            ],
+            usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+        ).model_dump()
+    )
 
 
 async def _handle_stream(
-    forwarder: Forwarder,
-    messages: list[dict[str, Any]],
-    request: ChatCompletionRequest,
     http_request: Request,
+    initial_state: dict[str, Any],
+    request: ChatCompletionRequest,
 ) -> StreamingResponse:
-    """处理流式请求."""
-    # 收集完整响应以便存储
-    collected_chunks = []
+    """流式: 直接转发给上游, 异步触发记忆图.
+
+    流式模式下不等待图完成 (记忆写入在后台).
+    """
+    settings = get_settings()
+
+    # 构建上游请求
+    messages_dict = initial_state["messages"]
+
+    forwarder_config = ForwarderConfig(
+        base_url=settings.chat.base_url,
+        api_key=settings.chat.api_key,
+        default_model=settings.chat.main_model,
+        timeout=90.0,
+    )
 
     async def stream_generator():
-        async for chunk in forwarder.send_stream(
-            messages=messages,
-            model=request.model,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-        ):
-            collected_chunks.append(chunk)
-            yield chunk
+        collected_chunks: list[bytes] = []
+        async with Forwarder(forwarder_config) as forwarder:
+            try:
+                async for chunk in forwarder.chat_stream(
+                    messages=messages_dict,
+                    model=request.model or settings.chat.main_model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                ):
+                    collected_chunks.append(chunk)
+                    yield chunk
+            except UpstreamTimeout as e:
+                yield f'data: {{"error": "{e}"}}\n\n'
+                return
+            except UpstreamError as e:
+                yield f'data: {{"error": "{e.message}"}}\n\n'
+                return
 
-        # 异步存储对话
-        asyncio.create_task(
-            _store_streamed_conversation(
-                messages=messages,
-                chunks=collected_chunks,
-                api_key_id=http_request.state.api_key_id if hasattr(http_request.state, "api_key_id") else None,
-            )
-        )
+        # 流结束后, 异步触发记忆图 (不阻塞)
+        asyncio.create_task(_run_memory_graph(initial_state, collected_chunks))
 
     return StreamingResponse(
         stream_generator(),
@@ -214,119 +222,20 @@ async def _handle_stream(
     )
 
 
-async def _store_conversation(
-    messages: list[dict[str, Any]],
-    response: dict[str, Any],
-    api_key_id: str | None = None,
+async def _run_memory_graph(
+    initial_state: dict[str, Any],
+    stream_chunks: list[bytes],
 ) -> None:
-    """存储对话记录.
+    """异步执行记忆图 (流式模式下后台运行)."""
+    # 补充 response 到 state (从流 chunks 中拼接)
+    response_text = parse_sse_stream(stream_chunks)
+    initial_state["response"] = response_text
+    initial_state["response_chunks"] = stream_chunks
 
-    Args:
-        messages: 请求消息列表
-        response: 上游响应
-        api_key_id: API Key ID (用于标识前端来源)
-
-    Note:
-        当前版本 source_user 使用固定值，所有对话视为同一对话方。
-        未来扩展时可根据 api_key_id 或 request.user 字段区分对话方。
-    """
+    graph = _get_compiled_graph()
     try:
-        # 当前版本：所有记忆属于同一对话方
-        # TODO: 未来根据 request.user 或 api_key_id 映射到对话方标识
-        source_user = "default"
-
-        # 提取最新的一条用户消息
-        latest_user_msg = extract_latest_user_message(messages)
-
-        # 存储最新用户消息
-        if latest_user_msg:
-            entry = MemoryEntry.create(
-                content=latest_user_msg.get("content", ""),
-                role="user",
-                source_user=source_user,
-                visibility=Visibility.SOURCE_RESTRICTED,
-            )
-            await MEMORY_STORE.save(entry)
-
-        # 存储助手回复 (属于同一对话)
-        if response.get("choices"):
-            assistant_content = response["choices"][0]["message"].get("content", "")
-            entry = MemoryEntry.create(
-                content=assistant_content,
-                role="assistant",
-                source_user=source_user,  # 与用户消息相同的 source_user
-                visibility=Visibility.SOURCE_RESTRICTED,
-            )
-            await MEMORY_STORE.save(entry)
-
+        await graph.ainvoke(initial_state)
     except Exception as e:
-        # 存储失败不影响响应，仅记录日志
-        print(f"Failed to store conversation: {e}")
-
-
-async def _store_streamed_conversation(
-    messages: list[dict[str, Any]],
-    chunks: list[bytes],
-    api_key_id: str | None = None,
-) -> None:
-    """存储流式对话记录."""
-    try:
-        # 解析流式响应，提取完整内容
-        assistant_content = _parse_stream_chunks(chunks)
-
-        # 当前版本：所有记忆属于同一对话方
-        source_user = "default"
-
-        # 提取最新的一条用户消息
-        latest_user_msg = extract_latest_user_message(messages)
-
-        # 存储最新用户消息
-        if latest_user_msg:
-            entry = MemoryEntry.create(
-                content=latest_user_msg.get("content", ""),
-                role="user",
-                source_user=source_user,
-                visibility=Visibility.SOURCE_RESTRICTED,
-            )
-            await MEMORY_STORE.save(entry)
-
-        # 存储助手回复 (属于同一对话)
-        if assistant_content:
-            entry = MemoryEntry.create(
-                content=assistant_content,
-                role="assistant",
-                source_user=source_user,  # 与用户消息相同的 source_user
-                visibility=Visibility.SOURCE_RESTRICTED,
-            )
-            await MEMORY_STORE.save(entry)
-
-    except Exception as e:
-        print(f"Failed to store streamed conversation: {e}")
-
-
-def _parse_stream_chunks(chunks: list[bytes]) -> str:
-    """解析流式响应分块，提取完整内容."""
-    content_parts = []
-
-    for chunk in chunks:
-        try:
-            # 跳过 [DONE] 标记
-            if chunk.strip() == b"data: [DONE]":
-                continue
-
-            # 解析 SSE 格式
-            if chunk.startswith(b"data: "):
-                data = chunk[6:]  # 移除 "data: " 前缀
-                parsed = json.loads(data)
-
-                # 提取内容
-                if parsed.get("choices"):
-                    delta = parsed["choices"][0].get("delta", {})
-                    if delta.get("content"):
-                        content_parts.append(delta["content"])
-
-        except (json.JSONDecodeError, KeyError, IndexError):
-            # 跳过无效分块
-            continue
-
-    return "".join(content_parts)
+        # 后台任务失败仅日志
+        import logging
+        logging.getLogger(__name__).warning("后台记忆图执行失败: %s", e)
