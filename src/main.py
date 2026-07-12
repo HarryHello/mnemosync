@@ -1,4 +1,10 @@
-"""程序入口."""
+"""程序入口 - 兼容旧的调用方式.
+
+推荐使用 mnemosync CLI 命令:
+  mnemosync serve
+  mnemosync init
+  mnemosync login
+"""
 
 import os
 import sys
@@ -17,11 +23,7 @@ def serve() -> None:
         version="0.2.0",
     )
 
-    # 内部 API 路由 (Mnemosync 自身管理用)
     app.include_router(api_router)
-
-    # OpenAI 兼容的路由 (对外服务用)
-    # 直接挂载到根路径，不使用前缀，保持与 OpenAI API 完全兼容
     app.include_router(forward_router)
 
     host = os.getenv("HOST", "0.0.0.0")
@@ -39,7 +41,6 @@ def main() -> int:
             return 0
         elif cmd == "cli-internal":
             import asyncio
-
             from src.cli.cli_interactive import main as cli_main
             asyncio.run(cli_main())
             return 0
