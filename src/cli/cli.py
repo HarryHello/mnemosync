@@ -81,7 +81,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     try:
         import uvicorn
         from fastapi import FastAPI
+        from fastapi.middleware.cors import CORSMiddleware
+        from fastapi.staticfiles import StaticFiles
+        from starlette.responses import FileResponse
         from src.api import api_router, forward_router
+        from src.api.middleware import HttpLogMiddleware
     except ImportError as e:
         print(f"❌ 依赖未安装: {e}")
         print("请运行: uv sync")
@@ -93,8 +97,36 @@ def cmd_serve(args: argparse.Namespace) -> int:
         version="0.2.0",
     )
 
+    # 添加 CORS 中间件
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # 添加 HTTP 日志中间件
+    app.add_middleware(HttpLogMiddleware)
+
+    # API 路由
     app.include_router(api_router)
     app.include_router(forward_router)
+
+    # 前端静态文件
+    ui_dist = os.path.join(project_root, "ui", "dist")
+    if os.path.exists(ui_dist):
+        app.mount("/assets", StaticFiles(directory=os.path.join(ui_dist, "assets")), name="assets")
+
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str):
+            """SPA 路由: 所有非 API 路径返回 index.html."""
+            file_path = os.path.join(ui_dist, full_path)
+            if os.path.isfile(file_path):
+                return FileResponse(file_path)
+            return FileResponse(os.path.join(ui_dist, "index.html"))
+    else:
+        print("⚠️  前端未构建, 仅提供 API 服务")
 
     host = args.host or os.getenv("HOST", "0.0.0.0")
     port = args.port or int(os.getenv("PORT", "16125"))
