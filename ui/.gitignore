@@ -37,4 +37,4 @@ __screenshots__/
 
 # Vite
 *.timestamp-*-*.mjs
-ui/package-lock.json
+package-lock.json
