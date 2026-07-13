@@ -11,12 +11,38 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 import httpx
 
 from .connection_pool import ConnectionPool
+
+
+def _print_upstream(direction: str, base_url: str, data: Any, status: int = None):
+    """打印上游请求/响应到控制台."""
+    colors = {
+        "REQUEST": "\033[95m",   # 紫色 (Mnemosync → LLM)
+        "RESPONSE": "\033[92m",  # 绿色 (LLM → Mnemosync)
+        "ERROR": "\033[91m",     # 红色
+        "TIMEOUT": "\033[93m",   # 黄色
+        "RESET": "\033[0m",
+    }
+
+    color = colors.get(direction, colors["RESET"])
+    reset = colors["RESET"]
+
+    print(f"\n{color}{'='*60}")
+    print(f"[UPSTREAM {direction}] {base_url}")
+    if status:
+        print(f"  Status: {status}")
+    if isinstance(data, dict) or isinstance(data, list):
+        data_str = json.dumps(data, indent=2, ensure_ascii=False)
+    else:
+        data_str = str(data)
+    print(f"  Data: {data_str[:2000]}")
+    print(f"{'='*60}{reset}\n")
 
 
 class UpstreamError(Exception):
@@ -112,6 +138,11 @@ class Forwarder:
         payload.update(kwargs)
 
         client = await self._get_client()
+        
+        # Debug: 打印上游请求
+        if os.getenv("MNEMOSYNC_DEBUG") == "1":
+            _print_upstream("REQUEST", self.config.base_url, payload)
+        
         try:
             resp = await client.post(
                 f"{self.config.base_url}/chat/completions",
@@ -119,10 +150,20 @@ class Forwarder:
                 headers=self._headers(),
             )
             resp.raise_for_status()
-            return resp.json()
+            result = resp.json()
+            
+            # Debug: 打印上游响应
+            if os.getenv("MNEMOSYNC_DEBUG") == "1":
+                _print_upstream("RESPONSE", self.config.base_url, result, status=resp.status_code)
+            
+            return result
         except httpx.HTTPStatusError as e:
+            if os.getenv("MNEMOSYNC_DEBUG") == "1":
+                _print_upstream("ERROR", self.config.base_url, {"error": e.response.text}, status=e.response.status_code)
             raise UpstreamError(e.response.status_code, e.response.text) from e
         except httpx.TimeoutException as e:
+            if os.getenv("MNEMOSYNC_DEBUG") == "1":
+                _print_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
             raise UpstreamTimeout(f"chat timeout after {self.config.timeout}s") from e
 
     async def chat_stream(
@@ -148,6 +189,11 @@ class Forwarder:
         payload.update(kwargs)
 
         client = await self._get_client()
+        
+        # Debug: 打印上游请求
+        if os.getenv("MNEMOSYNC_DEBUG") == "1":
+            _print_upstream("REQUEST (STREAM)", self.config.base_url, payload)
+        
         try:
             async with client.stream(
                 "POST",
@@ -159,9 +205,14 @@ class Forwarder:
                 async for chunk in resp.aiter_bytes():
                     yield chunk
         except httpx.HTTPStatusError as e:
+            if os.getenv("MNEMOSYNC_DEBUG") == "1":
+                body = await e.response.aread()
+                _print_upstream("ERROR", self.config.base_url, {"error": body.decode()}, status=e.response.status_code)
             body = await e.response.aread()
             raise UpstreamError(e.response.status_code, body.decode()) from e
         except httpx.TimeoutException as e:
+            if os.getenv("MNEMOSYNC_DEBUG") == "1":
+                _print_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
             raise UpstreamTimeout(f"chat_stream timeout after {self.config.timeout}s") from e
 
     # ============ 嵌入 ============

@@ -77,6 +77,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     os.chdir(project_root)
     os.environ.setdefault("PYTHONPATH", project_root)
 
+    # 设置调试模式环境变量
+    if args.debug:
+        os.environ["MNEMOSYNC_DEBUG"] = "1"
+        print("🔍 Debug mode enabled - logging all HTTP requests/responses")
+
     # 导入并运行服务器
     try:
         import uvicorn
@@ -107,7 +112,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     )
 
     # 添加 HTTP 日志中间件
-    app.add_middleware(HttpLogMiddleware)
+    app.add_middleware(HttpLogMiddleware, debug=args.debug)
 
     # API 路由
     app.include_router(api_router)
@@ -464,6 +469,7 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser.add_argument("--host", default=None, help="监听地址 (默认: 0.0.0.0)")
     serve_parser.add_argument("--port", type=int, default=None, help="监听端口 (默认: 16125)")
     serve_parser.add_argument("--daemon", "-d", action="store_true", help="后台运行")
+    serve_parser.add_argument("--debug", action="store_true", help="调试模式: 打印所有 HTTP 请求/响应")
     serve_parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     serve_parser.set_defaults(func=cmd_serve)
 

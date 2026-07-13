@@ -4,6 +4,7 @@
 """
 
 import json
+import os
 import time
 import logging
 import sqlite3
@@ -22,12 +23,37 @@ DEFAULT_MAX_RECORDS = 10000
 DEFAULT_DB_PATH = "data/http_logs.db"
 
 
+def _print_debug(method: str, direction: str, url: str, headers: dict = None, body: any = None, status: int = None):
+    """打印调试信息到控制台."""
+    colors = {
+        "REQUEST": "\033[96m",   # 青色
+        "RESPONSE": "\033[92m",  # 绿色
+        "UPSTREAM": "\033[93m",  # 黄色
+        "RESET": "\033[0m",
+    }
+
+    color = colors.get(direction, colors["RESET"])
+    reset = colors["RESET"]
+
+    print(f"\n{color}{'='*60}")
+    print(f"[{direction}] {method} {url}")
+    if status:
+        print(f"  Status: {status}")
+    if headers:
+        print(f"  Headers: {json.dumps(headers, indent=2, ensure_ascii=False)[:500]}")
+    if body:
+        body_str = json.dumps(body, indent=2, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
+        print(f"  Body: {body_str[:1000]}")
+    print(f"{'='*60}{reset}\n")
+
+
 class HttpLogMiddleware(BaseHTTPMiddleware):
     """HTTP 请求日志中间件."""
 
-    def __init__(self, app, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, app, db_path: str = DEFAULT_DB_PATH, debug: bool = False):
         super().__init__(app)
         self.db_path = db_path
+        self.debug = debug or os.getenv("MNEMOSYNC_DEBUG") == "1"
         self._initialized = False
 
     def _ensure_db(self):
@@ -90,8 +116,6 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
             ))
             conn.commit()
             conn.close()
-            logger.debug("Logged: %s %s -> %s (%.1fms)", 
-                        kwargs["method"], kwargs["path"], kwargs["response_status"], kwargs["duration_ms"])
         except Exception as e:
             logger.warning("Failed to log HTTP request: %s", e)
 
@@ -135,6 +159,16 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
             if "auth" in key.lower() or "key" in key.lower() or "token" in key.lower():
                 request_headers[key] = "***"
 
+        # 调试模式: 打印请求
+        if self.debug:
+            _print_debug(
+                request.method,
+                "REQUEST",
+                str(request.url),
+                headers=request_headers,
+                body=request_body,
+            )
+
         # 处理响应
         response = await call_next(request)
 
@@ -162,6 +196,16 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                             response_body = full_body.decode("utf-8", errors="replace")[:1000]
                 except Exception:
                     pass
+
+                # 调试模式: 打印响应
+                if self.debug:
+                    _print_debug(
+                        request.method,
+                        "RESPONSE",
+                        str(request.url),
+                        status=response.status_code,
+                        body=response_body,
+                    )
 
                 self._log_request_sync(
                     method=request.method,
@@ -192,6 +236,16 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                         response_body = json.loads(body.decode("utf-8", errors="replace"))
                 except Exception:
                     pass
+
+            # 调试模式: 打印响应
+            if self.debug:
+                _print_debug(
+                    request.method,
+                    "RESPONSE",
+                    str(request.url),
+                    status=response.status_code,
+                    body=response_body,
+                )
 
             self._log_request_sync(
                 method=request.method,
