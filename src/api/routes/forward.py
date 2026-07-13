@@ -112,6 +112,13 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     3. 非流式: 图 ainvoke → 返回 response
     4. 流式: 直接 Forwarder 转发, 异步触发记忆图
     """
+    # 验证模型名称: 只接受 mnemosync-any 或空（使用默认模型）
+    if request.model and request.model != "mnemosync-any":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model '{request.model}'. Use 'mnemosync-any' or omit the field."
+        )
+
     # 构建初始 state
     messages_dict = [msg.model_dump(exclude_none=True) for msg in request.messages]
 
@@ -198,9 +205,10 @@ async def _handle_stream(
         collected_chunks: list[bytes] = []
         async with Forwarder(forwarder_config) as forwarder:
             try:
+                # 总是使用配置的主模型，忽略请求中的 model 参数
                 async for chunk in forwarder.chat_stream(
                     messages=messages_dict,
-                    model=request.model or settings.chat.main_model,
+                    model=settings.chat.main_model,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                 ):
