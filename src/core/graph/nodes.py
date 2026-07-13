@@ -66,6 +66,9 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
     if not state.get("proxy_thinking_enabled"):
         return {}
 
+    logger.debug("=" * 60)
+    logger.debug("🤔 [proxy_thinking] 开始处理")
+
     settings = get_settings()
     forwarder = _make_forwarder()
     try:
@@ -74,6 +77,7 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
         await memory_store.init_db()
         perms = await memory_store.list_permanent(state["source_user"], limit=5)
         memories_text = "\n".join(f"- {e.content}" for e in perms) or "（无）"
+        logger.debug("  📚 参考记忆: %d 条", len(perms))
 
         # 最新用户消息
         extracted = state.get("extracted_new", [])
@@ -83,7 +87,10 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
                 user_msg = m.get("content", "")
                 break
 
+        logger.debug("  💬 用户消息: %s", user_msg[:100] if user_msg else "(空)")
+
         rel = await memory_store.get_relationship("default", state["source_user"])
+        logger.debug("  🚀 调用代理思考 Agent...")
         result = await run_proxy_thinking(
             forwarder=forwarder,
             user_name=state["source_user"],
@@ -92,6 +99,8 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
             user_message=user_msg,
             tools=None,
         )
+        logger.debug("  ✅ 代理思考完成")
+        logger.debug("  📤 思考结果: %s", result[:100] if result else "(空)")
         return {"proxy_thinking_result": result}
     except Exception as e:
         logger.warning("代理思考失败, 退化为正常模式: %s", e)
@@ -109,11 +118,18 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
     await memory_store.init_db()
     vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
 
+    logger.debug("=" * 60)
+    logger.debug("🤖 [main_dialogue] 开始处理")
+    logger.debug("  source_user: %s", source_user)
+
     try:
         # 1. 加载永久记忆
         perms = await memory_store.list_permanent(
             source_user, limit=settings.memory.permanent_load_top
         )
+        logger.debug("  📚 永久记忆: %d 条", len(perms))
+        for i, m in enumerate(perms):
+            logger.debug("    [%d] %s", i, m.content[:50] if m.content else "")
 
         # 2. 语义检索相关记忆
         extracted = state.get("extracted_new", [])
@@ -123,6 +139,8 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
                 query = m.get("content", "")
                 break
 
+        logger.debug("  🔍 检索查询: %s", query[:100] if query else "(空)")
+
         retrieved_entries: list = []
         if query:
             retriever = MemoryRetriever(forwarder, vector_store, memory_store)
@@ -130,15 +148,18 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
                 query, top_k=settings.memory.retrieval_top_k,
                 source_user=source_user,
             )
+            logger.debug("  🔍 检索结果: %d 条", len(results))
             # 标记访问
             for r in results:
                 await memory_store.mark_accessed(r.memory_id)
                 entry = await memory_store.get_by_id(r.memory_id)
                 if entry:
                     retrieved_entries.append(entry)
+                    logger.debug("    - %s (score: %.3f)", entry.content[:50] if entry.content else "", r.score)
 
         # 3. 加载关系状态
         rel = await memory_store.get_relationship("default", source_user)
+        logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
 
         # 4. 拼装上下文
         conversation_history = state.get("messages", [])
@@ -156,8 +177,15 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
             proxy_thinking_result=state.get("proxy_thinking_result"),
         )
 
+        logger.debug("  📝 拼装消息数: %d", len(messages))
+        for i, msg in enumerate(messages):
+            content = msg.get("content", "")[:80] if msg.get("content") else ""
+            logger.debug("    [%d] %s: %s...", i, msg.get("role"), content)
+
         # 5. 生成回复 (流式由 API 层直接处理, 此处走非流式)
+        logger.debug("  🚀 调用 LLM 生成回复...")
         response = await run_main_dialogue(forwarder, messages)
+        logger.debug("  ✅ 生成完成, 长度: %d", len(response) if response else 0)
         return {"response": response}
     finally:
         await forwarder.close()
@@ -170,6 +198,9 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
     forwarder = _make_forwarder()
     memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
     await memory_store.init_db()
+
+    logger.debug("=" * 60)
+    logger.debug("🧠 [memory_analysis] 开始处理")
 
     try:
         vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
@@ -186,7 +217,10 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             f"{m.get('role', 'user')}: {m.get('content', '')}" for m in extracted
         )
         if not conversation.strip():
+            logger.debug("  ⚠️ 无对话内容, 跳过")
             return {"new_memories": [], "decay_evaluations": []}
+
+        logger.debug("  💬 对话内容: %s", conversation[:100] if len(conversation) > 100 else conversation)
 
         # 待评估的已有记忆（取一批普通记忆）
         decay_targets_entries = await memory_store.list_for_decay(skip_hours=24, limit=10)
@@ -200,7 +234,9 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             }
             for e in decay_targets_entries
         ]
+        logger.debug("  📉 待衰减评估: %d 条", len(decay_targets))
 
+        logger.debug("  🚀 调用记忆分析 Agent...")
         out = await run_memory_analysis(
             forwarder=forwarder,
             source_user=source_user,
@@ -210,10 +246,15 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             max_iterations=6,
         )
 
+        logger.debug("  ✅ 记忆分析完成")
+        logger.debug("    新记忆: %d 条", len(out.new_memories))
+        logger.debug("    衰减评估: %d 条", len(out.decay_evaluations))
+
         # 持久化
         lifecycle = MemoryLifecycle(memory_store, vector_store, forwarder)
         for cand in out.new_memories:
             await lifecycle.store_candidate(cand, source_user=source_user)
+            logger.debug("    📝 新记忆: %s", cand.content[:50] if cand.content else "")
         await lifecycle.apply_decay_evaluations(out.decay_evaluations)
 
         return {
@@ -240,18 +281,26 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
     memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
     await memory_store.init_db()
 
+    logger.debug("=" * 60)
+    logger.debug("💝 [relationship_analysis] 开始处理")
+
     try:
         source_user = state["source_user"]
         rel = await memory_store.get_relationship("default", source_user)
         current_rel_str = format_relationship(rel)
+        logger.debug("  当前关系: %s", current_rel_str if current_rel_str else "(无)")
 
         extracted = state.get("extracted_new", [])
         conversation = "\n".join(
             f"{m.get('role', 'user')}: {m.get('content', '')}" for m in extracted
         )
         if not conversation.strip():
+            logger.debug("  ⚠️ 无对话内容, 跳过")
             return {"relationship_delta": {}}
 
+        logger.debug("  💬 对话内容: %s", conversation[:100] if len(conversation) > 100 else conversation)
+
+        logger.debug("  🚀 调用关系分析 Agent...")
         out = await run_relationship_analysis(
             forwarder=forwarder,
             current_relationship=current_rel_str,
@@ -259,6 +308,12 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
             tools=[make_emotion_analyzer_tool(forwarder)],
             max_iterations=3,
         )
+
+        logger.debug("  ✅ 关系分析完成")
+        logger.debug("    亲密度变化: %+.2f", out.intimacy_delta)
+        logger.debug("    信任度变化: %+.2f", out.trust_delta)
+        logger.debug("    新关系类型: %s", out.new_relationship_type or "(不变)")
+        logger.debug("    备注: %s", out.notes or "(无)")
 
         # 持久化关系更新
         lifecycle = MemoryLifecycle(memory_store, None, forwarder)  # type: ignore[arg-type]

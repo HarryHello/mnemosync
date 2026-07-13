@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import logging
 import uuid
 from typing import Any
 
@@ -33,6 +34,7 @@ from src.infra.forwarder import (
 from src.persistence.api_key_store import SqliteApiKeyStore
 
 router = APIRouter(prefix="/v1")
+logger = logging.getLogger(__name__)
 
 # 全局缓存
 _api_key_store: SqliteApiKeyStore | None = None
@@ -112,8 +114,17 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     3. 非流式: 图 ainvoke → 返回 response
     4. 流式: 直接 Forwarder 转发, 异步触发记忆图
     """
+    logger.debug("=" * 60)
+    logger.debug("📥 收到 chat/completions 请求")
+    logger.debug("  model: %s", request.model)
+    logger.debug("  stream: %s", request.stream)
+    logger.debug("  temperature: %s", request.temperature)
+    logger.debug("  max_tokens: %s", request.max_tokens)
+    logger.debug("  messages count: %d", len(request.messages))
+
     # 验证模型名称: 只接受 mnemosync-any 或空（使用默认模型）
     if request.model and request.model != "mnemosync-any":
+        logger.debug("  ❌ 无效模型: %s", request.model)
         raise HTTPException(
             status_code=400,
             detail=f"Invalid model '{request.model}'. Use 'mnemosync-any' or omit the field."
@@ -121,6 +132,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
 
     # 构建初始 state
     messages_dict = [msg.model_dump(exclude_none=True) for msg in request.messages]
+    logger.debug("  构建 state 完成, 消息数: %d", len(messages_dict))
 
     # 提取 source_user (从 user 字段或默认)
     source_user = request.user or "default"
@@ -156,14 +168,19 @@ async def _handle_non_stream(
     settings = get_settings()
     graph = _get_compiled_graph()
 
+    logger.debug("🚀 开始执行图 (非流式)...")
     try:
         final_state = await graph.ainvoke(initial_state)
+        logger.debug("✅ 图执行完成")
+        logger.debug("  response 长度: %d", len(final_state.get("response", "")))
     except Exception as e:
+        logger.debug("❌ 图执行失败: %s", e)
         raise HTTPException(status_code=500, detail=f"Graph execution failed: {e}") from e
 
     response_text = final_state.get("response", "")
     response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
+    logger.debug("📤 返回响应: %s", response_id)
     return JSONResponse(
         content=ChatCompletionResponse(
             id=response_id,
@@ -205,6 +222,7 @@ async def _handle_stream(
         collected_chunks: list[bytes] = []
         async with Forwarder(forwarder_config) as forwarder:
             try:
+                logger.debug("🚀 开始流式转发...")
                 # 总是使用配置的主模型，忽略请求中的 model 参数
                 async for chunk in forwarder.chat_stream(
                     messages=messages_dict,
@@ -214,14 +232,18 @@ async def _handle_stream(
                 ):
                     collected_chunks.append(chunk)
                     yield chunk
+                logger.debug("✅ 流式转发完成, chunks: %d", len(collected_chunks))
             except UpstreamTimeout as e:
+                logger.debug("⏰ 流式超时: %s", e)
                 yield f'data: {{"error": "{e}"}}\n\n'
                 return
             except UpstreamError as e:
+                logger.debug("❌ 流式错误: %s", e.message)
                 yield f'data: {{"error": "{e.message}"}}\n\n'
                 return
 
         # 流结束后, 异步触发记忆图 (不阻塞)
+        logger.debug("🔄 触发后台记忆图...")
         asyncio.create_task(_run_memory_graph(initial_state, collected_chunks))
 
     return StreamingResponse(
