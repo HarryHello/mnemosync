@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
 
+const router = useRouter()
 const { login } = useAuth()
 
 const username = ref('')
@@ -20,6 +22,7 @@ async function handleLogin() {
 
   try {
     await login(username.value, password.value)
+    router.push('/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Login failed'
   } finally {
