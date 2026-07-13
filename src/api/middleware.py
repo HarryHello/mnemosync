@@ -12,7 +12,7 @@ from typing import Callable
 import aiosqlite
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -35,33 +35,35 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         if self._initialized:
             return
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS http_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    method TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    query_params TEXT,
-                    request_headers TEXT,
-                    request_body TEXT,
-                    response_status INTEGER,
-                    response_body TEXT,
-                    duration_ms REAL,
-                    client_ip TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_http_logs_created_at 
-                ON http_logs(created_at)
-            """)
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_http_logs_path 
-                ON http_logs(path)
-            """)
-            await db.commit()
-
-        self._initialized = True
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS http_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        method TEXT NOT NULL,
+                        path TEXT NOT NULL,
+                        query_params TEXT,
+                        request_headers TEXT,
+                        request_body TEXT,
+                        response_status INTEGER,
+                        response_body TEXT,
+                        duration_ms REAL,
+                        client_ip TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                await db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_http_logs_created_at 
+                    ON http_logs(created_at)
+                """)
+                await db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_http_logs_path 
+                    ON http_logs(path)
+                """)
+                await db.commit()
+            self._initialized = True
+        except Exception as e:
+            logger.error("Failed to initialize HTTP logs database: %s", e)
 
     async def _log_request(self, **kwargs):
         """写入日志到数据库."""
@@ -84,14 +86,15 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                     kwargs["client_ip"],
                 ))
                 await db.commit()
+            logger.debug("Logged HTTP request: %s %s -> %s", kwargs["method"], kwargs["path"], kwargs["response_status"])
         except Exception as e:
             logger.warning("Failed to log HTTP request: %s", e)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """处理请求并记录日志."""
-        # 跳过健康检查和静态文件
+        # 跳过不需要记录的路径
         skip_paths = ("/health", "/docs", "/openapi.json", "/redoc")
-        skip_extensions = (".js", ".css", ".ico", ".png", ".jpg", ".svg")
+        skip_extensions = (".js", ".css", ".ico", ".png", ".jpg", ".svg", ".woff", ".woff2", ".ttf")
 
         if request.url.path in skip_paths:
             return await call_next(request)
@@ -99,7 +102,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         if request.url.path.endswith(skip_extensions):
             return await call_next(request)
 
-        # 跳过前端路由 (非 API 路径)
+        # 只记录 API 请求
         if not request.url.path.startswith("/api/") and not request.url.path.startswith("/v1/"):
             return await call_next(request)
 
@@ -114,13 +117,13 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
             try:
                 body = await request.body()
                 if body:
-                    request_body = body.decode("utf-8", errors="replace")
                     # 尝试解析为 JSON
                     try:
-                        request_body = json.loads(request_body)
-                    except json.JSONDecodeError:
-                        pass
-            except Exception:
+                        request_body = json.loads(body.decode("utf-8", errors="replace"))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        request_body = body.decode("utf-8", errors="replace")[:1000]  # 限制长度
+            except Exception as e:
+                logger.debug("Failed to read request body: %s", e)
                 request_body = "<read error>"
 
         # 获取请求头
@@ -136,47 +139,75 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         # 计算耗时
         duration_ms = (time.time() - start_time) * 1000
 
-        # 读取响应体 (只读取小型 JSON 响应)
-        response_body = None
-        content_type = response.headers.get("content-type", "")
-        if "json" in content_type:
-            try:
-                # 读取响应 body
-                body_chunks = []
-                async for chunk in response.body_iterator:
-                    if isinstance(chunk, str):
-                        body_chunks.append(chunk.encode())
-                    else:
-                        body_chunks.append(chunk)
+        # 对于流式响应，包装一个 logging wrapper
+        if isinstance(response, StreamingResponse):
+            original_body_iterator = response.body_iterator
 
-                full_body = b"".join(body_chunks)
-                if full_body:
-                    response_body = json.loads(full_body.decode("utf-8", errors="replace"))
+            async def logging_body_iterator():
+                chunks = []
+                async for chunk in original_body_iterator:
+                    chunks.append(chunk)
+                    yield chunk
 
-                # 重建响应 (因为已经消费了 body_iterator)
-                response = Response(
-                    content=full_body,
-                    status_code=response.status_code,
-                    headers=dict(response.headers),
-                    media_type=response.media_type,
+                # 流结束后记录日志
+                response_body = None
+                try:
+                    # 尝试解析最后的 JSON 响应
+                    full_body = b"".join(chunks)
+                    if full_body:
+                        try:
+                            response_body = json.loads(full_body.decode("utf-8", errors="replace"))
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            response_body = full_body.decode("utf-8", errors="replace")[:1000]
+                except Exception:
+                    pass
+
+                # 同步写入数据库 (在流结束后)
+                await self._log_request(
+                    method=request.method,
+                    path=request.url.path,
+                    query_params=str(request.query_params) if request.query_params else None,
+                    request_headers=request_headers,
+                    request_body=request_body,
+                    response_status=response.status_code,
+                    response_body=response_body,
+                    duration_ms=duration_ms,
+                    client_ip=request.client.host if request.client else None,
                 )
-            except Exception as e:
-                logger.debug("Failed to read response body: %s", e)
 
-        # 异步写入数据库
-        asyncio.create_task(self._log_request(
-            method=request.method,
-            path=request.url.path,
-            query_params=str(request.query_params) if request.query_params else None,
-            request_headers=request_headers,
-            request_body=request_body,
-            response_status=response.status_code,
-            response_body=response_body,
-            duration_ms=duration_ms,
-            client_ip=request.client.host if request.client else None,
-        ))
+            # 返回新的流式响应
+            return StreamingResponse(
+                logging_body_iterator(),
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+        else:
+            # 非流式响应，直接记录
+            response_body = None
+            content_type = response.headers.get("content-type", "")
+            if "json" in content_type:
+                try:
+                    body = response.body
+                    if body:
+                        response_body = json.loads(body.decode("utf-8", errors="replace"))
+                except Exception as e:
+                    logger.debug("Failed to read response body: %s", e)
 
-        return response
+            # 记录日志
+            await self._log_request(
+                method=request.method,
+                path=request.url.path,
+                query_params=str(request.query_params) if request.query_params else None,
+                request_headers=request_headers,
+                request_body=request_body,
+                response_status=response.status_code,
+                response_body=response_body,
+                duration_ms=duration_ms,
+                client_ip=request.client.host if request.client else None,
+            )
+
+            return response
 
 
 async def cleanup_old_logs(db_path: str = DEFAULT_DB_PATH, retention_days: int = DEFAULT_RETENTION_DAYS, max_records: int = DEFAULT_MAX_RECORDS):
