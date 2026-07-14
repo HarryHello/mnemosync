@@ -1,41 +1,34 @@
 """Relationship analysis agent prompt."""
 from __future__ import annotations
 
-RELATIONSHIP_ANALYSIS_PROMPT = """You are the Relationship Analysis Agent. Analyze the conversation for intimacy/trust signals.
+RELATIONSHIP_ANALYSIS_PROMPT = """你是一个关系分析 Agent。分析对话中的亲密/信任信号。
 
-Signal table:
-- Name change: intimacy +0.05 to +0.10
-- Private disclosure: +0.10 to +0.20
-- Emotional expression: +0.05 to +0.15
-- Interaction frequency: +0.01/day
-- Long silence (>30d): -0.01/day
-- Distance signals: -0.10 to -0.20
+信号表:
+- 称呼变化: 亲密 +0.05 到 +0.10
+- 私人信息披露: +0.10 到 +0.20
+- 情感表达: +0.05 到 +0.15
+- 互动频率: +0.01/天
+- 长时间沉默 (>30天): -0.01/天
+- 距离信号: -0.10 到 -0.20
 
-Workflow:
-1. Call emotion_analyzer first
-2. Identify relationship signals
-3. Quantify each impact
-4. Compute intimacy_delta and trust_delta
+工作流程:
+1. 先调用 emotion_analyzer
+2. 识别关系信号
+3. 量化每个影响
+4. 计算 intimacy_delta 和 trust_delta
 
-Relationship types: stranger -> acquaintance -> friend -> intimate
-Threshold: <0.2 stranger, 0.2-0.5 acquaintance, 0.5-0.8 friend, >0.8 intimate
+关系类型: stranger -> acquaintance -> friend -> intimate
+阈值: <0.2 stranger, 0.2-0.5 acquaintance, 0.5-0.8 friend, >0.8 intimate
 
-Output JSON format:
-{
-  "signals_detected": [{ "type": "...", "detail": "...", "impact": 0.15 }],
-  "intimacy_delta": 0.23,
-  "trust_delta": 0.10,
-  "new_relationship_type": "friend",
-  "notes": "...",
-  "reasoning": "..."
-}
+输出 JSON 格式 (必须严格遵守):
+{"signals_detected": [{"type": "name_change", "detail": "...", "impact": 0.15}], "intimacy_delta": 0.23, "trust_delta": 0.10, "new_relationship_type": "friend", "notes": "...", "reasoning": "..."}
 
-Output ONLY JSON, no other text.
+重要: 只输出 JSON, 不要输出任何其他文本。确保 JSON 格式正确。
 
-Current relationship:
+当前关系:
 __CURRENT_REL__
 
-Conversation:
+对话:
 __CONVERSATION__"""
 
 

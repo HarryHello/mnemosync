@@ -40,21 +40,47 @@ class MemoryAnalysisOutput:
 
 
 def _extract_json(content: str) -> dict | None:
-    """从模型输出中提取 JSON."""
+    """从模型输出中提取 JSON, 支持修复常见格式问题."""
     TRIPLE = "```"
     if TRIPLE in content:
         parts = content.split(TRIPLE)
         if len(parts) >= 2:
             content = parts[-2]
     content = content.strip()
+    
+    # 移除可能的 JSON 前缀/后缀文本
+    lines = content.split("\n")
+    json_lines = []
+    in_json = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("{") or in_json:
+            in_json = True
+            json_lines.append(line)
+            if stripped.endswith("}"):
+                break
+    
+    if json_lines:
+        content = "\n".join(json_lines)
+    
     start = content.find("{")
     end = content.rfind("}")
     if start == -1 or end == -1 or end <= start:
         return None
+    
+    json_str = content[start : end + 1]
+    
     try:
-        return json.loads(content[start : end + 1])
+        return json.loads(json_str)
     except json.JSONDecodeError:
-        return None
+        # 尝试修复常见问题: 缺少引号的键
+        import re
+        # 给没有引号的键加上引号
+        fixed = re.sub(r'(\s*)(\w+)(\s*:)', r'\1"\2"\3', json_str)
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            return None
 
 
 def _parse_candidate(d: dict) -> CandidateMemory:
@@ -173,23 +199,28 @@ async def run_relationship_analysis(
     user_prompt = RELATIONSHIP_ANALYSIS_PROMPT.format(
         current_relationship=current_relationship, conversation=conversation,
     )
-    result = await run_react_loop(
-        forwarder=forwarder, model=settings.chat.assist_model,
-        system_prompt="你是关系分析 Agent。调用 emotion_analyzer 后输出 JSON。",
-        user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
-        temperature=0.2,
-    )
-    if not result.succeeded:
-        return RelationshipAnalysisOutput(intimacy_delta=0.0, trust_delta=0.0, new_relationship_type=None, notes="", reasoning=result.error or "", raw_output="")
-    parsed = _extract_json(result.output) or {}
-    return RelationshipAnalysisOutput(
-        intimacy_delta=float(parsed.get("intimacy_delta", 0.0)),
-        trust_delta=float(parsed.get("trust_delta", 0.0)),
-        new_relationship_type=parsed.get("new_relationship_type"),
-        notes=parsed.get("notes", ""),
-        reasoning=parsed.get("reasoning", ""),
-        raw_output=result.output,
-    )
+    try:
+        result = await run_react_loop(
+            forwarder=forwarder, model=settings.chat.assist_model,
+            system_prompt="你是关系分析 Agent。调用 emotion_analyzer 后输出 JSON。",
+            user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
+            temperature=0.2,
+        )
+        if not result.succeeded:
+            logger.warning("关系分析失败: %s", result.error)
+            return RelationshipAnalysisOutput(intimacy_delta=0.0, trust_delta=0.0, new_relationship_type=None, notes="", reasoning=result.error or "", raw_output="")
+        parsed = _extract_json(result.output) or {}
+        return RelationshipAnalysisOutput(
+            intimacy_delta=float(parsed.get("intimacy_delta", 0.0)),
+            trust_delta=float(parsed.get("trust_delta", 0.0)),
+            new_relationship_type=parsed.get("new_relationship_type"),
+            notes=parsed.get("notes", ""),
+            reasoning=parsed.get("reasoning", ""),
+            raw_output=result.output,
+        )
+    except Exception as e:
+        logger.warning("关系分析异常: %s", e)
+        return RelationshipAnalysisOutput(intimacy_delta=0.0, trust_delta=0.0, new_relationship_type=None, notes="", reasoning=str(e), raw_output="")
 
 
 async def run_proxy_thinking(
