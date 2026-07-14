@@ -1,55 +1,46 @@
 # 认证 API 文档
 
-> **最后更新**: 2026-07-12
-> **系统版本**: v0.2.0
+> **系统版本**: v0.2.1
+> **文档状态**: 与代码同步
+> **最后更新**: 2026-07-15
 
 ---
 
-## 概述
+## 1. 概述
 
-Mnemosync 采用帐号密码认证方式，默认账号密码都是 `mnemosync`。
+Mnemosync 采用 用户名 + 密码 的认证方式管理**管理员**账号, 首次部署自动创建默认账号 `mnemosync / mnemosync`。
 
-> ⚠️ **重要说明**：
-> 
-> 此处的"用户"指的是**管理员用户**，用于登录 WebUI 或 CLI 来管理 Mnemosync 服务。
-> 
-> **不是**多用户系统中的"最终用户"概念。当前版本为单人格架构，所有前端客户端共享同一人格配置。
+> 此处的"用户"指**管理员**——用于登录 WebUI/CLI 管理 Mnemosync 本身。与前端接入使用的 API Key、以及各前端自己的最终用户是三个独立层次。参见 [概念区分](#5-概念区分)。
+
+**路由前缀**: `/auth` (真实定义见 [src/api/routes/auth.py:25](../src/api/routes/auth.py#L25))。
+
+**数据库**: `data/auth.db`, 存储用户和会话 Token。
 
 ---
 
-## 快速开始
+## 2. 快速开始
 
-### 1. 初始化服务器（含默认管理员）
+### 2.1 初始化
 
-首次部署时，使用 `init` 命令初始化服务器，会自动创建默认管理员：
-
-```bash
-# 使用 CLI 初始化（Docker 部署）
-mnemosync init
-```
-
-输出示例：
-```
-Mnemosync initializing...
-Building Docker image...
-Initializing database...
-Success!
-
-Use `mnemosync login` to start the cli environment,
-or use `mnemosync help` to get more information.
-```
-
-> **说明**：`mnemosync init` 会构建 Docker 镜像并初始化数据库，默认管理员帐号（用户名/密码：`mnemosync`）会在初始化时自动创建。
-
-### 2. 登录获取 Token
+首次部署运行:
 
 ```bash
-curl -X POST http://localhost:16125/api/v1/auth/login \
+mnemosync init                # 本地模式
+mnemosync init --docker       # Docker 模式
+```
+
+`init` 会初始化 `data/auth.db` 及其它数据库文件。默认管理员在首次成功登录 `mnemosync/mnemosync` 时自动创建 (见 [login 逻辑](../src/api/routes/auth.py#L83))。
+
+### 2.2 登录
+
+```bash
+curl -X POST http://localhost:16125/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "mnemosync", "password": "mnemosync"}'
 ```
 
-响应：
+响应:
+
 ```json
 {
   "access_token": "abc123...",
@@ -60,39 +51,36 @@ curl -X POST http://localhost:16125/api/v1/auth/login \
 }
 ```
 
-### 3. 首次登录修改密码
+### 2.3 修改密码 (首次强制)
 
 ```bash
-curl -X POST http://localhost:16125/api/v1/auth/change-password \
-  -H "Authorization: Bearer <your_token>" \
+curl -X POST http://localhost:16125/auth/change-password \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"old_password": "mnemosync", "new_password": "your_new_password"}'
 ```
 
-### 4. 使用 Token 访问受保护接口
+### 2.4 访问受保护端点
 
 ```bash
-curl http://localhost:16125/api/v1/auth/me \
-  -H "Authorization: Bearer <your_token>"
+curl http://localhost:16125/auth/me \
+  -H "Authorization: Bearer <token>"
 ```
 
 ---
 
-## API 接口
+## 3. API 端点
 
-### POST /api/v1/auth/login
+所有端点前缀 `/auth`。
 
-管理员登录
+### POST /auth/login
 
-**请求体：**
+**请求**:
 ```json
-{
-  "username": "string (1-50 字符)",
-  "password": "string (1-128 字符)"
-}
+{ "username": "string (1-50)", "password": "string (1-128)" }
 ```
 
-**响应：**
+**响应** (200):
 ```json
 {
   "access_token": "string",
@@ -103,168 +91,129 @@ curl http://localhost:16125/api/v1/auth/me \
 }
 ```
 
-### POST /api/v1/auth/logout
+**错误**: `401` 用户名或密码错误。
 
-管理员登出
+### POST /auth/logout
 
-**请求头：**
-```
-Authorization: Bearer <token>
-```
+**请求头**: `Authorization: Bearer <token>`
 
-### GET /api/v1/auth/me
+**响应** (200): `{ "success": true, "message": "已登出" }`
 
-获取当前管理员信息
+### GET /auth/me
 
-**请求头：**
-```
-Authorization: Bearer <token>
-```
+**请求头**: `Authorization: Bearer <token>`
 
-**响应：**
+**响应** (200):
 ```json
 {
   "user": {
     "id": "string",
     "username": "string",
     "must_change_password": true,
-    "created_at": "2026-03-25T10:00:00+00:00",
-    "last_login_at": "2026-03-25T12:00:00+00:00"
+    "created_at": "2026-07-01T10:00:00+00:00",
+    "last_login_at": "2026-07-15T12:00:00+00:00"
   }
 }
 ```
 
-### POST /api/v1/auth/change-password
+### POST /auth/change-password
 
-修改密码
+**请求头**: `Authorization: Bearer <token>`
 
-**请求头：**
-```
-Authorization: Bearer <token>
-```
-
-**请求体：**
+**请求**:
 ```json
-{
-  "old_password": "string",
-  "new_password": "string (最少 6 字符)"
-}
+{ "old_password": "string", "new_password": "string (最少 6 字符)" }
 ```
 
-**响应：**
-```json
-{
-  "success": true,
-  "message": "密码已修改，请重新登录"
-}
-```
+**响应** (200): `{ "success": true, "message": "密码已修改，请重新登录" }`
 
-### POST /api/v1/auth/init-default-user
+**错误**: `400` 旧密码错误或新密码不合法。
 
-初始化默认管理员（仅首次）
+### POST /auth/init-default-user
 
-**响应：**
-```json
-{
-  "success": true,
-  "message": "默认管理员已创建，用户名和密码都是 mnemosync，首次登录请修改密码"
-}
-```
+无鉴权; 幂等创建默认管理员 `mnemosync/mnemosync`。用于外部工具首次初始化。
 
 ---
 
-## CLI 命令
+## 4. CLI 命令
 
-```bash
-# 初始化服务器（含默认管理员）
-mnemosync init
+顶层命令 (真实定义见 [src/cli/cli.py](../src/cli/cli.py)):
 
-# 列出所有管理员
-mnemosync list-users
+| 命令 | 说明 |
+|------|------|
+| `mnemosync init [--docker]` | 初始化数据库 |
+| `mnemosync serve` | 启动服务 |
+| `mnemosync stop` | 停止服务 (Docker 模式) |
+| `mnemosync login` | 进入交互式 CLI |
+| `mnemosync ask <msg>` | 命令行直连主对话 (调试) |
+| `mnemosync upgrade` | 升级 Mnemosync |
+| `mnemosync help` | 帮助 |
 
-# 修改管理员密码
-mnemosync change-password <username> <old_password> <new_password>
-
-# 生成 API Key（用于前端客户端）
-mnemosync generate "备注"
-
-# 列出 API Key
-mnemosync list
-
-# 撤销 API Key
-mnemosync revoke <key_id>
-```
+**API Key / 用户管理不在顶层命令**——通过 `mnemosync login` 进入交互式 shell 后使用: `generate-key`, `list-keys`, `revoke-key`, `list-users`, `change-password` 等。见 [CLI 文档](modules/cli.md)。
 
 ---
 
-## 概念区分
+## 5. 概念区分
 
 | 概念 | 说明 | 用途 |
 |------|------|------|
-| **管理员用户** | 登录 WebUI/CLI 的帐号 | 配置人格、管理 API Key、查看日志 |
-| **API Key** | 前端客户端使用的密钥 | AstrBot/AIRI/Web 等前端接入时使用 |
-| **最终用户** | 与前端对话的普通人 | 如 QQ 好友、网站访客，不由 Mnemosync 管理 |
+| **管理员用户** | 登录 WebUI/CLI 的账号 | 配置人格、管理 API Key、查看日志 |
+| **API Key** | 前端客户端使用的密钥 | AstrBot/AIRI/Web 等接入 `/v1/chat/completions` |
+| **最终用户** | 与前端对话的普通人 | 由各前端自行管理, Mnemosync 通过 `source_user` 字段区分 |
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  管理员用户                                                  │
-│  帐号：mnemosync / 密码：*****                               │
-│         ↓ 登录                                               │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  Mnemosync WebUI / CLI                               │    │
-│  │  • 配置人格设定                                       │    │
-│  │  • 生成/管理 API Key                                 │    │
-│  │  • 查看对话日志                                       │    │
-│  └─────────────────────────────────────────────────────┘    │
-│         ↓ 生成 API Key                                        │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  API Key: sk-abc12345                                │    │
-│  └─────────────────────────────────────────────────────┘    │
-│         ↓ 配置到前端                                          │
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐   │
-│  │  AstrBot      │  │  AIRI 桌宠    │  │  Web 聊天室   │   │
-│  │  Key: sk-...  │  │  Key: sk-...  │  │  Key: sk-...  │   │
-│  └───────────────┘  └───────────────┘  └───────────────┘   │
-│         ↓                  ↓                  ↓             │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  最终用户 (QQ 好友 / 网站访客等)                       │    │
-│  │  与前端对话，不直接接触 Mnemosync                     │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+管理员
+   │登录
+   ▼
+Mnemosync 管理面 (auth + api-keys + admin)
+   │生成
+   ▼
+API Key sk-xxx
+   │分发给前端
+   ▼
+AstrBot / AIRI / Web  ── 走 /v1/chat/completions
+   │
+   ▼
+最终用户 (QQ 好友 / 网站访客 …)
 ```
 
 ---
 
-## 安全建议
+## 6. 安全建议
 
-1. **首次登录后立即修改密码**
-2. **定期更换密码**
-3. **不要使用弱密码**
-4. **妥善保管 API Key**（泄露后撤销并重新生成）
-5. **生产环境使用 HTTPS**
-6. **定期备份数据库文件**
+1. 首次登录立即修改默认密码
+2. 生产环境启用 HTTPS
+3. Token 有效期 86400s (24h); 手动 `POST /auth/logout` 提前失效
+4. 定期备份 `data/auth.db` 与 `data/api_keys.db`
+5. API Key 泄露后立即在管理面吊销
 
 ---
 
-## 数据库文件
+## 7. 数据库
 
-| 文件 | 路径 | 说明 |
+| 文件 | 用途 |
+|------|------|
+| `data/auth.db` | 管理员账号 + 会话 Token |
+| `data/api_keys.db` | 前端 API Key |
+
+---
+
+## 8. 常见问题
+
+**Q: 支持多管理员吗?**
+A: 数据模型支持, 但当前 UI/CLI 只暴露默认管理员; 需要手动通过 auth_store 添加。
+
+**Q: 未来会支持最终用户系统吗?**
+A: 单人格架构下不打算支持——终端用户由前端自行管理。多人格是未来规划 (v1.0+)。
+
+**Q: API Key 与代理思考的关系?**
+A: 独立。API Key 只做鉴权; 代理思考当前硬编码 `False` ([forward.py:158](../src/api/routes/forward.py#L158)), 请求头 `X-Enable-Proxy-Thinking` 目前未接入, 需修改代码启用。
+
+---
+
+## 9. 版本历史
+
+| 版本 | 日期 | 变更 |
 |------|------|------|
-| 认证数据库 | `data/auth.db` | 存储管理员用户和会话 Token |
-| API Key 数据库 | `data/api_keys.db` | 存储 API Key（前端客户端用） |
-
----
-
-## 常见问题
-
-### Q: 支持多用户注册吗？
-A: 当前版本不支持。管理员帐号用于管理服务，最终用户由各自前端管理。
-
-### Q: 可以为不同用户生成不同的 API Key 吗？
-A: 可以生成多个 API Key，但它们共享同一人格配置。API Key 用于区分前端来源，而非用户隔离。
-
-### Q: 未来会支持多用户吗？
-A: 多人格/多用户支持是未来规划（v1.0+），当前专注于单人格场景的完善。
-
-### Q: API Key 鉴权和代理思考模式是什么关系？
-A: 两者独立。API Key 用于鉴权（验证前端身份），代理思考模式由请求头 `X-Enable-Proxy-Thinking: true` 单独控制——鉴权通过后，主对话 Agent 前是否插入代理思考 Agent 取决于该请求头。详见 [Agent 设计文档 §4](modules/agents.md#4-agent-3-代理思考-agent-proxy-thinking-agent) 和 [配置文档 §6](configuration.md#6-agent-编排配置)。
+| v0.2.0 | 2026-07-12 | 初始认证系统 |
+| v0.2.1 | 2026-07-15 | 与代码对齐: 路由前缀 `/auth` (非 `/api/v1/auth`), CLI 顶层命令列表修正, 代理思考启用方式修正 |

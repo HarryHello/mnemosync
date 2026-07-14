@@ -1,333 +1,207 @@
 # 上游转发模块 (Forward Module)
 
-> **模块版本**: v0.2.0
+> **模块版本**: v0.2.1
+> **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-12
+> **最后更新**: 2026-07-15
 > **作者**: HarryHelloo
 
 ---
 
-## 定位 (Positioning)
+## 1. 定位
 
-Forward 模块是 Mnemosync **所有模型调用的唯一 HTTP 出口**，也是与上游服务商交互的唯一通道。它不负责任何智能决策，只做 HTTP 转发、连接池管理、超时控制、SSE 流式处理。
+Forwarder 是 Mnemosync **所有上游 HTTP 调用的唯一出口**——包括对话、嵌入、重排、模型列表。Mnemosync 本地不做推理; Agent 节点组装请求后, 一律通过它送到远端服务商。
 
-**核心事实**：Mnemosync 本地不运行大模型，所有模型推理（包括 Agent 的"思考"）都发生在远端服务商。Agent 节点组装好请求后，统一通过 Forwarder 把请求送达服务商，再把模型响应拿回来。
+**代码位置**: [src/infra/forwarder/](../../src/infra/forwarder/) (`forwarder.py` / `connection_pool.py` / `errors.py`)。
 
-```
-Agent 节点（本地组装请求）
-       │
-       ▼
-   Forwarder ─── HTTP ───→ 上游服务商（模型推理在这里发生）
-       │                    OpenAI 兼容的任意模型服务商
-       │  ←──── 响应（JSON 或 SSE 流）─────
-       ▼
-   解析响应 / 透传给前端 / 喂回 Agent 循环
-```
+**调用方一览**:
 
-**谁在用 Forwarder**：
-
-| 调用者 | 调用方式 | 用途 |
-|--------|----------|------|
-| 主对话 Agent | 对话接口（`/chat/completions`） | 让主模型生成回复 |
-| 记忆分析 Agent | 对话接口 + function_call | 驱动 ReAct 循环，模型自主调用工具 |
-| 关系分析 Agent / 代理思考 Agent | 对话接口 | CoT 推理 |
-| 向量检索 Agent | embedding / rerank 接口 | 生成向量、精排候选（非对话调用） |
-
-> **注意**：Forwarder 不属于任何单个 Agent，它是模型调用基础设施。本模块的 API（`send` / `send_stream`）自 v0.1.0 以来保持稳定，v0.2.0 的变化只是**调用者从 Gateway/Pipeline 变为各 Agent 节点**。
+| 调用者 | 方法 | 用途 |
+|-------|------|------|
+| 主对话 Agent (非流式) | `chat()` | 生成回复 |
+| 主对话 (流式路径 forward.py) | `chat_stream()` | SSE 透传给客户端 |
+| 记忆分析 / 关系分析 / 代理思考 | `chat()` (含 tools) | ReAct 循环 |
+| MemoryRetriever / MemoryLifecycle | `embed()` | 文本 → 向量 |
+| MemoryRetriever | `rerank()` | 检索精排 |
+| LLM 服务管理 | `list_models()` | 拉取服务商模型列表 |
 
 ---
 
-## 概述
-
-`forward` 模块负责将处理后的消息转发给上游模型提供商 (OpenAI/OneAPI/本地模型等).
-
-**核心功能**:
-- 发送请求到上游模型
-- 支持流式 (SSE) 和非流式响应
-- 连接池管理，复用 HTTP 连接
-- 统一的错误处理
-
----
-
-## 快速开始
-
-### 基本用法
+## 2. 快速开始
 
 ```python
 from src.infra.forwarder import Forwarder, ForwarderConfig
 
-# 1. 配置转发器
 config = ForwarderConfig(
-    base_url="https://api.openai.com/v1",
-    api_key="sk-your-openai-key",
-    default_model="gpt-4",
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    api_key="sk-...",
+    default_model="qwen-max",
+    timeout=30.0,
 )
 
-# 2. 创建转发器
-forwarder = Forwarder(config)
+async with Forwarder(config) as fwd:
+    resp = await fwd.chat(
+        messages=[{"role": "user", "content": "你好"}],
+    )
+    print(resp["choices"][0]["message"]["content"])
 
-# 3. 发送请求 (非流式)
-messages = [
-    {"role": "system", "content": "你是一个 AI 助手"},
-    {"role": "user", "content": "你好"},
-]
-
-response = await forwarder.send(messages=messages)
-print(response["choices"][0]["message"]["content"])
-
-# 4. 发送请求 (流式)
-async for chunk in forwarder.send_stream(messages=messages):
-    print(chunk.decode(), end="")
-
-# 5. 关闭连接
-await forwarder.close()
-```
-
-### 使用连接池
-
-```python
-from src.infra.forwarder import Forwarder, ForwarderConfig, ConnectionPool
-
-# 创建连接池
-pool = ConnectionPool(
-    max_connections=50,
-    max_keepalive_connections=10,
-)
-
-# 创建转发器 (使用连接池)
-forwarder = Forwarder(config, pool=pool)
-
-# 使用完毕后关闭连接池
-await pool.close()
-```
-
-### 上下文管理器
-
-```python
-async with Forwarder(config) as forwarder:
-    response = await forwarder.send(messages=messages)
-    # 自动关闭连接
+    async for chunk in fwd.chat_stream(messages=[...]):
+        # chunk 是 SSE 原始字节
+        ...
 ```
 
 ---
 
-## API 参考
+## 3. API
 
-### ForwarderConfig
+### 3.1 ForwarderConfig
 
-转发器配置数据类.
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `base_url` | str | - | 上游模型基础 URL |
-| `api_key` | str | - | 上游模型 API Key |
-| `default_model` | str | - | 默认模型名称 |
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `base_url` | str | — | 服务商 OpenAI 兼容基址 |
+| `api_key` | str | — | 服务商 API Key |
+| `default_model` | str | — | `chat` / `chat_stream` 默认模型 |
 | `timeout` | float | 30.0 | 请求超时 (秒) |
 | `connect_timeout` | float | 10.0 | 连接超时 (秒) |
 
-### Forwarder
+生产使用建议根据调用类型给不同超时: 主对话流式 `90s`, 记忆图内部 `30s` (见 [forward.py:244/286](../../src/api/routes/forward.py))。
 
-上游转发器主类.
+### 3.2 Forwarder.chat
 
-#### 方法
+```python
+async def chat(
+    messages, model=None, temperature=1.0, max_tokens=None,
+    tools=None, tool_choice=None,
+    response_format=None, extra_body=None, **kwargs,
+) -> dict
+```
 
-##### `send(messages, model, temperature, max_tokens, stream, **kwargs)`
+- 非流式对话, 返回完整 OpenAI 响应字典
+- `tools` 用于 function_call (ReAct 循环)
+- `extra_body` 合并到 payload 顶层, 如 `{"enable_thinking": False}` 关闭 Qwen3 思考流
 
-发送请求到上游模型 (非流式).
+**契约**: DashScope 等服务商 tools 与 stream=True 互斥, 因此 `chat_stream` 不支持 `tools` (见 [dev-decisions.md](../dev-decisions.md))。
 
-**参数**:
-- `messages`: list[dict] - 处理后的消息列表 (OpenAI 格式)
-- `model`: str | None - 模型名称 (可选)
-- `temperature`: float - 温度 (0-2), 默认 1.0
-- `max_tokens`: int | None - 最大生成 token 数
-- `stream`: bool - 是否流式
-- `**kwargs`: 其他 OpenAI 兼容参数
+### 3.3 Forwarder.chat_stream
 
-**返回**: dict - 上游模型响应 (OpenAI 兼容格式)
+```python
+async def chat_stream(
+    messages, model=None, temperature=1.0, max_tokens=None, **kwargs,
+) -> AsyncIterator[bytes]
+```
 
-**异常**:
-- `UpstreamError`: 上游服务错误
-- `UpstreamTimeout`: 上游超时
+- 流式对话, yield 上游 SSE 原始字节 (`b"data: {...}\n\n"`)
+- 不接受 `tools` 参数
 
-##### `send_stream(messages, model, temperature, max_tokens, **kwargs)`
+### 3.4 Forwarder.embed
 
-发送请求到上游模型 (流式).
+```python
+async def embed(
+    input: str | list[str], model: str, dimensions: int | None = None,
+) -> list[list[float]]
+```
 
-**参数**: 同 `send()`
+- 调 `/embeddings`, 返回向量列表 (按 index 排序)
+- `dimensions` 可选; 若不指定, 维度由所选模型决定 (见 [dev-decisions.md](../dev-decisions.md))
 
-**返回**: AsyncIterator[bytes] - SSE 格式的响应分块
+### 3.5 Forwarder.rerank
 
-**异常**: 同 `send()`
+```python
+async def rerank(
+    query: str, documents: list[str], model: str, top_n: int | None = None,
+) -> list[dict]
+```
 
-##### `close()`
+- 先试 `/rerank`, 404 时降级到 `/reranks` (部分服务商用复数)
+- 返回 `[{index, relevance_score, document}, ...]`, 按 relevance_score 降序
 
-关闭转发器和连接.
+### 3.6 Forwarder.list_models
+
+```python
+async def list_models() -> list[str]
+```
+
+调 `GET /models`, 返回模型 id 列表。
+
+### 3.7 生命周期
+
+- 支持 `async with`; 或手动 `await fwd.close()`
+- 可选注入 `ConnectionPool` 复用底层 httpx client (见 [connection_pool.py](../../src/infra/forwarder/connection_pool.py))
 
 ---
 
-### ConnectionPool
+## 4. 上游 API 契约
 
-HTTP 连接池.
+**已知约束** (见 [dashscope 记录](../../DASHSCOPE_CONTRACTS_NEEDED.md) 与 memory 索引):
 
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `max_connections` | int | 50 | 最大连接数 |
-| `max_keepalive_connections` | int | 10 | 最大保持活跃的连接数 |
-| `timeout` | float | 30.0 | 请求超时 |
-| `connect_timeout` | float | 10.0 | 连接超时 |
+- DashScope OpenAI 兼容端点 tools 与 stream 互斥
+- rerank 端点在部分服务商为 `/reranks` (复数)
+- DashScope 的 `gte-rerank` 已下线, 请用 `gte-rerank-v2` 或其他继任
+- 嵌入维度由模型决定, 不再写死 (`dimensions` 只在服务商明确支持时传)
 
 ---
 
-## 错误处理
+## 5. 错误
 
-### UpstreamError
+| 异常 | 触发 | 处理 |
+|------|------|------|
+| `UpstreamError(status, message)` | 4xx/5xx | 记 log, 上抛给节点 |
+| `UpstreamTimeout(msg)` | httpx 超时 | 记 log, 上抛 |
 
-上游服务错误.
-
-```python
-from src.infra.forwarder import UpstreamError, Forwarder
-
-try:
-    response = await forwarder.send(messages=messages)
-except UpstreamError as e:
-    print(f"上游错误：{e.status_code} - {e.message}")
-```
-
-### UpstreamTimeout
-
-上游服务超时.
-
-```python
-from src.infra.forwarder import UpstreamTimeout
-
-try:
-    response = await forwarder.send(messages=messages)
-except UpstreamTimeout as e:
-    print(f"上游超时：{e}")
-```
+Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求/响应到日志 (见 [chore commit `--debug` mode](../../src/infra/forwarder/forwarder.py))。
 
 ---
 
-## 配置示例
+## 6. 与 API 层的关系
 
-### OpenAI
+- **鉴权与请求组装**: [src/api/routes/forward.py](../../src/api/routes/forward.py) 完成 API Key 验证、模型白名单校验 (`mnemosync-any`)、记忆加载、上下文拼装, 再交给 Forwarder
+- **模型白名单**: `/v1/chat/completions` 只接受 `model="mnemosync-any"` 或空, 其他直接 400 ([forward.py:131](../../src/api/routes/forward.py#L131))
+- **代理思考**: 当前**不通过请求头启用**, `initial_state.proxy_thinking_enabled = False` 硬编码, 需修改代码启用
+
+---
+
+## 7. 连接池
 
 ```python
-config = ForwarderConfig(
-    base_url="https://api.openai.com/v1",
-    api_key="sk-xxx",
-    default_model="gpt-4",
+from src.infra.forwarder import ConnectionPool, Forwarder
+
+pool = ConnectionPool(max_connections=50, max_keepalive_connections=10)
+fwd = Forwarder(config, pool=pool)
+...
+await pool.close()
+```
+
+高并发场景使用; 单次请求不必要。
+
+---
+
+## 8. 服务商配置示例
+
+**DashScope (阿里云百炼)**:
+```python
+ForwarderConfig(
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    api_key="sk-xxx", default_model="qwen-max",
 )
 ```
 
-### OneAPI
-
+**SiliconFlow**:
 ```python
-config = ForwarderConfig(
-    base_url="https://your-oneapi.com/v1",
-    api_key="sk-xxx",
-    default_model="claude-3-opus",
-)
-```
-
-### 本地模型 (Ollama)
-
-```python
-config = ForwarderConfig(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama",  # Ollama 不需要 API Key
-    default_model="qwen2.5:72b",
-)
-```
-
-### SiliconFlow
-
-```python
-config = ForwarderConfig(
+ForwarderConfig(
     base_url="https://api.siliconflow.cn/v1",
-    api_key="sk-xxx",
-    default_model="Qwen/Qwen2.5-72B-Instruct",
+    api_key="sk-xxx", default_model="Qwen/Qwen2.5-72B-Instruct",
 )
 ```
 
----
-
-## 使用场景
-
-### 场景 1: 简单转发
-
-```python
-# 接收处理后的消息，直接转发
-response = await forwarder.send(
-    messages=processed_messages,
-    model="gpt-4",
-    temperature=0.7,
-)
-```
-
-### 场景 2: 流式响应
-
-```python
-# SSE 流式转发给前端
-async def stream_to_client():
-    async for chunk in forwarder.send_stream(
-        messages=processed_messages,
-        model="gpt-4",
-    ):
-        yield chunk
-```
-
-### 场景 3: 多模型路由
-
-```python
-# 根据配置选择不同上游
-if config.provider == "openai":
-    forwarder = Forwarder(openai_config)
-elif config.provider == "local":
-    forwarder = Forwarder(local_config)
-
-response = await forwarder.send(messages=messages)
-```
+**OpenAI / OneAPI / Ollama** 同理, 只要接口 OpenAI 兼容即可。
 
 ---
 
-## 性能优化
+## 9. 版本历史
 
-### 连接池
-
-```python
-# 推荐配置
-pool = ConnectionPool(
-    max_connections=50,              # 根据并发量调整
-    max_keepalive_connections=10,    # 保持活跃连接
-)
-```
-
-### 超时设置
-
-```python
-# 根据模型响应时间调整
-config = ForwarderConfig(
-    timeout=60.0,         # 长文本生成需要更长时间
-    connect_timeout=10.0, # 连接超时不宜过长
-)
-```
-
----
-
-## 注意事项
-
-1. **消息格式**: 传入的 `messages` 必须是 OpenAI 兼容格式
-2. **流式响应**: 返回的是 bytes，需要前端按 SSE 格式解析
-3. **连接管理**: 使用完毕后调用 `close()` 或使用上下文管理器
-4. **错误处理**: 始终捕获 `UpstreamError` 和 `UpstreamTimeout`
-
----
-
-## 版本历史
-
-| 版本 | 日期 | 变更说明 |
-|------|------|----------|
-| v0.1.0 | 2026-03-29 | 初始实现：OpenAI 兼容转发、连接池、SSE 流式 |
-| v0.2.0 | 2026-07-12 | 架构定位明确：成为所有 Agent 调用模型的唯一 HTTP 通道；API 不变 |
-| v0.2.1 | 2026-07-14 | 代码位置从 `src/modules/forward/` 迁到 `src/infra/forwarder/`；导入路径改为 `from src.infra.forwarder import ...` |
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| v0.1.0 | 2026-03-29 | 初始实现: 转发, 连接池, SSE |
+| v0.2.0 | 2026-07-12 | 定位为所有 Agent 的唯一上游通道 |
+| v0.2.1 | 2026-07-14 | 迁移到 `src/infra/forwarder/`; API 改为 `chat` / `chat_stream` / `embed` / `rerank` / `list_models`, 移除旧 `send` / `send_stream` |
+| v0.2.1 | 2026-07-15 | 与代码对齐: 修正 API 方法名、模型白名单说明、代理思考启用方式、rerank 端点降级 |
