@@ -2,7 +2,7 @@
 
 对外提供 /v1/chat/completions 和 /v1/models.
 接收请求 → API Key 验证 → 构建初始 state → 编译图 ainvoke → 返回响应.
-流式: 直接通过 Forwarder 转发给上游, 异步触发记忆图.
+流式: 加载记忆 → 构建上下文 → 转发给上游 → 异步触发记忆图.
 """
 
 import asyncio
@@ -24,6 +24,7 @@ from src.api.schemas.forward import (
 )
 from src.core.config import get_settings
 from src.core.graph import build_graph
+from src.core.memory.context import build_main_dialogue_messages
 from src.infra.forwarder import (
     Forwarder,
     ForwarderConfig,
@@ -31,7 +32,11 @@ from src.infra.forwarder import (
     UpstreamTimeout,
     parse_sse_stream,
 )
+from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import SqliteApiKeyStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.tools import MemoryRetriever
+from src.core.memory import format_relationship
 
 router = APIRouter(prefix="/v1")
 logger = logging.getLogger(__name__)
@@ -202,14 +207,77 @@ async def _handle_stream(
     initial_state: dict[str, Any],
     request: ChatCompletionRequest,
 ) -> StreamingResponse:
-    """流式: 直接转发给上游, 异步触发记忆图.
+    """流式: 加载记忆 → 构建上下文 → 转发给上游 → 异步触发记忆图.
 
-    流式模式下不等待图完成 (记忆写入在后台).
+    流式模式下先加载记忆再流式回复.
     """
     settings = get_settings()
+    source_user = initial_state.get("source_user", "default")
 
-    # 构建上游请求
+    # 加载记忆
+    logger.debug("🧠 加载记忆上下文...")
+    memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
+    await memory_store.init_db()
+    vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
+
+    # 1. 加载永久记忆
+    perms = await memory_store.list_permanent(
+        source_user, limit=settings.memory.permanent_load_top
+    )
+    logger.debug("  📚 永久记忆: %d 条", len(perms))
+
+    # 2. 语义检索相关记忆
+    conversation_history = initial_state.get("messages", [])
+    query = ""
+    for m in reversed(conversation_history):
+        if m.get("role") == "user":
+            query = m.get("content", "")
+            break
+
+    retrieved_entries: list = []
+    if query:
+        forwarder_config = ForwarderConfig(
+            base_url=settings.chat.base_url,
+            api_key=settings.chat.api_key,
+            default_model=settings.chat.main_model,
+            timeout=30.0,
+        )
+        async with Forwarder(forwarder_config) as forwarder:
+            retriever = MemoryRetriever(forwarder, vector_store, memory_store)
+            results = await retriever.search(
+                query, top_k=settings.memory.retrieval_top_k,
+                source_user=source_user,
+            )
+            for r in results:
+                await memory_store.mark_accessed(r.memory_id)
+                entry = await memory_store.get_by_id(r.memory_id)
+                if entry:
+                    retrieved_entries.append(entry)
+        logger.debug("  🔍 检索结果: %d 条", len(retrieved_entries))
+
+    # 3. 加载关系状态
+    rel = await memory_store.get_relationship("default", source_user)
+    logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
+
+    # 4. 构建带记忆的 prompt
+    persona = initial_state.get("persona", "你是一个温暖、有记忆能力的 AI 助手。")
+    persona_name = initial_state.get("persona_name", "助手")
     messages_dict = initial_state["messages"]
+
+    # 去掉原始 system 消息，用我们的拼装
+    conversation_history = [m for m in messages_dict if m.get("role") != "system"]
+
+    messages_with_memory = build_main_dialogue_messages(
+        persona_prompt=persona,
+        persona_name=persona_name,
+        user_name=source_user,
+        permanent_memories=perms,
+        retrieved_memories=retrieved_entries,
+        relationship=rel,
+        conversation_history=conversation_history,
+    )
+
+    logger.debug("  📝 构建消息数: %d (含记忆上下文)", len(messages_with_memory))
 
     forwarder_config = ForwarderConfig(
         base_url=settings.chat.base_url,
@@ -222,10 +290,9 @@ async def _handle_stream(
         collected_chunks: list[bytes] = []
         async with Forwarder(forwarder_config) as forwarder:
             try:
-                logger.debug("🚀 开始流式转发...")
-                # 总是使用配置的主模型，忽略请求中的 model 参数
+                logger.debug("🚀 开始流式转发 (带记忆上下文)...")
                 async for chunk in forwarder.chat_stream(
-                    messages=messages_dict,
+                    messages=messages_with_memory,
                     model=settings.chat.main_model,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
