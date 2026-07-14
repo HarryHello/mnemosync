@@ -1,37 +1,5 @@
-"""API Schemas."""
+"""API Schemas.
 
-from .api_key import (
-    ApiKeyCreateRequest,
-    ApiKeyCreateResponse,
-    ApiKeyInfo,
-    ApiKeyListResponse,
-    ApiKeyRevokeRequest,
-)
-from .auth import (
-    LoginRequest,
-    LoginResponse,
-    ChangePasswordRequest,
-    ChangePasswordResponse,
-    UserInfo,
-    UserInfoResponse,
-    LogoutRequest,
-    MessageResponse,
-)
-
-__all__ = [
-    # API Key
-    "ApiKeyCreateRequest",
-    "ApiKeyCreateResponse",
-    "ApiKeyInfo",
-    "ApiKeyListResponse",
-    "ApiKeyRevokeRequest",
-    # Auth
-    "LoginRequest",
-    "LoginResponse",
-    "ChangePasswordRequest",
-    "ChangePasswordResponse",
-    "UserInfo",
-    "UserInfoResponse",
-    "LogoutRequest",
-    "MessageResponse",
-]
+外部使用者请直接从子模块 (``.api_key`` / ``.auth`` / ``.forward``) 导入 pydantic 模型,
+避免在此维护重复的 re-export 列表。
+"""

@@ -1,11 +1,4 @@
-"""LLM 服务商管理."""
+"""LLM 服务商管理.
 
-from .models import LLMServiceProvider, ModelConfiguration, ModelType
-from .store import LLMServiceStore
-
-__all__ = [
-    "LLMServiceProvider",
-    "ModelConfiguration",
-    "ModelType",
-    "LLMServiceStore",
-]
+外部使用者请直接从子模块 (``.models`` / ``.store``) 导入。
+"""
