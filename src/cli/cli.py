@@ -433,6 +433,7 @@ Mnemosync CLI
 调试:
   ask "你好"                 in-process 跑一次主对话
   ask --stream "..."         流式模式 (与生产 SSE 路径一致)
+  ask --debug "..."          打印上游 HTTP 请求/响应 (等价 serve --debug)
   ask --user harry ...       指定 source_user
   ask --persona-file p.txt ... 用文件里的人格 prompt
   ask --via-http --api-key sk-... "..."  走本地 HTTP 服务
@@ -501,6 +502,7 @@ def main(argv: list[str] | None = None) -> int:
     ask_parser.add_argument("--user", default="cli", help="source_user 标识 (默认: cli)")
     ask_parser.add_argument("--persona-file", default=None, help="人格 prompt 文件路径")
     ask_parser.add_argument("--stream", action="store_true", help="流式输出 (与生产 SSE 路径一致)")
+    ask_parser.add_argument("--debug", action="store_true", help="打印上游 HTTP 请求/响应 (等价 serve --debug)")
     ask_parser.add_argument("--verbose", "-v", action="store_true", help="打印调试日志")
     ask_parser.add_argument("--via-http", action="store_true", help="改走本地 HTTP 服务, 需先 mnemosync serve")
     ask_parser.add_argument("--api-key", default=None, help="--via-http 时使用, 默认读 MNEMOSYNC_API_KEY 环境变量")

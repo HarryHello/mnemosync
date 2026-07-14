@@ -3,10 +3,16 @@
 不经过 HTTP 服务器, 直接 in-process 调用 build_graph().ainvoke(),
 方便调试 prompt / 图流程 / 记忆读写.
 
+对外暴露的公共接口:
+    run_ask(question, *, source_user, persona_file, stream, debug) -> int
+    _read_persona(path) -> (persona, persona_name)
+
+登入模式的交互式 CLI 也直接调 run_ask, 保证两处行为一致.
+
 用法:
     mnemosync ask "你好"
     mnemosync ask --user harry --persona-file persona.txt "..."
-    mnemosync ask --stream "..."
+    mnemosync ask --stream --debug "..."
 """
 
 from __future__ import annotations
@@ -33,8 +39,18 @@ def _read_persona(path: str | None) -> tuple[str, str]:
     p = Path(path)
     if not p.is_file():
         print(f"❌ 人格文件不存在: {path}", file=sys.stderr)
-        sys.exit(1)
+        return DEFAULT_PERSONA, DEFAULT_PERSONA_NAME
     return p.read_text(encoding="utf-8").strip(), p.stem
+
+
+def _apply_debug(debug: bool) -> None:
+    """--debug: 让 Forwarder 打印所有上游请求/响应.
+
+    Forwarder 通过读 MNEMOSYNC_DEBUG=1 决定是否 dump JSON payload,
+    与 mnemosync serve --debug 走的是同一条路径.
+    """
+    if debug:
+        os.environ["MNEMOSYNC_DEBUG"] = "1"
 
 
 async def _run_non_stream(question: str, source_user: str, persona: str, persona_name: str) -> int:
@@ -237,6 +253,25 @@ async def _run_via_http(question: str, source_user: str, persona: str, api_key: 
     return 0
 
 
+async def run_ask(
+    question: str,
+    *,
+    source_user: str = "cli",
+    persona_file: str | None = None,
+    stream: bool = False,
+    debug: bool = False,
+) -> int:
+    """公共 async 入口, 供 cli.py / cli_interactive.py 共用.
+
+    调用者已在自己的事件循环里, 不再 asyncio.run(). --via-http 只走 CLI 路径.
+    """
+    _apply_debug(debug)
+    persona, persona_name = _read_persona(persona_file)
+    if stream:
+        return await _run_stream(question, source_user, persona, persona_name)
+    return await _run_non_stream(question, source_user, persona, persona_name)
+
+
 def cmd_ask(args: argparse.Namespace) -> int:
     """`mnemosync ask` 主入口."""
     # 让 src.* 可导入 (与其它 cmd_* 一致)
@@ -248,6 +283,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
         logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     else:
         logging.basicConfig(level=logging.WARNING)
+
+    _apply_debug(args.debug)
 
     question = args.question
     if not question:

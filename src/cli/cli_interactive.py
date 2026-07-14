@@ -3,6 +3,7 @@
 import asyncio
 import getpass
 import os
+import shlex
 import signal
 import sys
 import termios
@@ -123,6 +124,11 @@ Common Commands:
   logout      Exit this CLI environment
   stop        Stop the Mnemosync server
   show-config Show current config.local.toml settings
+
+Debug:
+  ask [flags] "<question>"   In-process 跑一次主对话 (加载记忆 + 图流程)
+                             flags: --user <name>  --persona-file <path>
+                                    --stream       --debug   -v/--verbose
 
 API-Key Commands:
   ls-keys                  List existing api-keys
@@ -559,9 +565,64 @@ Models Commands (writes to config.local.toml):
         except Exception as e:
             print(f"❌ Unexpected error: {e}\n")
 
+    async def cmd_ask(self, argv: list[str]) -> None:
+        """在登入 CLI 内直连主对话 (调试用).
+
+        用法: ask [--user <name>] [--persona-file <path>] [--stream] [--debug] [-v] "<question>"
+
+        复用 src.cli.ask.run_ask, 与 `mnemosync ask` 走同一条 in-process 路径.
+        """
+        import argparse as _argparse
+        from src.cli.ask import run_ask
+
+        parser = _argparse.ArgumentParser(prog="ask", add_help=False, description="in-process 主对话调试")
+        parser.add_argument("--user", default="cli")
+        parser.add_argument("--persona-file", default=None)
+        parser.add_argument("--stream", action="store_true")
+        parser.add_argument("--debug", action="store_true")
+        parser.add_argument("--verbose", "-v", action="store_true")
+        parser.add_argument("question", nargs="*")
+        try:
+            a = parser.parse_args(argv)
+        except SystemExit:
+            print(
+                '❌ Usage: ask [--user <name>] [--persona-file <path>] [--stream] [--debug] "<question>"\n'
+            )
+            return
+
+        question = " ".join(a.question).strip()
+        if not question:
+            print('❌ 请提供问题, 如: ask "你好"\n')
+            return
+
+        import logging
+        if a.verbose:
+            logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
+        prev_debug = os.environ.get("MNEMOSYNC_DEBUG")
+        try:
+            await run_ask(
+                question,
+                source_user=a.user,
+                persona_file=a.persona_file,
+                stream=a.stream,
+                debug=a.debug,
+            )
+        finally:
+            # 恢复 MNEMOSYNC_DEBUG, 避免污染同一 CLI 会话里后续命令
+            if prev_debug is None:
+                os.environ.pop("MNEMOSYNC_DEBUG", None)
+            else:
+                os.environ["MNEMOSYNC_DEBUG"] = prev_debug
+        print()
+
     async def process_command(self, line: str):
         """处理命令."""
-        parts = line.strip().split()
+        try:
+            parts = shlex.split(line.strip())
+        except ValueError as e:
+            print(f"❌ 无法解析命令 (引号未闭合?): {e}\n")
+            return
         if not parts:
             return
 
@@ -571,6 +632,8 @@ Models Commands (writes to config.local.toml):
         try:
             if cmd == "help":
                 await self.cmd_help()
+            elif cmd == "ask":
+                await self.cmd_ask(args)
             elif cmd == "logout":
                 await self.cmd_logout()
             elif cmd == "stop":
