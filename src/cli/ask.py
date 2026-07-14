@@ -64,10 +64,11 @@ async def _run_non_stream(question: str, source_user: str, persona: str, persona
 async def _run_stream(question: str, source_user: str, persona: str, persona_name: str) -> int:
     """流式模式: 复用 forward.py 的 _handle_stream 逻辑, 直接把 SSE chunks 打到 stdout.
 
-    注意: 这里选择完整复刻流式路径(记忆加载 + Forwarder 流式转发) 而不是
-    绕过 HTTP 直接调 Forwarder, 是为了让 ask --stream 与生产流式路径一致.
+    与生产的差异: 生产里 forward.py 用 asyncio.create_task 把记忆图挂后台;
+    CLI 进程短命, 后台任务会被 kill, 所以这里显式 await 让记忆分析完整跑完.
     """
     from src.core.config import get_settings
+    from src.core.graph import build_graph
     from src.core.memory import format_relationship
     from src.core.memory.context import build_main_dialogue_messages
     from src.infra.forwarder import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout, parse_sse_stream
@@ -113,8 +114,8 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
         user_name=source_user,
         permanent_memories=perms,
         retrieved_memories=retrieved_entries,
-        relationship=rel,
         conversation_history=[{"role": "user", "content": question}],
+        relationship=rel,
     )
 
     print(f"💬 [{source_user} → {persona_name}] {question}\n", file=sys.stderr)
@@ -126,6 +127,7 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
         timeout=90.0,
     )
     chunks: list[bytes] = []
+    buf = b""
     async with Forwarder(stream_config) as forwarder:
         try:
             async for chunk in forwarder.chat_stream(
@@ -135,6 +137,24 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
                 max_tokens=None,
             ):
                 chunks.append(chunk)
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line or not line.startswith(b"data: "):
+                        continue
+                    data = line[6:]
+                    if data == b"[DONE]":
+                        continue
+                    try:
+                        import json
+                        obj = json.loads(data)
+                        delta = obj.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        if delta:
+                            sys.stdout.write(delta)
+                            sys.stdout.flush()
+                    except Exception:
+                        continue
         except UpstreamTimeout as e:
             print(f"\n⏰ 上游超时: {e}", file=sys.stderr)
             return 1
@@ -142,8 +162,27 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
             print(f"\n❌ 上游错误: {e.message}", file=sys.stderr)
             return 1
 
-    text = parse_sse_stream(chunks)
-    print(text)
+    print()
+
+    response_text = parse_sse_stream(chunks)
+
+    print("🔄 触发记忆图 (记忆分析 + 关系分析)...", file=sys.stderr)
+    graph = build_graph()
+    memory_state = {
+        "messages": [{"role": "user", "content": question}],
+        "source_user": source_user,
+        "persona": persona,
+        "persona_name": persona_name,
+        "proxy_thinking_enabled": False,
+        "stream_mode": True,
+        "response": response_text,
+        "response_chunks": chunks,
+    }
+    try:
+        await graph.ainvoke(memory_state)
+        print("✅ 记忆图执行完成", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️  记忆图执行失败: {e}", file=sys.stderr)
     return 0
 
 
@@ -210,10 +249,21 @@ def cmd_ask(args: argparse.Namespace) -> int:
     else:
         logging.basicConfig(level=logging.WARNING)
 
-    question = args.question if args.question else sys.stdin.read().strip()
+    question = args.question
     if not question:
-        print("❌ 请提供问题 (作为参数或从 stdin 读入)", file=sys.stderr)
-        return 1
+        if sys.stdin.isatty():
+            print(
+                "❌ 未提供问题。用法示例:\n"
+                '   mnemosync ask "你好"\n'
+                '   echo "你好" | mnemosync ask\n'
+                "提示: --user 需要一个值, 之后再跟问题, 如 mnemosync ask --user harry \"你好\"",
+                file=sys.stderr,
+            )
+            return 1
+        question = sys.stdin.read().strip()
+        if not question:
+            print("❌ stdin 为空", file=sys.stderr)
+            return 1
 
     persona, persona_name = _read_persona(args.persona_file)
 
