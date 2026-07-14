@@ -68,9 +68,15 @@ class SqliteApiKeyStore:
                     note TEXT NOT NULL,
                     created_at TIMESTAMP NOT NULL,
                     last_used_at TIMESTAMP,
-                    is_active INTEGER NOT NULL DEFAULT 1
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    key_full TEXT
                 )
             """)
+            # 兼容早期没有 key_full 列的库
+            try:
+                await db.execute("ALTER TABLE api_keys ADD COLUMN key_full TEXT")
+            except aiosqlite.OperationalError:
+                pass
             await db.execute("CREATE INDEX IF NOT EXISTS idx_key_hash ON api_keys(key_hash)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_is_active ON api_keys(is_active)")
             await db.commit()
@@ -84,13 +90,14 @@ class SqliteApiKeyStore:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO api_keys
-                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (api_key.id, api_key.key_hash, api_key.key_prefix, api_key.note,
                  api_key.created_at.isoformat(),
                  api_key.last_used_at.isoformat() if api_key.last_used_at else None,
-                 1 if api_key.is_active else 0),
+                 1 if api_key.is_active else 0,
+                 api_key.key_full),
             )
             await db.commit()
 
@@ -138,4 +145,5 @@ class SqliteApiKeyStore:
             created_at=datetime.fromisoformat(row[4]) if row[4] else datetime.now(timezone.utc),
             last_used_at=datetime.fromisoformat(row[5]) if row[5] else None,
             is_active=bool(row[6]),
+            key_full=row[7] if len(row) > 7 else None,
         )
