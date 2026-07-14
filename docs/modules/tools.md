@@ -1,433 +1,215 @@
-# 工具设计 | Tools Design
+# 工具设计 | Tools
 
-> **系统版本**: v0.2.0
-> **文档状态**: 设计中
+> **模块版本**: v0.2.1
+> **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
+> **最后更新**: 2026-07-15
 > **作者**: HarryHelloo
 
 ---
 
-## 1. 概述 (Overview)
+## 1. 定位
 
-本文档描述 Mnemosync 多 Agent 系统中的 3 个工具的设计与实现。每个工具封装为 LangChain Tool 对象，注册到对应 Agent 供其通过 Function Call 调用。
+Mnemosync 的 Agent (ReAct 循环节点) 通过 LangChain function_call 调用工具。工具本身是无状态的**闭包工厂** `make_*_tool(...)` 产出——工厂在图节点内组装依赖 (Forwarder / VectorStore / MemoryStore) 后返回一个绑定好依赖的 `@tool` 装饰函数, 交给对应 Agent。
 
-### 1.1 工具全景
+**代码位置**: [src/tools/](../../src/tools/) (`vector_search.py` / `emotion_analyzer.py` / `time_decay_calculator.py`), 组装点在 [src/core/graph/nodes.py:208](../../src/core/graph/nodes.py#L208)。
 
-| # | 工具名 | 调用者 | 底层服务 | 函数签名 |
-|---|--------|--------|----------|----------|
-| 1 | `vector_search` | 主对话 Agent、记忆分析 Agent | 嵌入模型 + ChromaDB + 重排序模型 | `(query, top_k, source_user) → list[MemoryEntry]` |
-| 2 | `emotion_analyzer` | 记忆分析 Agent、关系分析 Agent | 辅助模型 | `(text) → EmotionResult` |
-| 3 | `time_decay_calculator` | 记忆分析 Agent | 本地计算（纯函数） | `(memory_id) → DecayResult` |
+工厂全景:
 
----
+| 工厂 | 内部函数名 | 直接调用者节点 |
+|------|-----------|---------------|
+| `make_vector_search_tool(retriever)` | `vector_search` | `memory_analysis_node` |
+| `make_emotion_analyzer_tool(forwarder)` | `emotion_analyzer` | `memory_analysis_node`, `relationship_analysis_node` |
+| `make_time_decay_calculator_tool(memory_store)` | `time_decay_calculator` | `memory_analysis_node` |
 
-## 2. 工具 1: 向量语义检索工具 (`vector_search`)
-
-### 2.1 功能
-
-以自然语言查询为输入，返回语义最相似的历史记忆列表。
-
-### 2.2 调用方
-
-| Agent | 使用场景 |
-|-------|----------|
-| **主对话 Agent** | 收到用户新消息后，检索相关记忆以拼入上下文 |
-| **记忆分析 Agent** | 判断新信息是否与已有记忆重复/冲突/关联 |
-
-### 2.3 实现流程
-
-```
-vector_search(query: str, top_k: int = 5, source_user: str | None = None)
-    │
-    ▼
-1. query → 嵌入模型 → query_vector
-    │  POST https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding
-    │  参数（示意）: input=query, dimension=768
-    │  返回: {embedding: [0.23, -0.15, ...]}
-    │
-    ▼
-2. ChromaDB.similarity_search(query_vector, n_results=top_k * 2, filter=source_user)
-    │  余弦相似度 (cosine distance)
-    │  可选过滤: 只检索 source_user 的记忆（或 source_restricted）
-    │  返回: top 10 候选 (id, content, similarity_score, metadata)
-    │
-    ▼
-3. top 10 候选 → 重排序模型 → 精排 top_k
-    │  POST https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank
-    │  参数（示意）: query=query, documents=candidates
-    │  返回: {results: [{index: 2, relevance_score: 0.94}, ...]}
-    │
-    ▼
-4. 按 relevance_score 降序，取 top_k 条
-    │
-    ▼
-5. 通过 memory_id 从 SQLite 拉取完整 MemoryEntry 字段
-    │
-    ▼
-6. 返回 list[MemoryEntry]（含 content, importance, emotional_tags, ...）
-```
-
-### 2.4 性能约束
-
-| 阶段 | 预期延迟 | 说明 |
-|------|----------|------|
-| embedding API | ~50-100ms | 模型 API 网络延迟 |
-| ChromaDB 粗筛 | ~1-5ms | 本地操作，很快 |
-| reranker API | ~100-200ms | 批量 10 条，需传输文本 |
-| SQLite 补全 | ~1-5ms | 本地查询 |
-| **总计** | **~150-300ms** | 需在 TTFT 约束内 |
-
-> 权衡：如果 TTFT 压力大，可跳过 reranker（只用 embedding + cosine 粗筛）。此时精度下降但总延迟降至 ~50-100ms。
-
-### 2.5 ChromaDB Collection 设计
-
-```python
-import chromadb
-
-client = chromadb.PersistentClient(path="./data/chroma")
-
-collection = client.get_or_create_collection(
-    name="mnemosync_memories",
-    metadata={"hnsw:space": "cosine"}
-)
-
-# 添加记忆（入库时）
-collection.add(
-    ids=[entry.id],
-    embeddings=[vector],  # 768 维
-    metadatas=[{
-        "content": entry.content,
-        "source_user": entry.source_user,
-        "importance": entry.importance,
-        "memory_type": entry.memory_type.value,
-        "emotional_tags": ",".join(entry.emotional_tags),
-        "created_at": entry.created_at.isoformat(),
-    }]
-)
-```
-
-### 2.6 LangChain Tool 封装
-
-```python
-from langchain_core.tools import tool
-
-@tool
-def vector_search(query: str, top_k: int = 5, source_user: str | None = None) -> list[dict]:
-    """搜索与查询文本语义最相似的历史记忆。
-
-    Args:
-        query: 查询文本（通常是用户最新消息）
-        top_k: 返回结果数量，默认 5
-        source_user: 可选，限定来源用户
-
-    Returns:
-        相关记忆列表，每条包含 content, importance, emotional_tags, similarity
-    """
-    ...
-```
+> 主对话不走 ReAct, 不绑定工具; 主对话所需的记忆检索由**节点外的 MemoryRetriever** 完成 (见 [message-processing.md](message-processing.md))。
 
 ---
 
-## 3. 工具 2: 情绪分析工具 (`emotion_analyzer`)
+## 2. `make_vector_search_tool(retriever)`
 
-### 3.1 功能
+**签名**:
 
-调用辅助小模型分析文本的情绪内容，输出情绪标签、强度和类别。
-
-### 3.2 调用方
-
-| Agent | 使用场景 |
-|-------|----------|
-| **记忆分析 Agent** | ReAct 循环中分析对话内容的情感标签 |
-| **关系分析 Agent** | 分析对话中的情感信号，辅助亲密度计算 |
-
-### 3.3 实现流程
-
-```
-emotion_analyzer(text: str) → EmotionResult
-    │
-    ▼
-1. 构建分析 prompt（系统指令 + 目标文本）
-    │
-    ▼
-2. 调用辅助模型 (assist model)
-    │  temperature=0.1（低温度保证一致性）
-    │  response_format=json_object
-    │
-    ▼
-3. 解析返回 JSON
-    │
-    ▼
-4. 返回结构化 EmotionResult
+```python
+def make_vector_search_tool(retriever: MemoryRetriever):
+    @tool
+    async def vector_search(
+        query: str,
+        top_k: int = 5,
+        source_user: str | None = None,
+    ) -> list[dict]: ...
+    return vector_search
 ```
 
-### 3.4 System Prompt
+**依赖**: `MemoryRetriever(forwarder, vector_store, memory_store)`——[vector_search.py:49](../../src/tools/vector_search.py#L49)。同一个 `MemoryRetriever` 类既被工具使用, 也被主对话前置检索使用, 保证行为一致。
 
-```
-你是情绪分析助手。分析以下文本的情绪内容，以 JSON 格式返回：
+**执行流程** (见 `MemoryRetriever.search`):
 
+1. `Forwarder.embed(query, model, dimensions)` → 查询向量
+2. `VectorStore.search(vector, top_k=max(top_k*2, 10), source_user=...)` → 粗筛候选
+3. 若 `settings.rerank` 存在: `Forwarder.rerank(query, documents, model, top_n=top_k)` 精排; 失败降级为纯 cosine top_k
+4. 逐条 `SqliteMemoryStore.get_by_id(...)` 补完整字段
+
+**返回**: `list[dict]`, 每条字段 (见 `RetrievedMemory.to_dict`):
+
+```json
 {
-  "emotion": "happy|sad|angry|anxious|neutral|excited|grateful|stressed",
-  "intensity": 0.0-1.0,
-  "category": "casual_chat|health_disclosure|personal_sharing|preference_statement|emotional_expression|complaint|gratitude|other",
-  "keywords": ["关键词1", "关键词2"],
-  "summary": "一句话概括情绪内容"
+  "memory_id": "...",
+  "content": "...",
+  "similarity": 0.87,
+  "relevance_score": 0.94,   // 无 rerank 时为 null
+  "importance": 0.72,
+  "memory_type": "normal",
+  "emotional_tags": ["happy"],
+  "source_user": "harry"
 }
-
-规则：
-- emotion: 主要情绪，无法判断用 neutral
-- intensity: 情绪强度，闲聊 0.1-0.3，强烈情绪 0.7-1.0
-- category: 对话类型分类
-- 不要过度解读：只分析明确表达的情绪
 ```
 
-### 3.5 输出结构
-
-```python
-@dataclass
-class EmotionResult:
-    emotion: str           # happy | sad | angry | anxious | neutral | excited | grateful | stressed
-    intensity: float       # 0.0 ~ 1.0
-    category: str          # casual_chat | health_disclosure | personal_sharing | ...
-    keywords: list[str]    # 情绪关键词
-    summary: str           # 一句话概括
-```
-
-### 3.6 LangChain Tool 封装
-
-```python
-from langchain_core.tools import tool
-
-@tool
-def emotion_analyzer(text: str) -> dict:
-    """分析文本的情绪内容，返回情绪标签、强度和类别。
-
-    Args:
-        text: 需要分析的用户消息或对话片段
-
-    Returns:
-        {emotion, intensity, category, keywords, summary}
-    """
-    ...
-```
+**注意**:
+- `dimensions` 传给 embedding 端点 (若配置了)
+- `source_user` 过滤在 VectorStore 层完成, 避免召回后再过滤造成 top_k 不足
 
 ---
 
-## 4. 工具 3: 时间衰减计算工具 (`time_decay_calculator`)
+## 3. `make_emotion_analyzer_tool(forwarder)`
 
-### 4.1 功能
-
-给定一条记忆，计算其时间维度的衰减状态：理论优先级、半衰期状态、距离遗忘的天数。
-
-与其他两个工具不同，这是一个**纯本地计算函数**，不调用任何外部 API。
-
-### 4.2 调用方
-
-| Agent | 使用场景 |
-|-------|----------|
-| **记忆分析 Agent** | 衰减评估的公式基线步骤 |
-
-### 4.3 计算公式
-
-```
-理论优先级 = importance × 衰减因子 × 过期惩罚 + 访问加成
-
-其中:
-- 衰减因子 = 0.5 ^ (经过天数 / 半衰期天数)
-- 半衰期天数 = decay_rate_to_half_life(decay_rate)
-- 过期惩罚 = 0.01 (如果 expires_at < now) 或 1.0
-- 访问加成 = log(access_count + 1) × 0.05
-
-decay_rate → 半衰期映射:
-  decay_rate 0.0  → ∞ (永不过期)
-  decay_rate 0.05 → 182 天
-  decay_rate 0.1  → 91 天
-  decay_rate 0.3  → 33 天
-  decay_rate 0.5  → 51 天
-  decay_rate 0.7  → 17 天
-  decay_rate 0.9  → 11 天
-```
-
-### 4.4 输出结构
+**签名**:
 
 ```python
-@dataclass
-class DecayResult:
-    memory_id: str             # 记忆 ID
-    days_elapsed: int          # 创建至今的天数
-    half_life_days: int | None # 半衰期天数（None = 永不过期）
-    time_factor: float         # 衰减因子 0.0-1.0
-    expiration_penalty: float  # 过期惩罚 0.01 或 1.0
-    access_bonus: float        # 访问加成
-    theoretical_priority: float # 理论优先级
-    days_to_forgotten: int | None # 距离优先级降到 0.05 以下的天数（None = 不会遗忘）
-    current_state: str         # ACTIVE | DORMANT | WEAK | FORGOTTEN
+def make_emotion_analyzer_tool(forwarder: Forwarder):
+    @tool
+    async def emotion_analyzer(text: str) -> dict: ...
+    return emotion_analyzer
 ```
 
-### 4.5 实现
+**依赖**: 只需 `Forwarder` (走辅助模型)。
 
-```python
-from math import log
-from datetime import datetime, timezone
+**执行流程** ([emotion_analyzer.py:51](../../src/tools/emotion_analyzer.py#L51) `analyze_emotion`):
 
-# decay_rate → 半衰期天数映射
-DECAY_RATE_TO_HALF_LIFE = {
-    0.0: None,      # 永不过期
-    0.05: 182,
-    0.1: 91,
-    0.3: 33,
-    0.5: 51,
-    0.7: 17,
-    0.9: 11,
+1. `settings.chat.assist_model` + system prompt + user prompt (`EMOTION_PROMPT` 填入待分析文本)
+2. `Forwarder.chat(temperature=0.1, response_format={"type": "json_object"}, extra_body={"enable_thinking": False})`——低温 + 强制 JSON + 关闭 Qwen3 thinking
+3. 防御性剥离残留 `<think>...</think>`
+4. `json.loads(content)` → `EmotionResult`
+
+**返回**:
+
+```json
+{
+  "emotion": "happy",       // happy|sad|angry|anxious|neutral|excited|grateful|stressed
+  "intensity": 0.6,          // 0.0-1.0
+  "category": "personal_sharing",
+  "keywords": ["生日", "开心"],
+  "summary": "用户对生日表达喜悦"
 }
-
-def _decay_rate_to_half_life(decay_rate: float) -> int | None:
-    """将 decay_rate 映射到半衰期天数。使用最接近的预设值。"""
-    if decay_rate <= 0.0:
-        return None
-    closest = min(DECAY_RATE_TO_HALF_LIFE.keys(),
-                  key=lambda k: abs(k - decay_rate))
-    return DECAY_RATE_TO_HALF_LIFE[closest]
-
-def _priority_to_state(priority: float) -> str:
-    if priority > 0.3:
-        return "ACTIVE"
-    elif priority > 0.1:
-        return "DORMANT"
-    elif priority > 0.05:
-        return "WEAK"
-    else:
-        return "FORGOTTEN"
-
-def calculate_decay(entry_id: str, importance: float, decay_rate: float,
-                    access_count: int, created_at: datetime,
-                    expires_at: datetime | None = None) -> DecayResult:
-    """计算记忆的时间衰减状态。纯函数，无副作用。"""
-    now = datetime.now(timezone.utc)
-    days_elapsed = max(0, (now - created_at).days)
-
-    half_life = _decay_rate_to_half_life(decay_rate)
-
-    # 衰减因子
-    if half_life is None or half_life == 0:
-        time_factor = 1.0
-    else:
-        time_factor = 0.5 ** (days_elapsed / half_life)
-
-    # 过期惩罚
-    if expires_at and now > expires_at:
-        expiration_penalty = 0.01
-    else:
-        expiration_penalty = 1.0
-
-    # 访问加成
-    access_bonus = log(access_count + 1) * 0.05
-
-    # 理论优先级
-    theoretical_priority = importance * time_factor * expiration_penalty + access_bonus
-    theoretical_priority = min(1.0, theoretical_priority)  # 上限 1.0
-
-    # 距离遗忘的天数（简化估算：假设不再被访问）
-    days_to_forgotten = None
-    if half_life is not None and importance > 0:
-        # 解方程: importance * 0.5^(x/half_life) < 0.05
-        # x > half_life * log2(importance / 0.05)
-        try:
-            days_to = half_life * (log(importance / 0.05) / log(2))
-            days_to_forgotten = int(days_to - days_elapsed)
-        except (ValueError, ZeroDivisionError):
-            days_to_forgotten = None
-
-    return DecayResult(
-        memory_id=entry_id,
-        days_elapsed=days_elapsed,
-        half_life_days=half_life,
-        time_factor=round(time_factor, 4),
-        expiration_penalty=expiration_penalty,
-        access_bonus=round(access_bonus, 4),
-        theoretical_priority=round(theoretical_priority, 4),
-        days_to_forgotten=days_to_forgotten,
-        current_state=_priority_to_state(theoretical_priority),
-    )
 ```
 
-### 4.6 LangChain Tool 封装
+**注意**: `extra_body={"enable_thinking": False}` 是 DashScope Qwen3 系列的特有开关, 用来阻止思考流打乱 JSON 输出——参见 [dev-decisions.md](../dev-decisions.md)。
+
+---
+
+## 4. `make_time_decay_calculator_tool(memory_store)`
+
+**签名**:
 
 ```python
-from langchain_core.tools import tool
-
-@tool
-def time_decay_calculator(memory_id: str) -> dict:
-    """计算给定记忆的时间衰减状态，返回理论优先级和各维度分解值。
-
-    这是纯公式计算，不包含 Agent 的多维度评估。
-    Agent 应在此基线值之上执行 CoT 分析。
-
-    Args:
-        memory_id: 记忆条目的唯一 ID
-
-    Returns:
-        {memory_id, days_elapsed, half_life_days, time_factor,
-         expiration_penalty, access_bonus, theoretical_priority,
-         days_to_forgotten, current_state}
-    """
-    ...
+def make_time_decay_calculator_tool(memory_store: SqliteMemoryStore):
+    @tool
+    async def time_decay_calculator(memory_id: str) -> dict: ...
+    return time_decay_calculator
 ```
+
+**依赖**: 只需 `SqliteMemoryStore`——**无外部 API 调用**。
+
+**执行流程** ([time_decay_calculator.py:41](../../src/tools/time_decay_calculator.py#L41) `calculate_decay`):
+
+1. `memory_store.get_by_id(memory_id)`; 缺则返回 `{"error": "memory not found"}`
+2. `decay_rate_to_half_life(decay_rate)` → 半衰期天数 (映射表见 [src/core/memory/](../../src/core/memory/))
+3. `time_factor = 0.5 ** (days_elapsed / half_life)`; 永久或 `decay_rate=0` 时 `time_factor=1.0`
+4. `expiration_penalty = 0.01 if entry.is_expired else 1.0`
+5. `access_bonus = log(access_count + 1) * ACCESS_BONUS_FACTOR`
+6. `theoretical_priority = clamp(importance * time_factor * expiration_penalty + access_bonus, 0.0, 1.0)`
+7. `days_to_forgotten`: 解 `importance * 0.5^(x/half_life) < 0.05` 反推
+8. `current_state`: 永久 → `ACTIVE`; 否则由 `DecayState.from_priority(...)` 映射
+
+**返回**:
+
+```json
+{
+  "memory_id": "...",
+  "days_elapsed": 12,
+  "half_life_days": 33,
+  "time_factor": 0.7794,
+  "expiration_penalty": 1.0,
+  "access_bonus": 0.0347,
+  "theoretical_priority": 0.5657,
+  "days_to_forgotten": 78,
+  "current_state": "ACTIVE"
+}
+```
+
+Agent 应在此**公式基线**之上进行 CoT 判断——例如考虑访问频率、情绪强度、与新记忆的关联——而不是直接把 `theoretical_priority` 当最终值。
 
 ---
 
-## 5. 工具注册与调用
+## 5. 节点内组装
 
-### 5.1 LangGraph 中的工具绑定
+真实组装点 [nodes.py:207](../../src/core/graph/nodes.py#L207):
 
 ```python
-from langgraph.prebuilt import ToolNode
-
-# 工具注册
-all_tools = [vector_search, emotion_analyzer, time_decay_calculator]
-
-# 主对话 Agent 绑定的工具
-main_dialogue_tools = [vector_search]
-
-# 记忆分析 Agent 绑定的工具
-memory_analysis_tools = [vector_search, emotion_analyzer, time_decay_calculator]
-
-# 代理思考 Agent 绑定的工具
-proxy_thinking_tools = [vector_search, emotion_analyzer]
-
-# 关系分析 Agent 绑定的工具
-relationship_analysis_tools = [emotion_analyzer]
-
-# 在 StateGraph 中创建 tool node
-tool_node = ToolNode(all_tools)
+# memory_analysis_node
+retriever = MemoryRetriever(forwarder, vector_store, memory_store)
+tools = [
+    make_vector_search_tool(retriever),
+    make_emotion_analyzer_tool(forwarder),
+    make_time_decay_calculator_tool(memory_store),
+]
+out = await run_memory_analysis(
+    forwarder=forwarder, source_user=source_user,
+    conversation=conversation, tools=tools,
+    decay_targets=decay_targets, max_iterations=6,
+)
 ```
 
-### 5.2 Agent 与工具的交互模式
+```python
+# relationship_analysis_node
+out = await run_relationship_analysis(
+    forwarder=forwarder,
+    current_relationship=current_rel_str,
+    conversation=conversation,
+    tools=[make_emotion_analyzer_tool(forwarder)],
+    max_iterations=3,
+)
+```
 
-```
-Agent Node                    Tool Node
-    │                             │
-    ├─ LLM 决定调用 tool           │
-    ├─ 输出 function_call ─────→   │
-    │                          ├─ 执行工具
-    │                          ├─ 返回 function_result
-    │  ←── function_result ────┘   │
-    ├─ LLM 处理结果                │
-    ├─ 继续推理或输出最终结果       │
-```
+**依赖注入方向**: 节点持有 forwarder / stores → 构造工厂闭包 → 交给 ReAct 循环 (`src/core/agents/react_runner.py`) → 循环调 `bind_tools` + `tool_call` 拿结果。
 
 ---
 
-## 6. 版本历史
+## 6. 错误行为
 
-| 版本 | 日期 | 变更说明 |
-|------|------|----------|
-| v0.2.0 | 2026-07-11 | 初始版本：3 个工具（向量检索、情绪分析、时间衰减计算） |
+| 工具 | 触发条件 | 处理 |
+|------|---------|------|
+| `vector_search` | rerank 端点 4xx/5xx | 内部 `try/except` 降级为纯 cosine top_k, 不上抛 |
+| `vector_search` | embedding 端点异常 | 直接抛 `UpstreamError`, ReAct 循环感知并终止 |
+| `emotion_analyzer` | JSON 解析失败 | 抛 `json.JSONDecodeError` (未处理), 需 Agent prompt 保证 JSON 输出 |
+| `time_decay_calculator` | memory_id 不存在 | 返回 `{"error": "memory not found", "memory_id": ...}`, 不抛 |
 
 ---
 
-> **维护者提示**:
-> - `vector_search` 是性能瓶颈所在（~150-300ms），需关注模型 API 延迟。
-> - `emotion_analyzer` 依赖小模型推理质量，prompt 需要根据实际效果迭代。
-> - `time_decay_calculator` 是纯函数，输出是 Agent 的参考基线而非最终决策。
-> - 嵌入模型切换时需重新生成 ChromaDB 全量向量，建议做好版本标记。
+## 7. 与其他模块
+
+| 模块 | 关系 |
+|------|------|
+| [LangGraph 编排](langgraph.md) | 工具工厂在 `memory_analysis_node` / `relationship_analysis_node` 内组装 |
+| [Forwarder](forward.md) | 所有远端调用 (embed / rerank / chat) 的唯一出口 |
+| [消息处理](message-processing.md) | 主对话前置检索复用 `MemoryRetriever` (非工具形式) |
+| [配置](../configuration.md) | `[embedding]` / `[rerank]` / `[chat].assist_model` |
+
+---
+
+## 8. 版本历史
+
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| v0.2.0 | 2026-07-11 | 初始设计: 3 个工具 (向量检索 / 情绪 / 衰减) |
+| v0.2.1 | 2026-07-15 | 与代码对齐: 全部改为 `make_*_tool()` 闭包工厂描述; 补 rerank 降级、`enable_thinking=False`、`current_state` 由 `DecayState.from_priority` 决定; 明确主对话不绑定工具 |
