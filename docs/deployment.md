@@ -1,403 +1,293 @@
-# 部署指南
+# 部署指南 | Deployment
 
-> **系统版本**: v0.1.0
+> **系统版本**: v0.2.1
+> **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
+> **最后更新**: 2026-07-15
 > **作者**: HarryHelloo
 
 ---
 
-## 部署方式
+## 1. 前置准备
 
-### 方式一：Docker Compose（推荐）
+### 1.1 编辑配置
 
-适合大多数用户，简单快捷。
-
-#### 1. 安装 Docker
+Mnemosync 只读 `config.local.toml`, 缺失即启动失败。首次部署:
 
 ```bash
-# Ubuntu/Debian
-curl -fsSL https://get.docker.com | sh
-sudo systemctl enable docker
-sudo systemctl start docker
-
-# 安装 Docker Compose
-sudo apt-get install docker-compose-plugin
+cp config.example.toml config.local.toml
+# 编辑 [chat] / [embedding] / [rerank] 段, 填入真实服务商凭证
 ```
 
-#### 2. 克隆项目
+配置字段清单见 [configuration.md](configuration.md)。
+
+### 1.2 目录结构
+
+```
+Mnemosync/
+├── config.local.toml       # 唯一配置源
+├── config.example.toml
+├── docker-compose.yml
+├── Dockerfile
+├── install.sh
+├── pyproject.toml / uv.lock
+├── src/
+│   ├── api/                # FastAPI 路由 + 中间件
+│   ├── cli/                # 顶层命令 + 交互式 shell + ask
+│   ├── core/               # config / graph / memory / agents
+│   ├── infra/              # forwarder / llm_service / vector_store
+│   ├── persistence/        # SQLite stores (memory / auth / api_key)
+│   ├── tools/              # make_*_tool 工厂
+│   └── main.py
+├── ui/                     # 管理面前端
+├── data/                   # 运行时数据 (SQLite + ChromaDB), 需持久化
+├── scripts/
+└── docs/
+```
+
+`data/` 是**唯一需要持久化**的目录, 包含 `memory.db`, `auth.db`, `api_keys.db`, `llm_service.db`, `chroma/`。
+
+---
+
+## 2. Docker Compose (推荐)
+
+### 2.1 启动
 
 ```bash
 git clone https://github.com/Mnemosync/Mnemosync.git
 cd Mnemosync
-```
-
-#### 3. 启动服务
-
-```bash
+cp config.example.toml config.local.toml   # 编辑填入凭证
 docker compose up -d
 ```
 
-#### 4. 初始化
+`docker-compose.yml` 已挂载 `./data`, `./config.local.toml`, `./ui` 到容器内。
+
+### 2.2 初始化数据库
 
 ```bash
-docker compose exec mnemosync uv run mnemosync init
+docker compose exec mnemosync uv run mnemosync init --docker
 ```
 
-#### 5. 查看日志
+### 2.3 进入交互式 CLI
 
 ```bash
-docker compose logs -f
+docker compose exec mnemosync uv run mnemosync login --docker
 ```
 
-#### 6. 数据持久化
+在 shell 内使用 `generate-key`, `ad-service`, `set-main-model` 等, 详见 [cli.md](modules/cli.md)。
 
-数据存储在 `./data` 目录，确保该目录有写入权限：
-
-```bash
-chmod 755 ./data
-```
-
----
-
-### 方式二：Docker 直接运行
+### 2.4 停止
 
 ```bash
-# 构建镜像
-docker build -t mnemosync:latest .
-
-# 运行容器
-docker run -d \
-  --name mnemosync \
-  -p 16125:16125 \
-  -v $(pwd)/data:/app/data \
-  --restart unless-stopped \
-  mnemosync:latest
-
-# 初始化
-docker exec mnemosync uv run mnemosync init
+docker compose down          # 保留 data/
+docker compose down -v       # 同时清除挂载卷
+# 或在 CLI 内
+mnemosync stop
 ```
 
 ---
 
-### 方式三：源码部署
+## 3. 源码部署 (开发/测试)
 
-适合开发者和需要自定义配置的用户。
-
-#### 1. 安装 Python 3.12+
+### 3.1 安装
 
 ```bash
-# Ubuntu/Debian
-sudo apt-get install python3.12 python3.12-venv python3.12-dev
-
-# 或使用 pyenv
-curl https://pyenv.run | bash
-pyenv install 3.12.0
-pyenv global 3.12.0
-```
-
-#### 2. 安装 uv
-
-```bash
+# Python 3.12+
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
 
-#### 3. 克隆并安装依赖
-
-```bash
 git clone https://github.com/Mnemosync/Mnemosync.git
 cd Mnemosync
 uv sync
+cp config.example.toml config.local.toml   # 编辑
 ```
 
-#### 4. 初始化并启动
+### 3.2 初始化 + 启动
 
 ```bash
 uv run mnemosync init
-uv run mnemosync serve
+uv run mnemosync serve                    # 前台
+uv run mnemosync serve --daemon           # 后台
+uv run mnemosync serve --debug            # 打印所有上游 HTTP 请求/响应
+uv run mnemosync serve --host 127.0.0.1 --port 16126 --log-level debug
 ```
 
-#### 5. 后台运行（可选）
+### 3.3 systemd (可选生产)
 
-```bash
-# 使用 nohup
-nohup uv run mnemosync serve > mnemosync.log 2>&1 &
-
-# 或使用 systemd（推荐）
-sudo tee /etc/systemd/system/mnemosync.service > /dev/null <<EOF
+```ini
+# /etc/systemd/system/mnemosync.service
 [Unit]
 Description=Mnemosync Service
 After=network.target
 
 [Service]
 Type=simple
-User=your-user
-WorkingDirectory=/path/to/Mnemosync
-ExecStart=/home/your-user/.local/bin/uv run mnemosync serve
-Restart=always
+User=mnemosync
+WorkingDirectory=/opt/Mnemosync
+Environment=MNEMOSYNC_DEBUG=0
+ExecStart=/home/mnemosync/.local/bin/uv run mnemosync serve
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-EOF
+```
 
+```bash
 sudo systemctl daemon-reload
-sudo systemctl enable mnemosync
-sudo systemctl start mnemosync
+sudo systemctl enable --now mnemosync
 ```
 
 ---
 
-## 配置说明
+## 4. 运行时开关
 
-### 环境变量
+Mnemosync 主要配置只来自 `config.local.toml`。运行时可用的开关只有:
 
-| 变量名 | 默认值 | 说明 |
-|--------|--------|------|
-| `HOST` | `0.0.0.0` | 监听地址 |
-| `PORT` | `16125` | 服务端口 |
-| `MNEMOSYNC_DB_PATH` | `data/api_keys.db` | API Key 数据库路径 |
-| `AUTH_DB_PATH` | `data/auth.db` | 认证数据库路径 |
-| `LOG_LEVEL` | `info` | 日志级别 |
+| 入口 | 覆盖 |
+|------|------|
+| `mnemosync serve --host / --port / --log-level` | `[runtime]` 对应字段 |
+| `MNEMOSYNC_DEBUG=1` 环境变量 | 打开 Forwarder 请求/响应日志 (等价 `--debug`) |
+| `mnemosync serve --daemon` | 后台运行 |
 
-### 配置文件
-
-创建 `.env` 文件（可选）：
-
-```bash
-# .env
-HOST=0.0.0.0
-PORT=16125
-LOG_LEVEL=info
-```
+**不存在**的历史文档遗留: `MNEMOSYNC_DB_PATH` / `AUTH_DB_PATH` / `LOG_LEVEL` / `.env`——数据库路径由 `[storage]` 段控制 (API Key DB 除外, 硬编码 `data/api_keys.db`), 详见 [configuration.md](configuration.md) §4。
 
 ---
 
-## 防火墙配置
+## 5. 反向代理 / HTTPS
 
-### Ubuntu (UFW)
-
-```bash
-sudo ufw allow 16125/tcp
-sudo ufw reload
-```
-
-### CentOS (firewalld)
-
-```bash
-sudo firewall-cmd --permanent --add-port=16125/tcp
-sudo firewall-cmd --reload
-```
-
-### 云服务器
-
-在安全组中添加入站规则：
-- 端口：`16125`
-- 协议：`TCP`
-- 源 IP：`0.0.0.0/0`（或指定 IP）
-
----
-
-## HTTPS 配置（推荐生产环境）
-
-### 使用 Nginx 反向代理
+生产必走 HTTPS。示例 Nginx:
 
 ```nginx
 server {
     listen 443 ssl;
     server_name your-domain.com;
-
-    ssl_certificate /path/to/cert.pem;
+    ssl_certificate     /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
 
+    # SSE 流式端点需要禁用响应缓冲
+    proxy_buffering off;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+
     location / {
-        proxy_pass http://localhost:16125;
+        proxy_pass http://127.0.0.1:16125;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # WebSocket 支持
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
     }
 }
-
 server {
     listen 80;
     server_name your-domain.com;
-    return 301 https://$server_name$request_uri;
+    return 301 https://$host$request_uri;
 }
 ```
 
-### 使用 Caddy（自动 HTTPS）
+Caddy:
 
 ```caddyfile
 your-domain.com {
-    reverse_proxy localhost:16125
+    reverse_proxy 127.0.0.1:16125 {
+        flush_interval -1   # SSE 立即刷缓冲
+    }
 }
 ```
 
 ---
 
-## 备份与恢复
-
-### 备份数据
+## 6. 健康检查
 
 ```bash
-# 备份数据库
-tar -czf mnemosync-backup-$(date +%Y%m%d).tar.gz data/
-
-# 或使用 docker
-docker compose exec mnemosync tar -czf /tmp/backup.tar.gz /app/data
-docker compose cp mnemosync:/tmp/backup.tar.gz ./backup.tar.gz
+curl http://127.0.0.1:16125/health
 ```
 
-### 恢复数据
-
-```bash
-# 解压备份
-tar -xzf mnemosync-backup-*.tar.gz
-
-# 重启服务
-docker compose restart
-```
+返回 `{"status": "ok", ...}` (见 [src/api/routes/admin.py:85](../src/api/routes/admin.py#L85))。可挂到容器/编排的 liveness / readiness。
 
 ---
 
-## 故障排查
-
-### 查看日志
+## 7. 备份
 
 ```bash
-# Docker
-docker compose logs -f
-
-# 源码部署
-journalctl -u mnemosync -f
+# 打包 data/ 即可
+tar -czf mnemosync-$(date +%Y%m%d).tar.gz data/ config.local.toml
 ```
 
-### 常见错误
-
-#### 端口被占用
-
+Docker:
 ```bash
-# 检查端口占用
-sudo lsof -i :16125
-
-# 修改端口
-export PORT=16126
-uv run mnemosync serve
+docker compose exec mnemosync tar -czf /tmp/backup.tar.gz /app/data /app/config.local.toml
+docker cp $(docker compose ps -q mnemosync):/tmp/backup.tar.gz ./
 ```
 
-#### 数据库权限问题
-
-```bash
-# 修复权限
-sudo chown -R $(whoami):$(whoami) data/
-chmod 755 data/
-```
-
-#### 内存不足
-
-```bash
-# 查看内存
-free -h
-
-# 限制内存（systemd）
-# 在 service 文件中添加：
-# MemoryLimit=512M
-```
+**注意**: `config.local.toml` 包含明文 API Key, 备份时按敏感文件处理。
 
 ---
 
-## 性能优化
+## 8. 升级
 
-### 调整连接池
-
-编辑 `src/infra/forwarder/connection_pool.py`：
-
-```python
-MAX_CONNECTIONS = 100  # 根据服务器配置调整
-```
-
-### 使用 Redis 缓存（可选）
+顶层 CLI 提供便捷升级 (拉分支 + 重装依赖):
 
 ```bash
-# 安装 Redis
-sudo apt-get install redis-server
-
-# 配置
-export REDIS_URL=redis://localhost:6379
+mnemosync upgrade                # 默认 dev 分支
+mnemosync upgrade --branch main
 ```
 
----
-
-## 监控与告警
-
-### Prometheus + Grafana
-
-（待实现）导出 `/metrics` 端点。
-
-### 健康检查
-
-```bash
-curl http://localhost:16125/health
-```
-
----
-
-## 升级指南
-
-### Docker 升级
-
-```bash
-# 拉取最新代码
-git pull
-
-# 重新构建
-docker compose build
-
-# 重启服务
-docker compose up -d
-
-# 数据迁移（如有）
-docker compose exec mnemosync uv run mnemosync migrate
-```
-
-### 源码升级
-
+手动:
 ```bash
 git pull
 uv sync
+# Docker
+docker compose build && docker compose up -d
+# systemd
 sudo systemctl restart mnemosync
 ```
 
 ---
 
-## 卸载
+## 9. 故障排查
 
-### Docker
-
+**端口占用**:
 ```bash
-docker compose down -v  # 删除数据和容器
-docker compose down     # 保留数据
+sudo lsof -i :16125
+mnemosync serve --port 16126
 ```
 
-### 源码
-
+**权限问题**:
 ```bash
-sudo systemctl stop mnemosync
-sudo systemctl disable mnemosync
+chown -R $USER:$USER data/
+chmod 755 data/
+```
+
+**上游 API 排查**: 用 `mnemosync serve --debug` 或 `mnemosync ask --debug "..."` 打印所有请求/响应 JSON。
+
+**记忆检索为空**: 
+1. 是否配置 `[embedding]`?
+2. 切换嵌入模型后是否清空 `data/chroma/` 并重建? 详见 [configuration.md](configuration.md) §7
+3. `[rerank]` 端点是否 `/compatible-api/v1` (DashScope)?
+
+---
+
+## 10. 卸载
+
+Docker:
+```bash
+docker compose down -v
+```
+
+源码:
+```bash
+sudo systemctl disable --now mnemosync
 sudo rm /etc/systemd/system/mnemosync.service
 sudo systemctl daemon-reload
-rm -rf Mnemosync/
+rm -rf /opt/Mnemosync
 ```
 
 ---
 
-## 技术支持
+## 11. 版本历史
 
-- 📖 [架构文档](./architecture.md)
-- 📝 [配置指南](./configuration.md)
-- 🐛 [Issue 追踪](https://github.com/Mnemosync/Mnemosync/issues)
-- 💬 [讨论区](https://github.com/Mnemosync/Mnemosync/discussions)
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| v0.1.0 | 2026-03-25 | 初始部署文档: Docker Compose + 源码 |
+| v0.2.1 | 2026-07-15 | 与代码对齐: 移除虚构环境变量表 (`MNEMOSYNC_DB_PATH` 等), 补 `mnemosync upgrade` / `--debug` / `--daemon`, 补 SSE 反代要点, 移除未实现的 Redis 缓存/metrics 章节 |
