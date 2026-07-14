@@ -15,8 +15,8 @@ from src.core.agents.base import (
 from src.core.agents.prompts import (
     DECAY_TARGETS_HEADER,
     PROXY_THINKING_PROMPT,
-    RELATIONSHIP_ANALYSIS_PROMPT,
     build_memory_analysis_prompt,
+    build_relationship_analysis_prompt,
 )
 from src.core.config import get_settings
 from src.core.memory.models import CandidateMemory, DecayEvaluation, DecayState, MemoryType
@@ -196,7 +196,7 @@ async def run_relationship_analysis(
 ) -> RelationshipAnalysisOutput:
     """关系分析 Agent: CoT, 调用 emotion_analyzer 后输出亲密度增量."""
     settings = get_settings()
-    user_prompt = RELATIONSHIP_ANALYSIS_PROMPT.format(
+    user_prompt = build_relationship_analysis_prompt(
         current_relationship=current_relationship, conversation=conversation,
     )
     try:
