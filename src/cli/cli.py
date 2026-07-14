@@ -430,6 +430,13 @@ Mnemosync CLI
   login               进入交互式 CLI（本地模式）
   login --docker      进入交互式 CLI（Docker 模式）
 
+调试:
+  ask "你好"                 in-process 跑一次主对话
+  ask --stream "..."         流式模式 (与生产 SSE 路径一致)
+  ask --user harry ...       指定 source_user
+  ask --persona-file p.txt ... 用文件里的人格 prompt
+  ask --via-http --api-key sk-... "..."  走本地 HTTP 服务
+
 升级:
   upgrade             拉取最新代码并更新依赖
   upgrade --branch dev  指定分支（默认 dev）
@@ -443,6 +450,7 @@ Mnemosync CLI
   mnemosync serve -d      # 后台启动（生产用）
   mnemosync stop          # 停止服务
   mnemosync login         # 进入交互式 CLI 管理 API Key 等
+  mnemosync ask "你好"    # 直接跑一次主对话 (调试)
   mnemosync upgrade       # 更新到最新版本
 
 配置:
@@ -486,6 +494,19 @@ def main(argv: list[str] | None = None) -> int:
     # ── stop ──
     stop_parser = subparsers.add_parser("stop", help="停止服务 (Docker 模式)")
     stop_parser.set_defaults(func=cmd_stop)
+
+    # ── ask ──
+    ask_parser = subparsers.add_parser("ask", help="命令行直连主对话 (调试用)")
+    ask_parser.add_argument("question", nargs="?", default=None, help="问题内容 (不填则从 stdin 读入)")
+    ask_parser.add_argument("--user", default="cli", help="source_user 标识 (默认: cli)")
+    ask_parser.add_argument("--persona-file", default=None, help="人格 prompt 文件路径")
+    ask_parser.add_argument("--stream", action="store_true", help="流式输出 (与生产 SSE 路径一致)")
+    ask_parser.add_argument("--verbose", "-v", action="store_true", help="打印调试日志")
+    ask_parser.add_argument("--via-http", action="store_true", help="改走本地 HTTP 服务, 需先 mnemosync serve")
+    ask_parser.add_argument("--api-key", default=None, help="--via-http 时使用, 默认读 MNEMOSYNC_API_KEY 环境变量")
+    ask_parser.add_argument("--base-url", default="http://127.0.0.1:16125", help="--via-http 目标地址")
+    from src.cli.ask import cmd_ask
+    ask_parser.set_defaults(func=cmd_ask)
 
     # ── upgrade ──
     upgrade_parser = subparsers.add_parser("upgrade", help="升级 Mnemosync")

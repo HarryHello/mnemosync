@@ -249,9 +249,38 @@ Mnemosync > test-model siliconflow Qwen/Qwen3.5-397B-A17B
 
 ---
 
+## 快速调试: `mnemosync ask`
+
+`ask` 是一个不经过 HTTP 层的调试命令, 直接在本进程里跑一次完整 LangGraph (加载记忆 → 主对话 → 记忆/关系分析), 方便观察 prompt / 状态 / 记忆读写.
+
+```bash
+# 非流式, 一问一答
+$ mnemosync ask "你好, 我叫 harry"
+
+# 流式模式 (与生产 SSE 路径一致, 打印记忆命中情况)
+$ mnemosync ask --stream "记得我叫什么吗?"
+
+# 指定 source_user / 加载自定义人格 prompt
+$ mnemosync ask --user harry --persona-file persona.txt "..."
+
+# 需要测 HTTP 通路时改走已启动的服务
+$ mnemosync ask --via-http --api-key sk-xxx "..."
+```
+
+参数说明:
+- `question`: 位置参数; 省略时从 stdin 读入 (可 `echo "..." | mnemosync ask`)
+- `--user`: `source_user` 标识, 默认 `cli` — 与生产请求的记忆隔离
+- `--persona-file`: 从文件读取人格 prompt, 文件名 (不含扩展名) 作为 `persona_name`
+- `--stream`: 走流式路径, 会先加载记忆再流式转发
+- `--via-http`: 改走 `http://127.0.0.1:16125/v1/chat/completions`, 需要先 `mnemosync serve`
+- `--verbose` / `-v`: 打印 DEBUG 级日志 (查看图节点执行细节)
+
+---
+
 ## 版本历史
 
 | 版本 | 日期 | 变更说明 |
 |------|------|----------|
 | v0.0.0 | 2026-03-25 | 初始 CLI 设计 |
 | v0.2.0 | 2026-07-12 | 补全 LLM 服务管理命令文档；说明命令在多 Agent 架构中的作用（配置主/辅助模型）；新增 test-model 示例 |
+| v0.2.1 | 2026-07-14 | 新增 `mnemosync ask` 命令, 用于命令行直连主对话调试 |
