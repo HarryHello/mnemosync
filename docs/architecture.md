@@ -352,15 +352,19 @@ sequenceDiagram
 
 ## 9. 与旧架构的关系
 
-| 旧模块                                           | 处理方式                                                                      |
-| ------------------------------------------------ | ----------------------------------------------------------------------------- |
-| **Forwarder** (`src/modules/forward/`)           | ✅ 保留 — API 不变；定位从"Pipeline 末端转发"升级为"所有 Agent 的模型调用通道" |
-| **消息提取** (`src/modules/extraction/`)         | ✅ 保留 — 协议适配层，归入 API Gateway                                         |
-| **上下文合并** (`src/modules/context/`)          | ❌ 替换 — 由主对话 Agent 内部完成                                              |
-| **MemoryStore** (`src/modules/memory/store.py`)  | ♻️ 重构 — SQLite 部分保留，新增 ChromaDB 向量存储                              |
-| **MemoryEntry** (`src/modules/memory/models.py`) | ♻️ 重构 — 新增 importance, decay_rate, memory_type 字段                        |
-| **API Routes** (`src/api/routes/`)               | ♻️ 重构 — 转发端点保留，内部改为 Agent 编排                                    |
-| **CLI / 认证 / 配置**                            | ✅ 保留 — 不是课程重点但项目完整度高                                           |
+v0.1 的 `src/modules/*` / `src/accounts/` / `src/models/` / `src/storage/` 目录已在 v0.2 重构中被以下新目录完全取代 (2026-07-14 已从仓库删除):
+
+| 旧模块                                    | 新位置                                                     | 处理方式                                                     |
+| ----------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
+| Forwarder (`src/modules/forward/`)        | `src/infra/forwarder/`                                     | ✅ 重写 — 定位升级为所有 Agent 的模型调用通道                |
+| 消息提取 (`src/modules/extraction/`)      | `src/infra/extraction.py`                                  | ✅ 保留 — 协议适配层, 归入 infra                              |
+| 上下文合并 (`src/modules/context/`)       | `src/core/memory/context.py` (由主对话 Agent 内部完成)     | ❌ 替换                                                       |
+| MemoryStore (`src/modules/memory/store`)  | `src/persistence/memory_store.py` + `src/infra/vector_store.py` | ♻️ 重构 — SQLite 元数据保留, 新增 ChromaDB 向量存储       |
+| MemoryEntry (`src/modules/memory/models`) | `src/core/memory/models.py`                                | ♻️ 重构 — 新增 importance, decay_rate, memory_type 字段      |
+| 认证 / API Key (`src/accounts/`)          | `src/persistence/auth_store.py` + `src/persistence/api_key_store.py` | ♻️ 重构 — 与其它 SQLite 存储统一入 persistence 层 |
+| LLM 服务商配置 (`src/models/`, `src/storage/llm_service_store.py`) | `src/infra/llm_service/`                    | ♻️ 重构 — 模型与存储合并到 infra 子包                          |
+| API Routes (`src/api/routes/`)            | 同名, 内部改为 Agent 编排                                  | ♻️ 重构                                                      |
+| CLI                                       | `src/cli/`                                                 | ✅ 保留                                                       |
 
 ---
 

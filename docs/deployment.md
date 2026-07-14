@@ -314,7 +314,7 @@ free -h
 
 ### 调整连接池
 
-编辑 `src/modules/forward/connection_pool.py`（待实现）：
+编辑 `src/infra/forwarder/connection_pool.py`：
 
 ```python
 MAX_CONNECTIONS = 100  # 根据服务器配置调整

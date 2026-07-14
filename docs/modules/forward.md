@@ -54,7 +54,7 @@ Agent 节点（本地组装请求）
 ### 基本用法
 
 ```python
-from src.modules.forward import Forwarder, ForwarderConfig
+from src.infra.forwarder import Forwarder, ForwarderConfig
 
 # 1. 配置转发器
 config = ForwarderConfig(
@@ -86,7 +86,7 @@ await forwarder.close()
 ### 使用连接池
 
 ```python
-from src.modules.forward import Forwarder, ForwarderConfig, ConnectionPool
+from src.infra.forwarder import Forwarder, ForwarderConfig, ConnectionPool
 
 # 创建连接池
 pool = ConnectionPool(
@@ -185,7 +185,7 @@ HTTP 连接池.
 上游服务错误.
 
 ```python
-from src.modules.forward import UpstreamError, Forwarder
+from src.infra.forwarder import UpstreamError, Forwarder
 
 try:
     response = await forwarder.send(messages=messages)
@@ -198,7 +198,7 @@ except UpstreamError as e:
 上游服务超时.
 
 ```python
-from src.modules.forward import UpstreamTimeout
+from src.infra.forwarder import UpstreamTimeout
 
 try:
     response = await forwarder.send(messages=messages)
@@ -330,3 +330,4 @@ config = ForwarderConfig(
 |------|------|----------|
 | v0.1.0 | 2026-03-29 | 初始实现：OpenAI 兼容转发、连接池、SSE 流式 |
 | v0.2.0 | 2026-07-12 | 架构定位明确：成为所有 Agent 调用模型的唯一 HTTP 通道；API 不变 |
+| v0.2.1 | 2026-07-14 | 代码位置从 `src/modules/forward/` 迁到 `src/infra/forwarder/`；导入路径改为 `from src.infra.forwarder import ...` |

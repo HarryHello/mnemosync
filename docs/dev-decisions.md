@@ -78,21 +78,27 @@
 ## 决策 5: 旧代码的处理
 
 **日期**: 2026-07-12
-**状态**: ⚠️ 待你确认
+**状态**: ✅ 已清理 (2026-07-14)
 
-### 现状
+### 背景
 
-旧目录 `src/accounts/` / `src/modules/` / `src/storage/` / `src/models/` / `src/api/schemas/` / `src/api/routes/` / `src/cli/` 仍在工作区（已 git 跟踪）, 但新代码全部写在 `src/core/` / `src/infra/` / `src/persistence/` / `src/tools/` / `src/api/`（新）.
+v0.2 重构后, 曾一度存在两套并行代码:
+- 旧: `src/accounts/` (auth + api_key), `src/modules/` (context/extraction/forward/memory), `src/storage/llm_service_store.py`, `src/models/llm_service.py`
+- 新: `src/core/` + `src/infra/` + `src/persistence/` + `src/tools/`
 
-### 决策（自主选择）
+CLI 与 API 已全部改用新结构, 旧目录处于 dead code 状态。这一割裂曾直接导致 bug: CLI 用的新版 `SqliteApiKeyStore` 忘了持久化 `key_full` 列, 导致 `show-key` 无法显示完整 key (旧版 `src/accounts/api_key_store.py` 反倒有正确实现, 却无人 import)。
 
-**暂时保留旧代码不删**, 理由:
-- 旧代码（forwarder/auth/api_key/llm_service_store）的某些实现已被迁移到新结构并改进, 旧文件留着可对照参考
-- 等新代码端到端跑通后, 一次性删除旧目录, 避免 mid-development 破坏 import
+### 决策
 
-### 你需要确认
+2026-07-14 一次性移除以下死代码:
+- `src/accounts/`
+- `src/modules/`
+- `src/storage/`
+- `src/models/`
 
-- 端到端跑通后是否同意我删除旧的 `src/accounts/` `src/modules/` `src/storage/` `src/models/` `src/api/schemas/`?
+同时清理若干 `__init__.py` 中未被使用的 re-export (`src/api/routes/__init__.py` / `src/api/schemas/__init__.py` / `src/persistence/__init__.py` / `src/infra/llm_service/__init__.py`) — 所有导入统一改为从子模块直取, 避免再次出现"两份实现互相错位"。
+
+`src/persistence/api_key_store.py` 补齐 `key_full` 列与 `ALTER TABLE` 兼容语句, 修复上述 CLI bug。
 
 ---
 
