@@ -31,7 +31,7 @@ Client ──► POST /v1/chat/completions
               │
               ▼
        [forward.py]
-       API Key 验证 → source_user, persona → initial_state
+       API Key 验证 → source_user → 加载服务器 persona → initial_state
               │
        ┌──────┴──────┐
        ▼             ▼
@@ -65,16 +65,20 @@ Client ──► POST /v1/chat/completions
 2. 模型白名单: request.model == "mnemosync-any" 或为空, 否则 400
 3. 消息序列化: request.messages → messages_dict
 4. 提取 source_user (request.user 或 "default")
-5. 提取 persona (第一条 system 消息内容)
+5. 加载服务器人格 (⚠️ 服务器优先, 不从客户端 system 消息提取)
+   → 人格存储于服务器端 (当前阶段为 config 或硬编码,
+      未来迁移至 personas 表 + Admin API)
 6. 构建 initial_state:
    {
      messages, source_user, persona, persona_name,
-     proxy_thinking_enabled: False,   # 目前硬编码
+     proxy_thinking_enabled: 由 reasoning_control 决策,
      stream_mode: bool
    }
 ```
 
-**代理思考启用**: 当前 [forward.py:158](../../src/api/routes/forward.py#L158) 硬编码为 `False`。请求头 `X-Enable-Proxy-Thinking` 尚未接入, 需自行修改代码启用。
+**⚠️ 服务器拥有 (server-first) 人格设计**: Mnemosync 的人格由服务器端权威定义, 不作为客户端请求的一部分。客户端 system 消息中的内容**当前被丢弃** (不从中提取 persona); 未来计划用辅助模型分析客户端 system 消息, 剥离出功能性指令 (tool 约束/response_format 等) 保留, 人格描述部分丢弃。详见 [architecture.md](../architecture.md) §2。
+
+**代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的 `should_use_proxy_thinking()` 判定, 4 条规则 (tools → 原生识别 → 前台点名推理 → 默认开关)。详见 [agents.md](agents.md) §4。
 
 **延迟约束**: < 20ms (SQLite 走 aiosqlite)。
 
@@ -213,4 +217,4 @@ relationship_analysis   memory_analysis (ReAct)
 |------|------|------|
 | v0.1.0 | 2026-03-29 | 10 步线性管道 |
 | v0.2.0 | 2026-07-12 | LangGraph 多 Agent 编排, ChromaDB, 代理思考 |
-| v0.2.1 | 2026-07-15 | 与代码对齐: 流式路径实为 forward.py 直接组装 (不走图), 记忆图为 5 节点 (无 vector_index), 代理思考启用方式修正 |
+| v0.2.1 | 2026-07-16 | 纠正人格来源: 从"提取客户端 system 消息"改为"服务器加载人格" (server-first); 修正代理推理启用方式描述 |
