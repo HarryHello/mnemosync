@@ -92,4 +92,16 @@ decay_batch_size = 50         # 衰减 Agent 每次评估条数
 
 [graph]
 checkpoint_backend = "memory" # memory | sqlite
+# 是否对不具备原生推理的模型启用代理推理 (预分析注入 + reasoning_content 字段回吐)
 proxy_thinking_default = false
+# 命中即视为具备原生推理, 跳过代理推理 (前缀通配, 末尾 * 匹配任意后缀)
+proxy_thinking_native_reasoning_models = [
+    "o1*",
+    "o3*",
+    "o4*",
+    "deepseek-r1*",
+    "deepseek-reasoner*",
+    "qwen3-*-thinking",
+    "qwq*",
+    "gpt-5-thinking-*",
+]

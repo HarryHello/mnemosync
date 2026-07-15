@@ -22,9 +22,17 @@ from src.api.schemas.forward import (
     ModelList,
     UsageInfo,
 )
+from src.api.reasoning_control import (
+    build_reasoning_stream_frames,
+    chunk_has_native_reasoning,
+    mark_native_reasoning,
+    should_use_proxy_thinking,
+)
 from src.core.config import get_settings
 from src.core.graph import build_graph
 from src.core.memory.context import build_main_dialogue_messages
+from src.core.agents import run_proxy_thinking
+from src.core.memory import format_relationship
 from src.infra.forwarder import (
     Forwarder,
     ForwarderConfig,
@@ -36,7 +44,6 @@ from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.tools import MemoryRetriever
-from src.core.memory import format_relationship
 
 router = APIRouter(prefix="/v1")
 logger = logging.getLogger(__name__)
@@ -150,17 +157,23 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
             persona = msg.content
             break
 
+    settings = get_settings()
+    use_proxy = should_use_proxy_thinking(
+        request, settings, main_model=settings.chat.main_model
+    )
+    logger.debug("  代理推理: %s", "启用" if use_proxy else "跳过")
+
     initial_state = {
         "messages": messages_dict,
         "source_user": source_user,
         "persona": persona,
         "persona_name": persona_name,
-        "proxy_thinking_enabled": False,
+        "proxy_thinking_enabled": use_proxy,
         "stream_mode": bool(request.stream),
     }
 
     if request.stream:
-        return await _handle_stream(http_request, initial_state, request)
+        return await _handle_stream(http_request, initial_state, request, use_proxy)
     else:
         return await _handle_non_stream(initial_state, request)
 
@@ -183,9 +196,10 @@ async def _handle_non_stream(
         raise HTTPException(status_code=500, detail=f"Graph execution failed: {e}") from e
 
     response_text = final_state.get("response", "")
+    reasoning = final_state.get("proxy_thinking_result") or None
     response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
-    logger.debug("📤 返回响应: %s", response_id)
+    logger.debug("📤 返回响应: %s (reasoning: %s)", response_id, "有" if reasoning else "无")
     return JSONResponse(
         content=ChatCompletionResponse(
             id=response_id,
@@ -193,12 +207,16 @@ async def _handle_non_stream(
             choices=[
                 ChatCompletionChoice(
                     index=0,
-                    message=ChatMessage(role="assistant", content=response_text),
+                    message=ChatMessage(
+                        role="assistant",
+                        content=response_text,
+                        reasoning_content=reasoning,
+                    ),
                     finish_reason="stop",
                 )
             ],
             usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
-        ).model_dump()
+        ).model_dump(exclude_none=True)
     )
 
 
@@ -206,13 +224,17 @@ async def _handle_stream(
     http_request: Request,
     initial_state: dict[str, Any],
     request: ChatCompletionRequest,
+    use_proxy_thinking: bool,
 ) -> StreamingResponse:
-    """流式: 加载记忆 → 构建上下文 → 转发给上游 → 异步触发记忆图.
+    """流式: 加载记忆 → (可选) 代理推理 → 合成 reasoning_content SSE
+    → 转发上游 → 后台记忆图.
 
-    流式模式下先加载记忆再流式回复.
+    代理推理结果 (a) 作为 system prompt 注入主对话, (b) 拆帧作为
+    delta.reasoning_content 提前吐给客户端, 与上游正文流拼接成完整回复.
     """
     settings = get_settings()
     source_user = initial_state.get("source_user", "default")
+    main_model = settings.chat.main_model
 
     # 加载记忆
     logger.debug("🧠 加载记忆上下文...")
@@ -235,14 +257,14 @@ async def _handle_stream(
             break
 
     retrieved_entries: list = []
+    forwarder_config_retrieve = ForwarderConfig(
+        base_url=settings.chat.base_url,
+        api_key=settings.chat.api_key,
+        default_model=main_model,
+        timeout=30.0,
+    )
     if query:
-        forwarder_config = ForwarderConfig(
-            base_url=settings.chat.base_url,
-            api_key=settings.chat.api_key,
-            default_model=settings.chat.main_model,
-            timeout=30.0,
-        )
-        async with Forwarder(forwarder_config) as forwarder:
+        async with Forwarder(forwarder_config_retrieve) as forwarder:
             retriever = MemoryRetriever(forwarder, vector_store, memory_store)
             results = await retriever.search(
                 query, top_k=settings.memory.retrieval_top_k,
@@ -259,7 +281,34 @@ async def _handle_stream(
     rel = await memory_store.get_relationship("default", source_user)
     logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
 
-    # 4. 构建带记忆的 prompt
+    # 4. 代理推理 (可选, 同步, 与检索串行) ─────────────────────
+    reasoning_text: str | None = None
+    if use_proxy_thinking:
+        logger.debug("🤔 [代理推理] 开始 (assist_model: %s)", settings.chat.assist_model)
+        assist_config = ForwarderConfig(
+            base_url=settings.chat.base_url,
+            api_key=settings.chat.api_key,
+            default_model=settings.chat.assist_model,
+            timeout=60.0,
+        )
+        try:
+            perms_text = "\n".join(f"- {e.content}" for e in perms) or "（无）"
+            user_msg_for_thinking = query
+            async with Forwarder(assist_config) as fwd_assist:
+                reasoning_text = await run_proxy_thinking(
+                    forwarder=fwd_assist,
+                    user_name=source_user,
+                    relationship=format_relationship(rel) if rel else "新用户",
+                    memories=perms_text,
+                    user_message=user_msg_for_thinking,
+                    tools=None,
+                )
+            logger.debug("  ✅ 代理推理完成, 长度: %d", len(reasoning_text) if reasoning_text else 0)
+        except Exception as e:
+            logger.warning("代理推理失败, 退化为普通转发: %s", e)
+            reasoning_text = None
+
+    # 5. 构建带记忆 + 推理注入的 prompt
     persona = initial_state.get("persona", "你是一个温暖、有记忆能力的 AI 助手。")
     persona_name = initial_state.get("persona_name", "助手")
     messages_dict = initial_state["messages"]
@@ -275,6 +324,7 @@ async def _handle_stream(
         retrieved_memories=retrieved_entries,
         relationship=rel,
         conversation_history=conversation_history,
+        proxy_thinking_result=reasoning_text,
     )
 
     logger.debug("  📝 构建消息数: %d (含记忆上下文)", len(messages_with_memory))
@@ -282,35 +332,74 @@ async def _handle_stream(
     forwarder_config = ForwarderConfig(
         base_url=settings.chat.base_url,
         api_key=settings.chat.api_key,
-        default_model=settings.chat.main_model,
+        default_model=main_model,
         timeout=90.0,
     )
 
+    chatcmpl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+
+    # 组装透传给上游的可选字段 (tools / tool_choice / response_format / stream_options
+    # / top_p / stop / seed / frequency_penalty / presence_penalty / logit_bias
+    # / logprobs / top_logprobs / n / user / reasoning_effort / reasoning / thinking).
+    # 注意: DashScope 兼容端点在 stream=True 下不允许 tools; 若配置的是 DashScope,
+    # 上游会返回 4xx, 错误信息经由 UpstreamError 走 SSE error 帧回给客户端 — 是有意的
+    # "让服务商说话", 而非我们静默丢字段。
+    passthrough: dict[str, Any] = {}
+    _optional_fields = (
+        "tools", "tool_choice", "response_format", "stream_options",
+        "top_p", "stop", "seed", "frequency_penalty", "presence_penalty",
+        "logit_bias", "logprobs", "top_logprobs", "n", "user",
+        "reasoning_effort", "reasoning", "thinking",
+    )
+    for _f in _optional_fields:
+        _v = getattr(request, _f, None)
+        if _v is not None:
+            passthrough[_f] = _v
+    if passthrough:
+        logger.debug("  🔗 透传上游可选字段: %s", list(passthrough.keys()))
+
     async def stream_generator():
+        # ── 先吐合成的 reasoning_content 帧 ──
+        if reasoning_text:
+            for frame in build_reasoning_stream_frames(
+                reasoning_text, chatcmpl_id=chatcmpl_id, model=main_model,
+            ):
+                yield frame
+
         collected_chunks: list[bytes] = []
+        saw_native = False
         async with Forwarder(forwarder_config) as forwarder:
             try:
                 logger.debug("🚀 开始流式转发 (带记忆上下文)...")
                 async for chunk in forwarder.chat_stream(
                     messages=messages_with_memory,
-                    model=settings.chat.main_model,
+                    model=main_model,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
+                    **passthrough,
                 ):
                     collected_chunks.append(chunk)
+                    if not saw_native and chunk_has_native_reasoning(chunk):
+                        saw_native = True
                     yield chunk
                 logger.debug("✅ 流式转发完成, chunks: %d", len(collected_chunks))
             except UpstreamTimeout as e:
                 logger.debug("⏰ 流式超时: %s", e)
-                yield f'data: {{"error": "{e}"}}\n\n'
+                yield f'data: {{"error": "{e}"}}\n\n'.encode("utf-8")
                 return
             except UpstreamError as e:
                 logger.debug("❌ 流式错误: %s", e.message)
-                yield f'data: {{"error": "{e.message}"}}\n\n'
+                yield f'data: {{"error": "{e.message}"}}\n\n'.encode("utf-8")
                 return
 
-        # 流结束后, 异步触发记忆图 (不阻塞)
+        if saw_native:
+            mark_native_reasoning(main_model)
+
+        # 后台记忆图 (跳过代理推理节点, 复用已算好的推理结果)
         logger.debug("🔄 触发后台记忆图...")
+        initial_state["proxy_thinking_enabled"] = False
+        if reasoning_text:
+            initial_state["proxy_thinking_result"] = reasoning_text
         asyncio.create_task(_run_memory_graph(initial_state, collected_chunks))
 
     return StreamingResponse(

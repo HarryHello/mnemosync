@@ -27,6 +27,7 @@ class ChatMessage(BaseModel):
     """聊天消息."""
     role: Literal["system","developer", "user", "assistant", "tool"] = Field(..., description="消息角色")
     content: Optional[str] = Field(None, description="消息内容")
+    reasoning_content: Optional[str] = Field(None, description="推理过程 (OpenAI 兼容扩展, DeepSeek/Qwen 等)")
     name: Optional[str] = Field(None, description="消息名称")
     tool_calls: Optional[list[dict]] = Field(None, description="工具调用")
     tool_call_id: Optional[str] = Field(None, description="工具调用 ID")
@@ -57,6 +58,11 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: Optional[str | dict] = Field(None, description="工具选择")
     parallel_tool_calls: Optional[bool] = Field(True, description="是否并行工具调用")
     user: Optional[str] = Field(None, description="用户 ID")
+
+    # 推理触发字段 (前台显式要求原生推理时提交, 命中即跳过代理推理)
+    reasoning_effort: Optional[str] = Field(None, description="OpenAI o-series 推理力度")
+    reasoning: Optional[dict] = Field(None, description="OpenAI Responses 风格 reasoning 参数")
+    thinking: Optional[dict] = Field(None, description="Anthropic / Qwen thinking 参数")
 
 
 class ChatCompletionChoice(BaseModel):

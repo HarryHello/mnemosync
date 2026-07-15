@@ -176,7 +176,10 @@ class Forwarder:
     ) -> AsyncIterator[bytes]:
         """流式对话, yield SSE 原始字节.
 
-        注意: 流式模式下不要传 tools（DashScope 互斥）.
+        `**kwargs` 会原样合入 payload (tools / tool_choice / response_format 等),
+        由调用方决定透传哪些字段. 服务商侧限制 (如 DashScope 兼容端点 stream+tools
+        互斥) 交由上游报错 → 通过 UpstreamError 走 SSE error 帧回客户端, 不在此层
+        静默丢字段。
         """
         payload: dict[str, Any] = {
             "model": model or self.config.default_model,

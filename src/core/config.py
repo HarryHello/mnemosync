@@ -83,12 +83,27 @@ class MemoryConfig:
     decay_batch_size: int = 50
 
 
+DEFAULT_NATIVE_REASONING_MODELS: tuple[str, ...] = (
+    "o1*",
+    "o3*",
+    "o4*",
+    "deepseek-r1*",
+    "deepseek-reasoner*",
+    "qwen3-*-thinking",
+    "qwq*",
+    "gpt-5-thinking-*",
+)
+
+
 @dataclass
 class GraphConfig:
     """LangGraph 编排配置."""
 
     checkpoint_backend: str = "memory"  # memory | sqlite
     proxy_thinking_default: bool = False
+    proxy_thinking_native_reasoning_models: list[str] = field(
+        default_factory=lambda: list(DEFAULT_NATIVE_REASONING_MODELS)
+    )
 
 
 @dataclass
