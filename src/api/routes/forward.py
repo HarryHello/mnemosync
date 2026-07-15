@@ -197,9 +197,17 @@ async def _handle_non_stream(
 
     response_text = final_state.get("response", "")
     reasoning = final_state.get("proxy_thinking_result") or None
+    upstream_usage = final_state.get("upstream_usage") or {}
     response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
-    logger.debug("📤 返回响应: %s (reasoning: %s)", response_id, "有" if reasoning else "无")
+    usage_info = UsageInfo(
+        prompt_tokens=int(upstream_usage.get("prompt_tokens", 0)),
+        completion_tokens=int(upstream_usage.get("completion_tokens", 0)),
+        total_tokens=int(upstream_usage.get("total_tokens", 0)),
+    )
+
+    logger.debug("📤 返回响应: %s (reasoning: %s, usage: %s)",
+                 response_id, "有" if reasoning else "无", usage_info.model_dump())
     return JSONResponse(
         content=ChatCompletionResponse(
             id=response_id,
@@ -215,7 +223,7 @@ async def _handle_non_stream(
                     finish_reason="stop",
                 )
             ],
-            usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+            usage=usage_info,
         ).model_dump(exclude_none=True)
     )
 

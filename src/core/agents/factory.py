@@ -124,14 +124,21 @@ async def run_main_dialogue(
     messages: list[dict[str, Any]],
     model: str | None = None,
     temperature: float = 0.7,
-) -> str:
-    """主对话 Agent: 直接调用主模型生成回复."""
+) -> tuple[str, dict[str, Any] | None]:
+    """主对话 Agent: 直接调用主模型生成回复.
+
+    Returns:
+        (content, usage) — content 为回复文本, usage 为上游原样返回的 token 计数字典
+        (可能为 None, 例如上游未返回 usage 段).
+    """
     settings = get_settings()
     model = model or settings.chat.main_model
     resp = await forwarder.chat(
         messages=messages, model=model, temperature=temperature,
     )
-    return resp["choices"][0]["message"]["content"] or ""
+    content = resp["choices"][0]["message"]["content"] or ""
+    usage = resp.get("usage")
+    return content, usage
 
 
 async def run_memory_analysis(

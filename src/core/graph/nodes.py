@@ -184,9 +184,12 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
 
         # 5. 生成回复 (流式由 API 层直接处理, 此处走非流式)
         logger.debug("  🚀 调用 LLM 生成回复...")
-        response = await run_main_dialogue(forwarder, messages)
+        response, usage = await run_main_dialogue(forwarder, messages)
         logger.debug("  ✅ 生成完成, 长度: %d", len(response) if response else 0)
-        return {"response": response}
+        result: dict[str, Any] = {"response": response}
+        if usage:
+            result["upstream_usage"] = usage
+        return result
     finally:
         await forwarder.close()
 

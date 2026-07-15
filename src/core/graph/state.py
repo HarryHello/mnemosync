@@ -32,6 +32,7 @@ class AgentState(TypedDict, total=False):
     # === 主对话输出（main_dialogue 写入） ===
     response: str                           # 生成的回复
     response_chunks: list[bytes]            # 流式响应收集的 chunks（供异步存储）
+    upstream_usage: dict[str, Any]          # 上游原样返回的 usage 字典 (prompt/completion/total_tokens)
 
     # === 记忆分析输出（memory_analysis 写入） ===
     new_memories: list[dict[str, Any]]
