@@ -10,14 +10,14 @@
 
 ## 1. 概述
 
-Mnemosync 一次请求由 LangGraph 编排 **4 个 Agent** 完成。默认路径激活 3 个，代理思考默认关闭。
+Mnemosync 一次请求由 LangGraph 编排 **4 个 Agent** 完成。代理推理是**原生推理的补齐**, 主模型无原生推理且前台点名要推理时自动启用 (详见 §4)。
 
 ### 1.1 Agent 全景
 
 | # | Agent | 推理方法 | 使用模型 | 触发时机 | 输出 |
 |---|-------|---------|---------|---------|------|
 | 1 | 主对话 | 直接推理 | 主模型 | 每次请求必跑 | 回复文本 |
-| 2 | 代理思考 | CoT (无工具) | 辅助模型 | 仅当 `proxy_thinking_enabled=True` | 供主对话参考的思考文本 |
+| 2 | 代理推理 | CoT (无工具) | 辅助模型 | 主模型无原生推理 & (前台点名推理 或 `proxy_thinking_default=true`) 时启用 | 供主对话参考的思考文本 + 前台 `reasoning_content` 字段 |
 | 3 | 记忆分析 | ReAct | 辅助模型 | 主对话后, 与关系分析并行 | 新记忆候选 + 衰减评估 JSON |
 | 4 | 关系分析 | ReAct | 辅助模型 | 主对话后, 与记忆分析并行 | 亲密度/信任度增量 JSON |
 
@@ -45,7 +45,7 @@ parse_request
 - `parse_request` 不是 Agent, 是纯 Python 预处理节点 (提取新消息 + 用户标识)
 - `relationship_analysis` 和 `memory_analysis` 是**并行边**, 主对话完成后同时触发
 - 向量索引 (嵌入写入 Chroma) 在 `memory_analysis` 节点内部由 `MemoryLifecycle.store_candidate()` 顺手完成, **不是独立节点**
-- 流式模式下, 主对话完成后 API 层直接把 SSE chunks 返给用户, 记忆图在后台 `asyncio.create_task` 里跑 (见 [forward.md](forward.md))
+- **流式路径不经过图**: [forward.py `_handle_stream`](../../src/api/routes/forward.py) 在 API 层直接编织 "加载记忆 → 代理推理 (可选, 同步) → 合成 reasoning SSE 帧 → 上游 chat_stream 透传 → 后台记忆图", 图仅用于后台跑记忆/关系两个分析节点, 主对话与代理推理在 API 层就完成。见 [forward.md](forward.md) §6
 
 ### 1.3 与嵌入/重排模型的关系
 
@@ -166,20 +166,53 @@ parse_request
 
 ---
 
-## 4. 代理思考 Agent
+## 4. 代理推理 Agent
 
-**代码**: [factory.py:226 `run_proxy_thinking`](../../src/core/agents/factory.py#L226)
+**代码**: [factory.py:226 `run_proxy_thinking`](../../src/core/agents/factory.py#L226) · 决策与 SSE 合成: [src/api/reasoning_control.py](../../src/api/reasoning_control.py)
 **Prompt**: [prompts/proxy_thinking.py](../../src/core/agents/prompts/proxy_thinking.py)
 
-### 4.1 定位
+### 4.1 定位 (⚠️ 与直觉相反, 请仔细看)
 
-在主对话前跑一次显式 CoT, 把推理结果注入主对话的 system prompt。目的是用两次辅助模型调用替代一次主模型调用, 降低成本 (代价是多一轮延迟)。
+代理推理是**原生推理的补齐 / 替代**, 不是可选优化。核心语义:
 
-### 4.2 启用方式
+> "前台点名要推理" 是**必须提供推理**的信号 — 由原生或代理**任一**满足。
+>
+> 若主模型不具备原生推理却收到 `reasoning_effort` / `reasoning` / `thinking` 参数, Mnemosync **必须**启动代理推理去补齐, 否则前台永远看不到"思考"面板内容。
 
-**当前实现**: [forward.py:158](../../src/api/routes/forward.py#L158) 硬编码 `proxy_thinking_enabled=False`, 默认不激活; CLI `ask` 命令同样硬编码 False。要实际启用需修改代码或后续接入请求参数。
+这与常见的"用户显式要求就跳过我们的层"直觉相反。原因: 客户端 (Cherry Studio / ChatBox 等) 在启用"深度思考"开关后会带上 `reasoning_effort`, 用户期待看到思考过程 — 如果我们此时静默 skip, 用户会认为"Mnemosync 破坏了思考功能"。
 
-### 4.3 工具
+### 4.2 决策规则
+
+由 [`should_use_proxy_thinking()`](../../src/api/reasoning_control.py) 判定, 优先级由上至下:
+
+| # | 条件 | 结果 |
+|---|------|------|
+| 1 | 请求带 `tools` | **skip** (工具调用轮次多, 叠推理延迟不划算) |
+| 2 | 主模型具备原生推理 (前缀表命中 或 自适应缓存) | **skip** (让原生接管) |
+| 3 | 前台请求体带 `reasoning_effort` / `reasoning` / `thinking` | **enable** (补齐必须的推理) |
+| 4 | fallback | 用 `[graph].proxy_thinking_default` |
+
+**原生推理识别双通道**:
+- 静态前缀表: `[graph].proxy_thinking_native_reasoning_models` (默认含 `o1*` / `o3*` / `o4*` / `deepseek-r1*` / `deepseek-reasoner*` / `qwen3-*-thinking` / `qwq*` / `gpt-5-thinking-*`)
+- 自适应缓存: 流式路径观察到上游 chunk 含 `"reasoning_content"` 字段 → 记入进程内 `_native_cache` → 下次同模型自动 skip (进程重启后自动重学)
+
+### 4.3 前台输出协议
+
+代理推理的结果通过 OpenAI 兼容的 `reasoning_content` 字段回吐 (DeepSeek 首创, Cherry Studio / ChatBox / LibreChat / OpenWebUI 等均支持):
+
+- **非流式**: `response.choices[0].message.reasoning_content` = 推理全文
+- **流式**: 上游正文流之前先注入合成的 SSE 帧, 逐段 `delta.reasoning_content`, 然后是正常的 `delta.content` 流
+
+客户端渲染折叠"思考"面板, 与真原生推理模型 (DeepSeek-R1 等) 行为一致。
+
+### 4.4 双通道注入
+
+同一份 `reasoning_text` 一份数据两个用途:
+
+1. **注入主对话 prompt**: 通过 `build_main_dialogue_messages(proxy_thinking_result=...)` 作为"## 思考辅助"段拼进 system prompt, 让主模型基于该分析生成更好的回复
+2. **回吐前台**: 作为 `reasoning_content` 字段/帧给客户端展示
+
+### 4.5 工具
 
 `run_proxy_thinking` 接受可选 `tools` 参数:
 - `tools=None` (当前 nodes.py 传法) → 走 `run_simple_completion` 单次调用, 关闭 thinking, 无工具
@@ -187,7 +220,7 @@ parse_request
 
 Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 
-### 4.4 输出格式
+### 4.6 输出格式
 
 模型自由文本 (非 JSON), 结构如下:
 
@@ -199,6 +232,10 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 ```
 
 主对话节点通过 `state["proxy_thinking_result"]` 读取此字符串, 拼进 system prompt。
+
+### 4.7 失败降级
+
+代理推理抛异常 → `reasoning_text=None` → 不合成帧, 不注入 prompt, 正常转发主对话流 → 用户端等同于未启用。记 warning, 不阻塞主对话。
 
 ---
 
@@ -266,7 +303,7 @@ class AgentState(TypedDict, total=False):
     thread_id: str
     proxy_thinking_enabled: bool
 
-    # 代理思考 (proxy_thinking 写入)
+    # 代理推理 (proxy_thinking 写入)
     proxy_thinking_result: str | None
 
     # 主对话输出 (main_dialogue 写入)
@@ -295,7 +332,7 @@ class AgentState(TypedDict, total=False):
 - 单个 Agent 失败不影响并行分支; 每个 node 都用 try/except 包住, 失败时写 `state.errors`
 - 记忆分析失败 → 跳过入库, 关系分析继续
 - 关系分析失败 → 跳过关系更新, 主对话回复照常返回
-- 代理思考失败 → 记 warning, 退化为无代理思考模式 (继续主对话)
+- 代理推理失败 → 记 warning, 退化为无代理推理模式 (继续主对话, `reasoning_content` 为空)
 
 ---
 
@@ -304,5 +341,6 @@ class AgentState(TypedDict, total=False):
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v0.2.0 | 2026-07-11 | 初始多 Agent 设计 |
-| v0.2.1 | 2026-07-12 | 记忆衰减合并入记忆分析; 新增代理思考 Agent |
+| v0.2.1 | 2026-07-12 | 记忆衰减合并入记忆分析; 新增代理推理 Agent |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 修正拓扑 (无 vector_index 节点), 修正 AgentState 字段, 删除通识讲解 |
+| v0.2.1 | 2026-07-15 | 代理推理落地: API 层决策 (reasoning_control), 双通道注入 (system prompt + `reasoning_content` SSE 帧); 语义修正为"补齐原生推理"而非可选优化 |

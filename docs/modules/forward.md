@@ -80,7 +80,7 @@ async def chat(
 - `tools` 用于 function_call (ReAct 循环)
 - `extra_body` 合并到 payload 顶层, 如 `{"enable_thinking": False}` 关闭 Qwen3 思考流
 
-**契约**: DashScope 等服务商 tools 与 stream=True 互斥, 因此 `chat_stream` 不支持 `tools` (见 [dev-decisions.md](../dev-decisions.md))。
+**契约**: DashScope 等服务商 tools 与 stream=True 互斥, 但**这是服务商的限制**, 不是 Mnemosync 层的限制。`chat_stream` 支持透传 tools 等所有可选字段 (见 §3.3), 撞上服务商限制时上游会返回 4xx, 错误通过 SSE error 帧回到客户端。
 
 ### 3.3 Forwarder.chat_stream
 
@@ -91,7 +91,8 @@ async def chat_stream(
 ```
 
 - 流式对话, yield 上游 SSE 原始字节 (`b"data: {...}\n\n"`)
-- 不接受 `tools` 参数
+- `**kwargs` 会原样合入 payload——**支持 tools / tool_choice / response_format / stream_options / top_p / stop / seed / reasoning_effort / thinking 等所有 OpenAI 兼容字段**
+- 服务商侧限制 (如 DashScope stream+tools 互斥) 交由上游报错反馈, 本层不做静默剥离
 
 ### 3.4 Forwarder.embed
 
@@ -132,9 +133,9 @@ async def list_models() -> list[str]
 
 ## 4. 上游 API 契约
 
-**已知约束** (见 [dashscope 记录](../../DASHSCOPE_CONTRACTS_NEEDED.md) 与 memory 索引):
+**已知约束**:
 
-- DashScope OpenAI 兼容端点 tools 与 stream 互斥
+- DashScope OpenAI 兼容端点 tools 与 stream 互斥——**由服务商拒绝, Mnemosync 不预先剥离**; 客户端会收到 SSE error 帧告知具体错误
 - rerank 端点在部分服务商为 `/reranks` (复数)
 - DashScope 的 `gte-rerank` 已下线, 请用 `gte-rerank-v2` 或其他继任
 - 嵌入维度由模型决定, 不再写死 (`dimensions` 只在服务商明确支持时传)
@@ -156,7 +157,8 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 
 - **鉴权与请求组装**: [src/api/routes/forward.py](../../src/api/routes/forward.py) 完成 API Key 验证、模型白名单校验 (`mnemosync-any`)、记忆加载、上下文拼装, 再交给 Forwarder
 - **模型白名单**: `/v1/chat/completions` 只接受 `model="mnemosync-any"` 或空, 其他直接 400 ([forward.py:131](../../src/api/routes/forward.py#L131))
-- **代理思考**: 当前**不通过请求头启用**, `initial_state.proxy_thinking_enabled = False` 硬编码, 需修改代码启用
+- **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的决策函数控制。见 [agents.md](agents.md) §4 与 [message-processing.md](message-processing.md)
+- **流式字段透传**: `_handle_stream` 会把 `request` 里所有 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `chat_stream(**passthrough)`; 服务商限制由服务商说话 (见 §3.3, §4)
 
 ---
 
@@ -205,3 +207,4 @@ ForwarderConfig(
 | v0.2.0 | 2026-07-12 | 定位为所有 Agent 的唯一上游通道 |
 | v0.2.1 | 2026-07-14 | 迁移到 `src/infra/forwarder/`; API 改为 `chat` / `chat_stream` / `embed` / `rerank` / `list_models`, 移除旧 `send` / `send_stream` |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 修正 API 方法名、模型白名单说明、代理思考启用方式、rerank 端点降级 |
+| v0.2.1 | 2026-07-15 | 流式路径全量透传 OpenAI 兼容可选字段 (tools / response_format / seed 等); 服务商限制由上游报错; 接入代理推理决策 (reasoning_control) |

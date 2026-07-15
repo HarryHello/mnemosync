@@ -109,9 +109,19 @@ model    = "qwen3-rerank"
 | 字段 | 默认 | 说明 |
 |------|------|------|
 | `checkpoint_backend` | `memory` | LangGraph checkpoint 后端 (`memory` / `sqlite`) |
-| `proxy_thinking_default` | false | 代理思考默认开关 |
+| `proxy_thinking_default` | false | 代理推理的**兜底**开关: 请求无 `reasoning_effort` 等提示、主模型也没原生推理时, 是否强制启用 |
+| `proxy_thinking_native_reasoning_models` | 见下 | 视为具备原生推理的模型前缀白名单 (命中即 skip 代理推理) |
 
-**当前实现**: `proxy_thinking_default` 配置读取存在, 但 [forward.py:158](../src/api/routes/forward.py#L158) 硬编码 `False`。要真正启用代理思考需修改代码从配置读取。
+**默认前缀白名单**:
+```
+["o1*", "o3*", "o4*",
+ "deepseek-r1*", "deepseek-reasoner*",
+ "qwen3-*-thinking", "qwq*",
+ "gpt-5-thinking-*"]
+```
+末尾 `*` 通配, 例如 `deepseek-r1*` 匹配 `deepseek-r1-distill-llama-70b`。除静态前缀外, 流式路径会自适应观察: 上游 chunk 出现 `reasoning_content` 字段 → 该模型加入进程内 `_native_cache`, 下次自动跳过 (重启清空)。
+
+**代理推理决策规则**: 由 [src/api/reasoning_control.py](../src/api/reasoning_control.py) 的 `should_use_proxy_thinking()` 判定, 优先级 tools → 原生识别 → 前台点名推理 → `proxy_thinking_default`。详见 [agents.md §4](modules/agents.md)。
 
 ### 3.7 [runtime]
 
@@ -168,6 +178,12 @@ retrieval_top_k    = 5
 [graph]
 checkpoint_backend = "memory"
 proxy_thinking_default = false
+proxy_thinking_native_reasoning_models = [
+  "o1*", "o3*", "o4*",
+  "deepseek-r1*", "deepseek-reasoner*",
+  "qwen3-*-thinking", "qwq*",
+  "gpt-5-thinking-*",
+]
 
 [runtime]
 host = "0.0.0.0"
