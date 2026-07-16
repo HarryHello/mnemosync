@@ -59,3 +59,30 @@ class ModelConfiguration:
         now = datetime.now(timezone.utc)
         return cls(id=secrets.token_hex(16), service_id=service_id, model=model,
                    model_type=model_type, created_at=now, updated_at=now)
+
+
+@dataclass
+class RoleBinding:
+    """角色 → (服务商, 模型) 的优先级绑定.
+
+    每个角色 (main/assist/embedding/rerank) 可以有多条候选, priority 越小优先级越高.
+    Forwarder 按 priority 升序尝试, 遇上游错误 fallback 到下一条.
+    """
+
+    role: ModelType
+    priority: int
+    service_id: str
+    model: str
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
+class ResolvedCandidate:
+    """RoleResolver 返回的完整候选, 已解密 api_key."""
+
+    role: ModelType
+    priority: int
+    service_id: str
+    base_url: str
+    api_key: str
+    model: str

@@ -16,6 +16,8 @@ from .models import (
     LLMServiceProvider,
     ModelConfiguration,
     ModelType,
+    ResolvedCandidate,
+    RoleBinding,
 )
 
 
@@ -101,6 +103,20 @@ class LLMServiceStore:
             """)
             await db.execute("CREATE INDEX IF NOT EXISTS idx_model_service ON model_configs(service_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_model_type ON model_configs(model_type)")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS role_bindings (
+                    role TEXT NOT NULL,
+                    priority INTEGER NOT NULL,
+                    service_id TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL,
+                    PRIMARY KEY (role, priority),
+                    FOREIGN KEY (service_id) REFERENCES llm_services(id) ON DELETE CASCADE
+                )
+            """)
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_role_priority ON role_bindings(role, priority)"
+            )
             await db.commit()
 
     # ============ 服务商 CRUD ============
@@ -154,8 +170,10 @@ class LLMServiceStore:
 
     async def delete_service(self, service_id: str) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys=ON")
             cur = await db.execute("DELETE FROM llm_services WHERE id = ?", (service_id,))
             await db.execute("DELETE FROM model_configs WHERE service_id = ?", (service_id,))
+            # role_bindings 依赖 FK ON DELETE CASCADE 自动清理
             await db.commit()
             return cur.rowcount > 0
 
@@ -230,3 +248,175 @@ class LLMServiceStore:
         if v is None:
             return datetime.now(timezone.utc)
         return datetime.fromisoformat(v)
+
+    # ============ 角色绑定 (role_bindings) ============
+
+    async def list_role_bindings(self, role: Optional[ModelType] = None) -> list[RoleBinding]:
+        """列出角色绑定. role 为 None 时返回所有角色的绑定, 已按 (role, priority) 排序."""
+        async with aiosqlite.connect(self.db_path) as db:
+            if role is None:
+                query = (
+                    "SELECT role, priority, service_id, model, created_at "
+                    "FROM role_bindings ORDER BY role, priority"
+                )
+                params: tuple = ()
+            else:
+                query = (
+                    "SELECT role, priority, service_id, model, created_at "
+                    "FROM role_bindings WHERE role = ? ORDER BY priority"
+                )
+                params = (role.value,)
+            async with db.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+        return [
+            RoleBinding(
+                role=ModelType(r[0]),
+                priority=r[1],
+                service_id=r[2],
+                model=r[3],
+                created_at=self._parse_dt(r[4]),
+            )
+            for r in rows
+        ]
+
+    async def add_role_binding(
+        self,
+        role: ModelType,
+        service_id: str,
+        model: str,
+        priority: Optional[int] = None,
+    ) -> RoleBinding:
+        """追加一条角色绑定. priority 省略时排到列表末尾.
+
+        指定 priority 时若已被占用, 后续所有条目 priority += 1 让位.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM llm_services WHERE id = ?", (service_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if not row or row[0] == 0:
+                    raise ValueError(f"服务 '{service_id}' 不存在")
+
+            async with db.execute(
+                "SELECT COALESCE(MAX(priority), -1) FROM role_bindings WHERE role = ?",
+                (role.value,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                max_priority = row[0] if row else -1
+
+            if priority is None:
+                priority = max_priority + 1
+            else:
+                if priority < 0:
+                    raise ValueError("priority 必须 >= 0")
+                if priority <= max_priority:
+                    # 让位: 先把 [priority, max_priority] 平移到负数区避免 UNIQUE 冲突,
+                    # 再一次性拉回 (+2, 净效果 +1)
+                    await db.execute(
+                        "UPDATE role_bindings SET priority = -priority - 1 "
+                        "WHERE role = ? AND priority >= ?",
+                        (role.value, priority),
+                    )
+                    await db.execute(
+                        "UPDATE role_bindings SET priority = -priority "
+                        "WHERE role = ? AND priority < 0",
+                        (role.value,),
+                    )
+
+            now = datetime.now(timezone.utc)
+            await db.execute(
+                "INSERT INTO role_bindings (role, priority, service_id, model, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (role.value, priority, service_id, model, now.isoformat()),
+            )
+            await db.commit()
+
+        return RoleBinding(
+            role=role, priority=priority, service_id=service_id, model=model, created_at=now
+        )
+
+    async def delete_role_binding(self, role: ModelType, priority: int) -> bool:
+        """删除某条绑定, 并将其后所有条目的 priority 前移一位, 保持连续."""
+        async with aiosqlite.connect(self.db_path) as db:
+            cur = await db.execute(
+                "DELETE FROM role_bindings WHERE role = ? AND priority = ?",
+                (role.value, priority),
+            )
+            if cur.rowcount == 0:
+                await db.commit()
+                return False
+            await db.execute(
+                "UPDATE role_bindings SET priority = priority - 1 "
+                "WHERE role = ? AND priority > ?",
+                (role.value, priority),
+            )
+            await db.commit()
+            return True
+
+    async def reorder_role_bindings(
+        self, role: ModelType, order: list[tuple[str, str]]
+    ) -> list[RoleBinding]:
+        """重排某角色的所有绑定. order 是按新优先级排序的 (service_id, model) 列表.
+
+        要求 order 必须包含且仅包含现有的全部绑定 (service_id, model 对), 否则 ValueError.
+        整体在一个事务中原子完成.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT service_id, model FROM role_bindings WHERE role = ?",
+                (role.value,),
+            ) as cursor:
+                current = {(r[0], r[1]) for r in await cursor.fetchall()}
+            if set(order) != current:
+                raise ValueError(
+                    f"reorder 参数与现有绑定不匹配 (missing={current - set(order)}, "
+                    f"extra={set(order) - current})"
+                )
+            if len(order) != len(set(order)):
+                raise ValueError("reorder 参数含重复项")
+
+            # 两步走: 先把 priority 全部改成负数偏移, 再改回目标值, 避免 UNIQUE 冲突
+            await db.execute(
+                "UPDATE role_bindings SET priority = -priority - 1 WHERE role = ?",
+                (role.value,),
+            )
+            for new_priority, (service_id, model) in enumerate(order):
+                await db.execute(
+                    "UPDATE role_bindings SET priority = ? "
+                    "WHERE role = ? AND service_id = ? AND model = ?",
+                    (new_priority, role.value, service_id, model),
+                )
+            await db.commit()
+
+        return await self.list_role_bindings(role)
+
+    async def resolve_role(self, role: ModelType) -> list[ResolvedCandidate]:
+        """给定角色, 返回按优先级排序的候选列表, 已解密 api_key."""
+        bindings = await self.list_role_bindings(role)
+        if not bindings:
+            return []
+        resolved: list[ResolvedCandidate] = []
+        async with aiosqlite.connect(self.db_path) as db:
+            for b in bindings:
+                async with db.execute(
+                    "SELECT base_url, api_key_encrypted FROM llm_services WHERE id = ?",
+                    (b.service_id,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                if not row:
+                    # 服务被删除但绑定残留 (FK 应该已 cascade, 兜底忽略)
+                    continue
+                base_url, encrypted = row[0], row[1]
+                api_key = await self._decrypt(encrypted)
+                resolved.append(
+                    ResolvedCandidate(
+                        role=b.role,
+                        priority=b.priority,
+                        service_id=b.service_id,
+                        base_url=base_url,
+                        api_key=api_key,
+                        model=b.model,
+                    )
+                )
+        return resolved
