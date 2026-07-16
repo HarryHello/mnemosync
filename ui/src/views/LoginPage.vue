@@ -13,8 +13,8 @@ const formRef = ref<FormInstance | null>(null)
 const submitting = ref(false)
 
 const form = reactive({
-  username: 'mnemosync',
-  password: 'mnemosync',
+  username: '',
+  password: '',
 })
 
 const rules: FormRules = {
