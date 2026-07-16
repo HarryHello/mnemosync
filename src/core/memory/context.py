@@ -3,6 +3,9 @@
 主对话 Agent 调用本模块拼装发给上游模型的完整上下文:
   system: 人格 prompt + 永久记忆 + 检索记忆 + 关系摘要
   user/assistant: 当前对话历史
+
+框架文本 (行为准则/section 标题) 现在从 PromptStore 加载,
+registry 名: `main_dialogue_frame`.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.core.memory.models import MemoryEntry, Relationship
+from src.core.prompts import get_prompt_store
 
 
 def format_permanent_memories(entries: list[MemoryEntry]) -> str:
@@ -45,6 +49,22 @@ def format_relationship(rel: Relationship | None) -> str:
     )
 
 
+def _proxy_thinking_section(proxy_thinking_result: str | None) -> str:
+    """当 proxy_thinking 有内容时, 生成完整段落; 否则空串.
+
+    段落自带前导 '\\n---\\n', 直接拼在模板末尾即可.
+    """
+    if not proxy_thinking_result:
+        return ""
+    return (
+        "\n---\n"
+        "## 思考辅助\n"
+        "以下是对用户消息的预先分析，供你参考——请自然地吸收这些理解，\n"
+        "而不是逐条复述：\n\n"
+        + proxy_thinking_result
+    )
+
+
 def build_main_dialogue_messages(
     persona_prompt: str,
     persona_name: str,
@@ -70,38 +90,19 @@ def build_main_dialogue_messages(
     Returns:
         OpenAI 格式的 messages 列表
     """
-    system_parts: list[str] = []
-    system_parts.append(f"你是 {persona_name}，以下是你的核心设定：\n\n{persona_prompt}")
-    system_parts.append("---")
-    system_parts.append("## 关于当前对话对象\n")
-    system_parts.append(f"- 用户名：{user_name}")
-    system_parts.append(f"- 你们的关系：{format_relationship(relationship)}")
-    system_parts.append("---")
-    system_parts.append(f"## 你对 {user_name} 的记忆\n")
-    system_parts.append("### 永久记忆（你永远记得）")
-    system_parts.append(format_permanent_memories(permanent_memories))
-    system_parts.append("\n### 相关记忆（此时想起的）")
-    system_parts.append(format_retrieved_memories(retrieved_memories))
-    system_parts.append("---")
-    system_parts.append("""## 行为准则
-
-1. 自然地将对用户的了解融入对话，不要生硬地背诵记忆
-2. 尊重隐私边界：不同用户之间的记忆不应混淆
-3. 注意情绪：如果用户近期有负面情绪，适当表达关心
-4. 保持性格一致：你的回复应符合""" + f" {persona_name} 的人设")
-    system_parts.append('5. 不要提及"记忆系统"、"数据库"等系统内部概念')
-
-    if proxy_thinking_result:
-        system_parts.append("---")
-        system_parts.append("## 思考辅助")
-        system_parts.append(
-            "以下是对用户消息的预先分析，供你参考——请自然地吸收这些理解，\n"
-            "而不是逐条复述：\n\n"
-            + proxy_thinking_result
-        )
+    frame = get_prompt_store().load("main_dialogue_frame")
+    system_content = (
+        frame.replace("__PERSONA_NAME__", persona_name)
+        .replace("__PERSONA_PROMPT__", persona_prompt)
+        .replace("__USER_NAME__", user_name)
+        .replace("__RELATIONSHIP__", format_relationship(relationship))
+        .replace("__PERMANENT_MEMORIES__", format_permanent_memories(permanent_memories))
+        .replace("__RETRIEVED_MEMORIES__", format_retrieved_memories(retrieved_memories))
+        .replace("__PROXY_THINKING_SECTION__", _proxy_thinking_section(proxy_thinking_result))
+    )
 
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": "\n".join(system_parts)}
+        {"role": "system", "content": system_content}
     ]
     messages.extend(conversation_history)
     return messages

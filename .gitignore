@@ -12,6 +12,9 @@ config.local.toml
 config.local.yaml
 config.local.json
 *.log
+.coverage
+.coverage.*
+htmlcov/
 .DS_Store
 .qwen
 .ai

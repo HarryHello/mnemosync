@@ -15,9 +15,8 @@ from src.core.agents.factory import (
     run_prompt_cleaning,
 )
 from src.core.agents.prompts.prompt_cleaning import (
-    PROMPT_CLEANING_SYSTEM,
-    PROMPT_CLEANING_USER,
     build_prompt_cleaning_user_prompt,
+    load_prompt_cleaning_system,
 )
 from src.tools.sentence_classifier import (
     SentenceClassifyResult,
@@ -131,9 +130,10 @@ def test_build_user_prompt_substitutes():
 
 def test_prompt_system_is_stable():
     """确保 system prompt 不含占位符 (避免忘记替换)."""
-    assert "__SYSTEM_MESSAGE__" not in PROMPT_CLEANING_SYSTEM
-    assert "人格描述" in PROMPT_CLEANING_SYSTEM
-    assert "功能性指令" in PROMPT_CLEANING_SYSTEM
+    system_prompt = load_prompt_cleaning_system()
+    assert "__SYSTEM_MESSAGE__" not in system_prompt
+    assert "人格描述" in system_prompt
+    assert "功能性指令" in system_prompt
 
 
 # ─── run_prompt_cleaning (ReAct 循环) ─────────────────────────

@@ -55,6 +55,7 @@ class StorageConfig:
     llm_db_path: str = "data/llm_service.db"
     auth_db_path: str = "data/auth.db"
     chroma_dir: str = "data/chroma"
+    prompts_override_dir: str = "data/prompts"
 
     @property
     def memory_db_abs(self) -> Path:
@@ -71,6 +72,10 @@ class StorageConfig:
     @property
     def chroma_dir_abs(self) -> Path:
         return PROJECT_ROOT / self.chroma_dir
+
+    @property
+    def prompts_override_dir_abs(self) -> Path:
+        return PROJECT_ROOT / self.prompts_override_dir
 
 
 @dataclass

@@ -438,6 +438,18 @@ Mnemosync CLI
   ask --persona-file p.txt ... 用文件里的人格 prompt
   ask --via-http --api-key sk-... "..."  走本地 HTTP 服务
 
+提示词覆盖:
+  prompt list                          列出所有 Agent 提示词及覆盖状态
+  prompt show <name>                   打印当前生效的提示词
+  prompt show <name> --from-default    打印默认版本
+  prompt set <name> --file p.md        从文件写入覆盖
+  cat p.md | prompt set <name>         从管道写入
+  prompt set <name> --edit             用 $EDITOR 编辑当前版本
+  prompt set <name> --edit --from-default  从默认版本开始编辑
+  prompt reset <name>                  删除覆盖 (自动备份)
+  prompt reset --all                   全部回默认
+  prompt validate <name> / --all       校验占位符齐全性
+
 升级:
   upgrade             拉取最新代码并更新依赖
   upgrade --branch dev  指定分支（默认 dev）
@@ -509,6 +521,10 @@ def main(argv: list[str] | None = None) -> int:
     ask_parser.add_argument("--base-url", default="http://127.0.0.1:16125", help="--via-http 目标地址")
     from src.cli.ask import cmd_ask
     ask_parser.set_defaults(func=cmd_ask)
+
+    # ── prompt ──
+    from src.cli.prompt_cmd import build_parser as _build_prompt_parser
+    _build_prompt_parser(subparsers)
 
     # ── upgrade ──
     upgrade_parser = subparsers.add_parser("upgrade", help="升级 Mnemosync")

@@ -13,12 +13,12 @@ from src.core.agents.base import (
     run_simple_completion,
 )
 from src.core.agents.prompts import (
-    DECAY_TARGETS_HEADER,
-    PROMPT_CLEANING_SYSTEM,
-    PROXY_THINKING_PROMPT,
     build_memory_analysis_prompt,
     build_prompt_cleaning_user_prompt,
+    build_proxy_thinking_prompt,
     build_relationship_analysis_prompt,
+    load_decay_targets_header,
+    load_prompt_cleaning_system,
 )
 from src.core.config import get_settings
 from src.core.memory.models import CandidateMemory, DecayEvaluation, DecayState, MemoryType
@@ -162,7 +162,7 @@ async def run_memory_analysis(
                 f"importance: {t.get('importance', 0.5)}, decay_rate: {t.get('decay_rate', 0.3)}, "
                 f"memory_type: {t.get('memory_type', 'normal')}"
             )
-        decay_section = DECAY_TARGETS_HEADER + "\n".join(lines) + "\n"
+        decay_section = load_decay_targets_header() + "\n".join(lines) + "\n"
     user_prompt = build_memory_analysis_prompt(
         source_user=source_user, conversation=conversation,
         decay_targets_section=decay_section,
@@ -270,7 +270,7 @@ async def run_prompt_cleaning(
         result = await run_react_loop(
             forwarder=forwarder,
             model=settings.chat.assist_model,
-            system_prompt=PROMPT_CLEANING_SYSTEM,
+            system_prompt=load_prompt_cleaning_system(),
             user_prompt=user_prompt,
             tools=tools,
             max_iterations=max_iterations,
@@ -311,9 +311,11 @@ async def run_proxy_thinking(
 ) -> str:
     """代理思考 Agent: CoT, 输出推理过程供主对话参考."""
     settings = get_settings()
-    user_prompt = PROXY_THINKING_PROMPT.format(
-        user_name=user_name, relationship=relationship,
-        memories=memories or "（无）", user_message=user_message,
+    user_prompt = build_proxy_thinking_prompt(
+        user_name=user_name,
+        relationship=relationship,
+        memories=memories or "（无）",
+        user_message=user_message,
     )
     if tools:
         result = await run_react_loop(

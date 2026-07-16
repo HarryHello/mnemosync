@@ -2,6 +2,10 @@
 
 提示词清洗 Agent 通过 function_call 调用此工具,
 判断一个句子属于"人格描述"还是"功能性指令"。
+
+提示词模板由 PromptStore 加载 (registry 名: `sentence_classifier`).
+默认: `src/core/agents/prompts/defaults/sentence_classifier.md`.
+覆盖: `data/prompts/sentence_classifier.md`.
 """
 
 from __future__ import annotations
@@ -13,27 +17,13 @@ from typing import Any
 from langchain_core.tools import tool
 
 from src.core.config import get_settings
+from src.core.prompts import get_prompt_store
 from src.infra import Forwarder
 
-CLASSIFIER_PROMPT = """你是句子分类助手。判断以下句子属于"人格描述"还是"功能性指令"。
 
-分类标准:
-- **persona (人格描述)**: 设定 AI 的身份、名字、性格、语气、背景故事、角色定位等
-  例: "你是一个傲娇的妹妹"、"你的名字叫小夜"、"你要用可爱的语气说话"
-- **instruction (功能性指令)**: 约束 AI 的行为、输出格式、工具使用、规则等
-  例: "请用 JSON 格式回复"、"回复不得超过 100 字"、"不要使用表情符号"
-
-规则:
-- 如果句子明确描述了"AI 是谁/是什么性格/叫什么名字", 归类为 persona
-- 如果句子描述了"AI 应该怎么做事/怎么输出/遵守什么规则", 归类为 instruction
-- 如果两者都有 (如 "你是一个助手, 用 JSON 回复"), 按主要意图判断
-- 如果完全无法判断, 归类为 ambiguous
-
-待分类句子:
-{text}
-
-以 JSON 格式返回, 不要其他内容:
-{{"type": "persona", "confidence": 0.95, "reasoning": "该句描述了 AI 的性格特征"}}"""
+def build_classifier_prompt(text: str) -> str:
+    """构建句子分类的 user prompt."""
+    return get_prompt_store().load("sentence_classifier").replace("__TEXT__", text)
 
 
 @dataclass
@@ -57,7 +47,7 @@ async def classify_sentence(
 
     messages = [
         {"role": "system", "content": "你是句子分类助手。只返回 JSON。"},
-        {"role": "user", "content": CLASSIFIER_PROMPT.format(text=text)},
+        {"role": "user", "content": build_classifier_prompt(text)},
     ]
     resp = await forwarder.chat(
         messages=messages, model=model, temperature=0.1,

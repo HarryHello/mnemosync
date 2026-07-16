@@ -1,29 +1,21 @@
-"""Agent prompt 模板."""
+"""Agent prompt 模板 (薄封装, 内容来自 PromptStore)."""
 
 from .memory_analysis import (
-    DECAY_TARGETS_HEADER,
-    MEMORY_ANALYSIS_PROMPT,
     build_memory_analysis_prompt,
+    load_decay_targets_header,
 )
 from .prompt_cleaning import (
-    PROMPT_CLEANING_SYSTEM,
-    PROMPT_CLEANING_USER,
     build_prompt_cleaning_user_prompt,
+    load_prompt_cleaning_system,
 )
-from .proxy_thinking import PROXY_THINKING_PROMPT
-from .relationship_analysis import (
-    RELATIONSHIP_ANALYSIS_PROMPT,
-    build_relationship_analysis_prompt,
-)
+from .proxy_thinking import build_proxy_thinking_prompt
+from .relationship_analysis import build_relationship_analysis_prompt
 
 __all__ = [
-    "MEMORY_ANALYSIS_PROMPT",
-    "DECAY_TARGETS_HEADER",
     "build_memory_analysis_prompt",
-    "RELATIONSHIP_ANALYSIS_PROMPT",
+    "load_decay_targets_header",
     "build_relationship_analysis_prompt",
-    "PROXY_THINKING_PROMPT",
-    "PROMPT_CLEANING_SYSTEM",
-    "PROMPT_CLEANING_USER",
+    "build_proxy_thinking_prompt",
+    "load_prompt_cleaning_system",
     "build_prompt_cleaning_user_prompt",
 ]
