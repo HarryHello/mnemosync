@@ -3,7 +3,7 @@
 > **系统版本**: v0.2.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-16
 > **作者**: HarryHelloo
 
 ---
@@ -32,7 +32,8 @@
 
 | 原则 | 说明 |
 |------|------|
-| 服务器拥有人格 | 人格 prompt 由服务器端权威定义, 不从客户端请求提取; 客户端 system 消息中的人格描述被丢弃, 仅保留功能性指令 (未来由辅助模型自动剥离) |
+| 服务器拥有人格 | 人格 prompt 由服务器端权威定义, 不从客户端请求提取; 客户端 system 消息中的人格描述由提示词清洗 Agent 剥离 (见 [modules/agents.md §6](modules/agents.md#6-提示词清洗-agent)), 仅保留功能性指令合并注入 |
+| 提示词可自定义 | 所有 Agent 提示词从硬编码常量迁到两层 Markdown 文件系统 (defaults + 用户覆盖), 高级用户可通过 CLI 或 REST 面板调整而不改代码/不重启, 详见 [modules/agents.md §7](modules/agents.md#7-自定义-agent-提示词) |
 | Agent 驱动决策 | 记忆的提取/衰减/关系变化由 Agent 智能判断, 非硬编码 |
 | 预处理优先 | 记忆加载与上下文拼装必须在转发到上游模型**之前**完成 |
 | 兼容即插即用 | 严格遵循 OpenAI `/v1/chat/completions` 规范 |
@@ -216,7 +217,9 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 |------|------|
 | `src/api/` | FastAPI 路由 + 中间件 |
 | `src/cli/` | CLI 与交互式 shell |
-| `src/core/agents/` | Agent 执行函数 + prompt 模板 + ReAct 循环 |
+| `src/core/agents/` | Agent 执行函数 + prompt builder + ReAct 循环 |
+| `src/core/agents/prompts/defaults/` | Agent 提示词默认层 (随包发布) |
+| `src/core/prompts/` | PromptStore + registry (两层提示词加载/校验/备份) |
 | `src/core/graph/` | LangGraph builder / nodes / state |
 | `src/core/memory/` | 记忆模型、生命周期、上下文拼装 |
 | `src/core/config/` | 配置加载 |
@@ -258,3 +261,4 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 | v0.2.0 | 2026-07-12 | 重构为 LangGraph 多 Agent; ChromaDB; 代理思考 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 修正拓扑 (5 节点, 无 vector_index)、AgentState 字段、目录结构 |
 | v0.2.1 | 2026-07-16 | 明确服务器优先人格设计原则: 人格由服务器端权威定义, 不从客户端请求提取; 新增人格自我演化远期规划 |
+| v0.2.1 | 2026-07-16 | 新增"提示词可自定义"核心决策; 提示词从 Python 常量迁到 defaults + 覆盖两层文件系统; admin 路由统一鉴权 |

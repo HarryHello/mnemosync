@@ -1,8 +1,8 @@
 # 记忆系统设计 | Memory System Design
 
-> **文档版本**: v0.2.0
+> **文档版本**: v0.2.1
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-11
+> **最后更新**: 2026-07-16
 > **状态**: 设计中
 
 ---
@@ -288,6 +288,8 @@ reranker 精排后:
 └─────────────────────────────────────────┘
 ```
 
+**上下文框架可自定义**: 从 v0.2.1 (2026-07-16) 起, 上述框架文本 (行为准则、section 标题、记忆容器格式) 从 Python 硬编码迁到 `main_dialogue_frame` 提示词模板 ([defaults/main_dialogue_frame.md](../../src/core/agents/prompts/defaults/main_dialogue_frame.md)), 允许通过 `data/prompts/main_dialogue_frame.md` 覆盖。占位符包含 `__PERSONA_NAME__`, `__PERSONA_PROMPT__`, `__USER_NAME__`, `__RELATIONSHIP__`, `__PERMANENT_MEMORIES__`, `__RETRIEVED_MEMORIES__`, `__PROXY_THINKING_SECTION__`。见 [agents.md §7](agents.md#7-自定义-agent-提示词)。
+
 ### 5.2 加载优先级
 
 1. **永久记忆** — 始终加载，最多 7 条，按 importance 排序
@@ -517,6 +519,7 @@ CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
 |------|------|----------|
 | v0.1.0 | 2026-03-24 | 初始设计（三级记忆模型 + 哈希去重） |
 | v0.2.0 | 2026-07-11 | 重构：Agent 驱动决策替代固定公式；双类型系统升级为 Agent 判断；embedding 语义检索替代哈希去重；新增双层衰减（公式兜底 + Agent 覆盖）；ChromaDB + SQLite 双层存储；LangGraph checkpoint 作为短期记忆 |
+| v0.2.1 | 2026-07-16 | §5.1 上下文框架文本从硬编码迁到 `main_dialogue_frame.md` 提示词模板, 支持用户覆盖 |
 
 ---
 

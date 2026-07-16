@@ -55,17 +55,21 @@ mnemosync/
     │
     ├── cli/                        # 命令行入口
     │   ├── cli.py                  # `mnemosync` 顶层命令 (serve / init / ...)
-    │   └── cli_interactive.py      # `mnemosync login` 交互式 shell
+    │   ├── cli_interactive.py      # `mnemosync login` 交互式 shell
+    │   ├── ask.py                  # `ask` 调试命令 (直连 LangGraph)
+    │   └── prompt_cmd.py           # `prompt` 提示词覆盖子命令 (list/show/set/reset/validate)
     │
     ├── api/                        # HTTP API 层 (FastAPI)
     │   ├── __init__.py             # 组装 api_router + forward_router
     │   ├── middleware.py           # HTTP 日志中间件
+    │   ├── reasoning_control.py    # 代理推理决策 (should_use_proxy_thinking)
     │   ├── routes/
-    │   │   ├── admin.py            # /api/v1/admin/* (LLM 服务商管理等)
+    │   │   ├── admin.py            # /api/v1/admin/* (全部 Depends(get_current_user), 含 prompts)
     │   │   ├── api_key.py          # /api/v1/api-keys/*
-    │   │   ├── auth.py             # /api/v1/auth/*
+    │   │   ├── auth.py             # /auth/*
     │   │   └── forward.py          # /v1/chat/completions (OpenAI 兼容)
     │   └── schemas/                # Pydantic 请求/响应模型
+    │       ├── admin.py            # Prompt* / 面板相关
     │       ├── api_key.py
     │       ├── auth.py
     │       └── forward.py
@@ -73,11 +77,24 @@ mnemosync/
     ├── core/                       # 核心业务层
     │   ├── config.py               # 配置加载 (TOML + env)
     │   ├── config_writer.py        # 运行期回写 config.local.toml
+    │   ├── prompts/                # 提示词两层存储 (defaults + 用户覆盖)
+    │   │   ├── registry.py         # PROMPT_REGISTRY (8 项 PromptSpec 白名单)
+    │   │   └── store.py            # PromptStore (无缓存读盘 + 校验 + 备份)
     │   ├── agents/                 # LangGraph Agent
     │   │   ├── base.py             # ReAct 循环 / simple completion
     │   │   ├── factory.py          # run_main_dialogue / run_memory_analysis / ...
-    │   │   └── prompts/            # 各 Agent 的 prompt 模板
+    │   │   └── prompts/            # 各 Agent 的 prompt builder (走 PromptStore)
+    │   │       ├── defaults/       # 默认提示词 Markdown (随包发布, 8 个文件)
+    │   │       │   ├── memory_analysis.md
+    │   │       │   ├── memory_analysis_decay_header.md
+    │   │       │   ├── relationship_analysis.md
+    │   │       │   ├── prompt_cleaning_system.md
+    │   │       │   ├── prompt_cleaning_user.md
+    │   │       │   ├── proxy_thinking.md
+    │   │       │   ├── sentence_classifier.md
+    │   │       │   └── main_dialogue_frame.md
     │   │       ├── memory_analysis.py
+    │   │       ├── prompt_cleaning.py
     │   │       ├── proxy_thinking.py
     │   │       └── relationship_analysis.py
     │   ├── graph/                  # LangGraph 编排
@@ -85,7 +102,7 @@ mnemosync/
     │   │   ├── nodes.py            # 各节点实现
     │   │   └── state.py            # AgentState TypedDict
     │   └── memory/                 # 记忆领域模型
-    │       ├── context.py          # build_main_dialogue_messages
+    │       ├── context.py          # build_main_dialogue_messages (走 main_dialogue_frame 模板)
     │       ├── lifecycle.py        # 衰减/召回策略
     │       └── models.py           # MemoryEntry / Visibility
     │
@@ -106,9 +123,12 @@ mnemosync/
     │
     └── tools/                      # 供 Agent 调用的工具函数
         ├── emotion_analyzer.py
+        ├── sentence_classifier.py  # 单句分类 (提示词清洗 Agent 用)
         ├── time_decay_calculator.py
         └── vector_search.py
 ```
+
+**运行期数据 (data/)**: 除已列的 SQLite / Chroma 外, v0.2.1 起还有 `data/prompts/` (Agent 提示词用户覆盖层, gitignore) 及 `data/prompts/.history/` (每个 name 保留最近 10 份备份)。
 
 ---
 

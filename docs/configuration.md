@@ -3,7 +3,7 @@
 > **系统版本**: v0.2.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-16
 > **作者**: HarryHelloo
 
 ---
@@ -92,6 +92,7 @@ model    = "qwen3-rerank"
 | `llm_db_path` | `data/llm_service.db` | LLM 服务商配置 SQLite (可选功能) |
 | `auth_db_path` | `data/auth.db` | 管理员账号 |
 | `chroma_dir` | `data/chroma` | ChromaDB 持久化目录 |
+| `prompts_override_dir` | `data/prompts` | Agent 提示词用户覆盖层目录 (gitignore); 默认层在 `src/core/agents/prompts/defaults/` 随包发布, 见 [modules/agents.md §7](modules/agents.md#7-自定义-agent-提示词) |
 
 路径相对项目根目录。API Key 数据库路径当前**在代码中硬编码**为 `data/api_keys.db` ([api_key.py:17](../src/api/routes/api_key.py#L17)), 不受 storage 段控制。
 
@@ -219,3 +220,4 @@ log_level = "info"
 |------|------|------|
 | v0.2.0 | 2026-07-12 | 从环境变量为主改为 `config.local.toml` 单一配置源 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 移除虚构环境变量表, 嵌入维度由模型决定不再写死, 代理思考启用方式修正 |
+| v0.2.1 | 2026-07-16 | [storage] 新增 `prompts_override_dir` (Agent 提示词覆盖层, 默认 `data/prompts`) |

@@ -3,7 +3,7 @@
 > **模块版本**: v0.2.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-16
 > **作者**: HarryHelloo
 
 ---
@@ -12,7 +12,7 @@
 
 Mnemosync 的 Agent (ReAct 循环节点) 通过 LangChain function_call 调用工具。工具本身是无状态的**闭包工厂** `make_*_tool(...)` 产出——工厂在图节点内组装依赖 (Forwarder / VectorStore / MemoryStore) 后返回一个绑定好依赖的 `@tool` 装饰函数, 交给对应 Agent。
 
-**代码位置**: [src/tools/](../../src/tools/) (`vector_search.py` / `emotion_analyzer.py` / `time_decay_calculator.py`), 组装点在 [src/core/graph/nodes.py:208](../../src/core/graph/nodes.py#L208)。
+**代码位置**: [src/tools/](../../src/tools/) (`vector_search.py` / `emotion_analyzer.py` / `time_decay_calculator.py` / `sentence_classifier.py`), 组装点在 [src/core/graph/nodes.py:208](../../src/core/graph/nodes.py#L208) (`memory_analysis_node` / `relationship_analysis_node`) 与 [src/api/routes/forward.py](../../src/api/routes/forward.py) (`prompt_cleaning` 在 API 层组装, 不进图)。
 
 工厂全景:
 
@@ -21,6 +21,7 @@ Mnemosync 的 Agent (ReAct 循环节点) 通过 LangChain function_call 调用�
 | `make_vector_search_tool(retriever)` | `vector_search` | `memory_analysis_node` |
 | `make_emotion_analyzer_tool(forwarder)` | `emotion_analyzer` | `memory_analysis_node`, `relationship_analysis_node` |
 | `make_time_decay_calculator_tool(memory_store)` | `time_decay_calculator` | `memory_analysis_node` |
+| `make_sentence_classifier_tool(forwarder)` | `classify_sentence_type` | API 层的 `run_prompt_cleaning` (提示词清洗 Agent) |
 
 > 主对话不走 ReAct, 不绑定工具; 主对话所需的记忆检索由**节点外的 MemoryRetriever** 完成 (见 [message-processing.md](message-processing.md))。
 
@@ -151,7 +152,45 @@ Agent 应在此**公式基线**之上进行 CoT 判断——例如考虑访问�
 
 ---
 
-## 5. 节点内组装
+## 5. `make_sentence_classifier_tool(forwarder)`
+
+**签名**:
+
+```python
+def make_sentence_classifier_tool(forwarder: Forwarder):
+    @tool
+    async def classify_sentence_type(text: str) -> dict: ...
+    return classify_sentence_type
+```
+
+**依赖**: 只需 `Forwarder` (走辅助模型)。
+
+**用途**: 提示词清洗 Agent (见 [agents.md §6](agents.md#6-提示词清洗-agent)) 逐句判断客户端 system 消息中的每一句属于**人格描述** (`persona`) 还是**功能性指令** (`instruction`), 前者丢弃, 后者与服务器人格合并。
+
+**执行流程** ([sentence_classifier.py](../../src/tools/sentence_classifier.py)):
+
+1. 加载 `sentence_classifier` 提示词模板 (走 [PromptStore](../../src/core/prompts/store.py), 支持用户覆盖, 见 [agents.md §7](agents.md#7-自定义-agent-提示词)), 用 `str.replace("__TEXT__", text)` 填占位符
+2. `settings.chat.assist_model` + 单次 `Forwarder.chat(response_format={"type": "json_object"}, extra_body={"enable_thinking": False})`, 不循环
+3. `json.loads(content)` → `{type, confidence, reasoning}`
+
+**返回**:
+
+```json
+{
+  "type": "persona",             // persona | instruction | ambiguous
+  "confidence": 0.87,             // 0.0-1.0
+  "reasoning": "该句描述角色性格与说话风格, 属于人格设定"
+}
+```
+
+**注意**:
+- 与 emotion_analyzer 同样通过 `extra_body={"enable_thinking": False}` 关闭 Qwen3 thinking 保证 JSON 稳定
+- 提示词模板占位符统一约定为 `__TEXT__` + `.replace` (不用 `.format`), 全项目一致, 详见 [dev-decisions.md 决策 6](../dev-decisions.md)
+- 该工具唯一使用者是提示词清洗 Agent, 不在图内组装, 组装点在 [forward.py `create_chat_completion`](../../src/api/routes/forward.py)
+
+---
+
+## 6. 节点内组装
 
 真实组装点 [nodes.py:207](../../src/core/graph/nodes.py#L207):
 
@@ -185,7 +224,7 @@ out = await run_relationship_analysis(
 
 ---
 
-## 6. 错误行为
+## 7. 错误行为
 
 | 工具 | 触发条件 | 处理 |
 |------|---------|------|
@@ -193,23 +232,26 @@ out = await run_relationship_analysis(
 | `vector_search` | embedding 端点异常 | 直接抛 `UpstreamError`, ReAct 循环感知并终止 |
 | `emotion_analyzer` | JSON 解析失败 | 抛 `json.JSONDecodeError` (未处理), 需 Agent prompt 保证 JSON 输出 |
 | `time_decay_calculator` | memory_id 不存在 | 返回 `{"error": "memory not found", "memory_id": ...}`, 不抛 |
+| `classify_sentence_type` | JSON 解析失败 | 抛 `json.JSONDecodeError`; 由提示词清洗 Agent 的保守降级兜底 (全部丢弃客户端 system 消息, 见 [agents.md §6.6](agents.md#66-失败降级-保守策略)) |
 
 ---
 
-## 7. 与其他模块
+## 8. 与其他模块
 
 | 模块 | 关系 |
 |------|------|
-| [LangGraph 编排](langgraph.md) | 工具工厂在 `memory_analysis_node` / `relationship_analysis_node` 内组装 |
+| [LangGraph 编排](langgraph.md) | 3 个工具工厂在 `memory_analysis_node` / `relationship_analysis_node` 内组装; `sentence_classifier` 在 API 层组装, 不进图 |
 | [Forwarder](forward.md) | 所有远端调用 (embed / rerank / chat) 的唯一出口 |
 | [消息处理](message-processing.md) | 主对话前置检索复用 `MemoryRetriever` (非工具形式) |
+| [提示词覆盖](agents.md#7-自定义-agent-提示词) | `sentence_classifier` 的提示词经 PromptStore 支持用户覆盖 |
 | [配置](../configuration.md) | `[embedding]` / `[rerank]` / `[chat].assist_model` |
 
 ---
 
-## 8. 版本历史
+## 9. 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v0.2.0 | 2026-07-11 | 初始设计: 3 个工具 (向量检索 / 情绪 / 衰减) |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 全部改为 `make_*_tool()` 闭包工厂描述; 补 rerank 降级、`enable_thinking=False`、`current_state` 由 `DecayState.from_priority` 决定; 明确主对话不绑定工具 |
+| v0.2.1 | 2026-07-16 | 新增第 4 个工具 `classify_sentence_type` (提示词清洗 Agent 专用); 提示词模板迁到 PromptStore, 占位符统一 `__TEXT__` + `.replace` |

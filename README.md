@@ -60,6 +60,9 @@ Mnemosync 通过在网络层拦截请求，**在转发给模型前统一预处�
 - **🚀 轻量级部署**
   基于 Python + FastAPI 构建，支持 Docker 一键启动，资源占用极低，适合个人服务器或本地部署。
 
+- **✏️ 可自定义 Agent 提示词**
+  所有 Agent 提示词 (记忆分析 / 关系分析 / 代理推理 / 提示词清洗 / 主对话框架) 存于 Markdown 文件, 支持默认层 + 用户覆盖两层结构。运维通过 `mnemosync prompt` CLI 或 `/api/v1/admin/prompts` REST 面板即时调整, 无需改代码/重启。详见 [modules/agents.md §7](./docs/modules/agents.md#7-自定义-agent-提示词)。
+
 ---
 
 ## 🏗️ 架构原理

@@ -3,7 +3,7 @@
 > **系统版本**: v0.2.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-16
 > **作者**: HarryHelloo
 
 ---
@@ -15,6 +15,7 @@ CLI 是 Mnemosync 的日常管理入口: 初始化数据库、启停服务、生
 - 顶层命令: [src/cli/cli.py](../../src/cli/cli.py)
 - 交互式 shell: [src/cli/cli_interactive.py](../../src/cli/cli_interactive.py)
 - 调试命令 `ask` 实现: [src/cli/ask.py](../../src/cli/ask.py)
+- 提示词覆盖管理 `prompt` 实现: [src/cli/prompt_cmd.py](../../src/cli/prompt_cmd.py)
 
 ---
 
@@ -31,6 +32,7 @@ mnemosync <command> [options]
 | `stop` | 停止 Docker 模式下的服务 |
 | `login [--docker]` | 用户名/密码登录, 进入交互式 shell |
 | `ask [flags] "<question>"` | 命令行直连主对话 (调试用), 详见 [§5](#5-调试命令-ask) |
+| `prompt <subcmd> ...` | 管理 Agent 提示词覆盖 (list/show/set/reset/validate), 详见 [§6](#6-提示词覆盖管理-prompt) |
 | `upgrade [--branch <name>]` | 从 Git 拉取新版本 |
 | `help` | 显示顶层帮助 |
 
@@ -171,7 +173,72 @@ mnemosync ask --via-http --api-key sk-xxx "..."
 
 ---
 
-## 6. 与其他模块
+## 6. 提示词覆盖管理 `prompt`
+
+`prompt` 子命令用来管理 Agent 提示词的用户覆盖层, 允许在不改代码/不重启的前提下调整 5 个 Agent 与主对话框架的提示词。
+
+**运行时行为**: PromptStore 每次请求都读盘 (无内存缓存), 所以 CLI 修改后**下一次请求立即生效**, 无需重启 `serve`。
+
+**存储位置**:
+
+- 默认层 (随包发布, in git): `src/core/agents/prompts/defaults/*.md`
+- 用户覆盖层 (gitignored): `data/prompts/*.md`, 目录可在 `[storage] prompts_override_dir` 配置
+- 备份: `data/prompts/.history/<name>-<YYYYMMDD-HHMMSS-NNN>.md`, 每个 name 保留最近 10 份
+
+**注册的提示词** (8 个, 详见 [agents.md §7](agents.md#7-自定义-agent-提示词)):
+
+`memory_analysis`, `memory_analysis_decay_header`, `relationship_analysis`, `prompt_cleaning_system`, `prompt_cleaning_user`, `proxy_thinking`, `sentence_classifier`, `main_dialogue_frame`
+
+### 6.1 子命令
+
+| 子命令 | 说明 |
+|--------|------|
+| `prompt list` | 表格显示 name / description / overridden / version |
+| `prompt show <name>` | 打印当前生效版本到 stdout (含 YAML frontmatter) |
+| `prompt show <name> --from-default` | 强制打印默认版本 (忽略覆盖) |
+| `prompt set <name> --file <path>` | 从文件读取并保存为覆盖 |
+| `cat <path> \| prompt set <name>` | 从管道读取 |
+| `prompt set <name> --edit` | 打开 `$EDITOR` (fallback `vi`) 编辑当前生效版本 |
+| `prompt set <name> --edit --from-default` | 从默认版本开始编辑 (忽略现有覆盖) |
+| `prompt reset <name>` | 删除覆盖 (自动备份最后一版到 `.history/`) |
+| `prompt reset --all` | 全部回默认 |
+| `prompt validate <name>` | 校验当前覆盖占位符是否齐全 |
+| `prompt validate --all` | 校验全部; 有任何错误退出码 2 (CI 友好) |
+
+### 6.2 校验规则
+
+保存前会校验 registry 中声明的占位符是否全部在内容中出现 (格式为 `__NAME__`)。缺失任一占位符 → 拒绝写盘, 已有覆盖不动。
+
+**注意**: 占位符只识别 `__NAME__` (前后各两下划线), 不识别 `{name}` / `{{name}}` 等其它模板语法。这是全项目统一约定, 见 [dev-decisions.md](../dev-decisions.md)。
+
+### 6.3 典型工作流
+
+```bash
+# 查看有哪些可覆盖的提示词
+mnemosync prompt list
+
+# 把默认版本作为起点写到本地文件
+mnemosync prompt show memory_analysis --from-default > my_memory.md
+
+# 编辑后保存
+mnemosync prompt set memory_analysis --file my_memory.md
+
+# 或直接用编辑器改
+mnemosync prompt set memory_analysis --edit
+
+# 出问题回退
+mnemosync prompt reset memory_analysis
+```
+
+### 6.4 边界
+
+- CLI 只操作**本地文件**; 若在远端服务器, 通过 SSH 登录后运行 CLI 即可, 不需要 HTTP 客户端
+- 面板/WebUI 场景走 REST 接口 (`/api/v1/admin/prompts`), 见 [auth.md §5](../auth.md#5-角色-数据流) 与 admin 路由代码
+- 路径穿越已被 registry 白名单挡住: `prompt show ../etc/passwd` 会返回 "未知的提示词"
+
+---
+
+## 7. 与其他模块
 
 | 模块 | 关系 |
 |------|------|
@@ -180,10 +247,11 @@ mnemosync ask --via-http --api-key sk-xxx "..."
 | [LLM 服务管理](llm-service.md) | 服务商/模型命令通过 `LLMServiceStore` + `config_writer` |
 | [Forwarder](forward.md) | `test-model` / `ls-models` 通过 Forwarder 发探活请求 |
 | [消息处理](message-processing.md) | `ask` 直接进入 LangGraph, 与 HTTP 路径共用实现 |
+| [Agent 提示词](agents.md#7-自定义-agent-提示词) | `prompt` 子命令通过 `PromptStore` 读写覆盖层 |
 
 ---
 
-## 7. 版本历史
+## 8. 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
@@ -191,3 +259,4 @@ mnemosync ask --via-http --api-key sk-xxx "..."
 | v0.2.0 | 2026-07-12 | 顶层命令 `init/serve/stop/login/help`, LLM 服务管理命令进入交互式 shell |
 | v0.2.1 | 2026-07-14 | 新增 `ask` 命令与 `--debug` 上游日志 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 补 `upgrade` / `show-config` / `set-embedding-model` / `set-rerank-model`; 移除文档中不存在的 `revoke-key` / `list-users` / `change-password` shell 命令 |
+| v0.2.1 | 2026-07-16 | 新增 `prompt` 子命令 (list/show/set/reset/validate), 支持 --file/stdin/--edit |

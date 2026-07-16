@@ -2,7 +2,7 @@
 
 > **系统版本**: v0.2.1
 > **文档状态**: 与代码同步
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-16
 
 ---
 
@@ -189,7 +189,17 @@ AstrBot / AIRI / Web  ── 走 /v1/chat/completions
 
 ---
 
-## 7. 数据库
+## 7. Admin 接口鉴权
+
+`/api/v1/admin/*` 下的所有路由 (health / logs / memories / relationship / prompts) 从 v0.2.1 (2026-07-16) 起统一走 `Depends(get_current_user)` — **未携带有效 Bearer token 或 token 过期一律返回 401**。这是**路由级前置**, 在 [`src/api/routes/admin.py`](../src/api/routes/admin.py) 的 `APIRouter(..., dependencies=[Depends(get_current_user)])` 声明, 而非单接口装饰。
+
+**背景**: 此前 admin 面板的 health/logs/memories/relationship 均无鉴权 (裸奔), 引入 prompt 写接口时**一并**堵上。凡新增到 admin router 的路由自动继承鉴权, 不能在单路由上"跳过"。
+
+**使用**: 与 [`/auth/me`](#get-authme) 相同, 携带 `Authorization: Bearer <token>` 请求头即可。Token 从 `POST /auth/login` 获取。
+
+---
+
+## 8. 数据库
 
 | 文件 | 用途 |
 |------|------|

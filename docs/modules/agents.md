@@ -92,7 +92,7 @@ parse_request
 ## 3. 记忆分析 Agent
 
 **代码**: [factory.py:137 `run_memory_analysis`](../../src/core/agents/factory.py#L137)
-**Prompt**: [prompts/memory_analysis.py](../../src/core/agents/prompts/memory_analysis.py)
+**Prompt**: 默认 [prompts/defaults/memory_analysis.md](../../src/core/agents/prompts/defaults/memory_analysis.md) + [memory_analysis_decay_header.md](../../src/core/agents/prompts/defaults/memory_analysis_decay_header.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_memory_analysis_prompt`](../../src/core/agents/prompts/memory_analysis.py)
 
 ### 3.1 职责
 
@@ -174,7 +174,7 @@ parse_request
 ## 4. 代理推理 Agent
 
 **代码**: [factory.py:226 `run_proxy_thinking`](../../src/core/agents/factory.py#L226) · 决策与 SSE 合成: [src/api/reasoning_control.py](../../src/api/reasoning_control.py)
-**Prompt**: [prompts/proxy_thinking.py](../../src/core/agents/prompts/proxy_thinking.py)
+**Prompt**: 默认 [prompts/defaults/proxy_thinking.md](../../src/core/agents/prompts/defaults/proxy_thinking.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_proxy_thinking_prompt`](../../src/core/agents/prompts/proxy_thinking.py)
 
 ### 4.1 定位 (⚠️ 与直觉相反, 请仔细看)
 
@@ -247,7 +247,7 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 ## 5. 关系分析 Agent
 
 **代码**: [factory.py:190 `run_relationship_analysis`](../../src/core/agents/factory.py#L190)
-**Prompt**: [prompts/relationship_analysis.py](../../src/core/agents/prompts/relationship_analysis.py)
+**Prompt**: 默认 [prompts/defaults/relationship_analysis.md](../../src/core/agents/prompts/defaults/relationship_analysis.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_relationship_analysis_prompt`](../../src/core/agents/prompts/relationship_analysis.py)
 
 ### 5.1 职责
 
@@ -291,12 +291,14 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 
 **必须**用 [`build_relationship_analysis_prompt`](../../src/core/agents/prompts/relationship_analysis.py) (内部用 `str.replace` 填占位符), **不能**用 `str.format`——prompt 里含字面 JSON, `.format()` 会把 `{"signals_detected"}` 当占位符抛 `KeyError`。参见 [dev-decisions.md](../dev-decisions.md)。
 
+**历史教训**: `factory.py:314` 曾把 `run_proxy_thinking` 里的 `PROXY_THINKING_PROMPT.format(...)` 传给用 `__X__` 标记的模板 — `.format()` 只识别 `{name}`, 于是**静默返回未渲染的模板**, 上游模型看到字面 `__USER_NAME__` / `__MEMORIES__`。已于 2026-07-16 修复为统一走 `build_proxy_thinking_prompt` (用 `.replace()`)。8 个 registry 项一律遵循这套约定。
+
 ---
 
 ## 6. 提示词清洗 Agent
 
 **代码**: [factory.py:246 `run_prompt_cleaning`](../../src/core/agents/factory.py#L246) · 工具: [tools/sentence_classifier.py](../../src/tools/sentence_classifier.py)
-**Prompt**: [prompts/prompt_cleaning.py](../../src/core/agents/prompts/prompt_cleaning.py)
+**Prompt**: 默认 [prompts/defaults/prompt_cleaning_system.md](../../src/core/agents/prompts/defaults/prompt_cleaning_system.md) + [prompt_cleaning_user.md](../../src/core/agents/prompts/defaults/prompt_cleaning_user.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builders: [`load_prompt_cleaning_system` / `build_prompt_cleaning_user_prompt`](../../src/core/agents/prompts/prompt_cleaning.py)
 
 ### 6.1 定位 (服务器人格权威守门员)
 
@@ -358,7 +360,96 @@ Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `
 
 ---
 
-## 7. AgentState (共享状态)
+## 7. 自定义 Agent 提示词
+
+从 v0.2.1 (2026-07-16) 起, 所有 Agent 提示词从**硬编码常量**改为**两层 Markdown 文件**, 允许运维/高级用户在不改代码/不重启的前提下调整。
+
+### 7.1 两层存储
+
+| 层 | 路径 | 生命周期 |
+|----|------|---------|
+| **默认层** | [src/core/agents/prompts/defaults/*.md](../../src/core/agents/prompts/defaults/) | 随包发布, 进 git, 运行时**永不修改** |
+| **覆盖层** | `data/prompts/*.md` (可配置, 见 [configuration.md](../configuration.md)) | 用户可写, gitignore, 优先级高 |
+| **备份** | `data/prompts/.history/<name>-<YYYYMMDD-HHMMSS-NNN>.md` | 每次 save/reset 时自动备份, 每个 name 保留最近 10 份 |
+
+**加载策略**: [`PromptStore.load()`](../../src/core/prompts/store.py) 每次请求读盘 (**无缓存**). 文件 <10KB, IO 忽略不计, 换取"CLI 改文件立即生效, 不需要 restart"。
+
+**失败模式**:
+- `save` 时占位符校验失败 → 抛异常, **拒绝写盘** (阻止污染)
+- `load` 时覆盖文件不存在 → 静默回退默认
+- `load` 时覆盖文件 YAML frontmatter 解析失败 → warn 日志 + 回退默认
+
+### 7.2 已注册的 8 个提示词
+
+| name | 用途 | 必需占位符 |
+|------|------|-----------|
+| `memory_analysis` | 记忆分析 Agent 主体 | `SOURCE_USER`, `CONVERSATION`, `DECAY_TARGETS` |
+| `memory_analysis_decay_header` | 记忆分析的衰减目标段头 | (无) |
+| `relationship_analysis` | 关系分析 Agent | `CURRENT_REL`, `CONVERSATION` |
+| `prompt_cleaning_system` | 提示词清洗 Agent 的 system prompt | (无) |
+| `prompt_cleaning_user` | 提示词清洗 Agent 的 user prompt | `SYSTEM_MESSAGE` |
+| `proxy_thinking` | 代理推理 Agent | `USER_NAME`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
+| `sentence_classifier` | `classify_sentence_type` 工具 (提示词清洗内部调用) | `TEXT` |
+| `main_dialogue_frame` | 主对话上下文框架 (行为准则/section 标题/记忆容器) | `PERSONA_NAME`, `PERSONA_PROMPT`, `USER_NAME`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION` |
+
+权威列表: [`src/core/prompts/registry.py`](../../src/core/prompts/registry.py) 的 `PROMPT_REGISTRY`. 未在 registry 中的 name 一律拒绝加载/保存 (**路径穿越防御**)。
+
+### 7.3 文件格式
+
+Markdown + **可选** YAML frontmatter:
+
+```markdown
+---
+version: 1
+placeholders: [SOURCE_USER, CONVERSATION, DECAY_TARGETS]
+---
+你正在为用户 __SOURCE_USER__ 分析对话...
+
+对话:
+__CONVERSATION__
+```
+
+- frontmatter 可省略, 省略视为 `version=0`
+- 占位符**只**识别 `__NAME__` (前后双下划线), 不识别 `{name}` / `{{name}}`
+- `version` 仅用于日志/回滚参考, 不做乐观锁
+
+### 7.4 修改方式
+
+**CLI** (本地/SSH):
+
+```bash
+mnemosync prompt list                    # 列表
+mnemosync prompt show memory_analysis    # 打印当前生效版本
+mnemosync prompt set memory_analysis --file my.md   # 从文件写入
+mnemosync prompt set memory_analysis --edit         # $EDITOR 打开
+mnemosync prompt reset memory_analysis   # 回默认
+mnemosync prompt validate --all          # 校验全部, CI 友好
+```
+
+细节见 [cli.md §6](cli.md#6-提示词覆盖管理-prompt)。
+
+**REST** (未来面板 / 已上线):
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| GET | `/api/v1/admin/prompts` | 列表 |
+| GET | `/api/v1/admin/prompts/{name}` | 详情 (current + default 原文) |
+| PUT | `/api/v1/admin/prompts/{name}` | 保存覆盖 (body: `{content: str}`) |
+| DELETE | `/api/v1/admin/prompts/{name}` | 重置 |
+| POST | `/api/v1/admin/prompts/{name}:validate` | dry-run 校验 |
+| GET | `/api/v1/admin/prompts/{name}/history` | 备份列表 |
+
+**认证**: 所有 `/api/v1/admin/*` 均需登录 (`Depends(get_current_user)`), 见 [auth.md](../auth.md#7-admin-接口鉴权)。
+
+### 7.5 安全边界
+
+- Registry 白名单是**唯一**允许操作的 name 集合. HTTP path 参数或 CLI 参数**必须**经过 `PROMPT_REGISTRY.get(name)` 检查后才能进入文件系统
+- 覆盖文件仅落在 `settings.storage.prompts_override_dir_abs` 目录下, 不允许绝对路径或 `../`
+- Save 失败时旧覆盖不动, 已产生的备份保留 (可用 `list_history` 查看)
+
+---
+
+## 8. AgentState (共享状态)
 
 **代码**: [src/core/graph/state.py](../../src/core/graph/state.py)
 
@@ -401,7 +492,7 @@ class AgentState(TypedDict, total=False):
 
 ---
 
-## 8. 错误处理约定
+## 9. 错误处理约定
 
 - 单个 Agent 失败不影响并行分支; 每个 node 都用 try/except 包住, 失败时写 `state.errors`
 - 记忆分析失败 → 跳过入库, 关系分析继续
@@ -411,7 +502,7 @@ class AgentState(TypedDict, total=False):
 
 ---
 
-## 9. 版本历史
+## 10. 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
@@ -420,3 +511,4 @@ class AgentState(TypedDict, total=False):
 | v0.2.1 | 2026-07-15 | 与代码对齐: 修正拓扑 (无 vector_index 节点), 修正 AgentState 字段, 删除通识讲解 |
 | v0.2.1 | 2026-07-15 | 代理推理落地: API 层决策 (reasoning_control), 双通道注入 (system prompt + `reasoning_content` SSE 帧); 语义修正为"补齐原生推理"而非可选优化 |
 | v0.2.1 | 2026-07-16 | 新增第 5 个 Agent: 提示词清洗 (服务器人格权威守门员, ReAct + `classify_sentence_type` 工具); AgentState 补充 `prompt_cleaning_result` / `upstream_usage` |
+| v0.2.1 | 2026-07-16 | 提示词从硬编码常量迁到两层文件系统 (defaults + 用户覆盖), 新增 §7 自定义提示词章节, 记录 8 项 registry 与 `.replace` 统一约定; 修复 factory.py:314 proxy_thinking `.format` 静默返回未渲染模板的历史 bug |
