@@ -121,7 +121,7 @@ Agent 提示词此前是 `src/core/agents/prompts/*.py` 里的 Python 字符串�
 4. **失败模式**: save 校验失败抛 `ValueError` 拒绝写盘; load 覆盖文件不存在 → 静默回退默认; load 覆盖文件 YAML frontmatter 损坏 → warn 日志 + 回退默认。
 5. **Registry 白名单**: `PROMPT_REGISTRY` (8 项) 是 name → PromptSpec 的唯一权威, HTTP path 参数与 CLI 参数**必须**先过这一关才进入文件系统。防路径穿越 (`../etc/passwd` 类 name)。
 6. **占位符统一约定**: 全部用 `__NAME__` (前后双下划线) + `str.replace`, 不用 `str.format`。原因: prompt 文本里含字面 JSON 花括号, `.format()` 遇到 `{"..."}` 会抛 `KeyError`; 且 `.format` 对未知占位符**静默通过**, 曾在 [factory.py:314](../src/core/agents/factory.py#L314) 让 `PROXY_THINKING_PROMPT.format(...)` 传给 `__X__` 模板时**静默返回未渲染的模板**, 上游模型看到字面 `__USER_NAME__` / `__MEMORIES__` — 见 [modules/agents.md §5.5 历史教训](modules/agents.md#55-提示词构建)。
-7. **面板接口前置到位**: `/api/v1/admin/prompts/*` 6 条 REST 路由随此 PR 一并上线, 供未来 WebUI 直接调用, 不留"CLI 存在但面板还没接"的过渡期。
+7. **面板接口前置到位**: `/panel/admin/prompts/*` 6 条 REST 路由随此 PR 一并上线, 供未来 WebUI 直接调用, 不留"CLI 存在但面板还没接"的过渡期。
 
 ### 一并做的两件安全前置
 

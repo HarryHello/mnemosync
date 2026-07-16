@@ -25,7 +25,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': {
+      '/panel': {
         target: 'http://localhost:16125',
         changeOrigin: true,
       },

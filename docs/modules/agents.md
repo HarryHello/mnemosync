@@ -432,14 +432,14 @@ mnemosync prompt validate --all          # 校验全部, CI 友好
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
-| GET | `/api/v1/admin/prompts` | 列表 |
-| GET | `/api/v1/admin/prompts/{name}` | 详情 (current + default 原文) |
-| PUT | `/api/v1/admin/prompts/{name}` | 保存覆盖 (body: `{content: str}`) |
-| DELETE | `/api/v1/admin/prompts/{name}` | 重置 |
-| POST | `/api/v1/admin/prompts/{name}:validate` | dry-run 校验 |
-| GET | `/api/v1/admin/prompts/{name}/history` | 备份列表 |
+| GET | `/panel/admin/prompts` | 列表 |
+| GET | `/panel/admin/prompts/{name}` | 详情 (current + default 原文) |
+| PUT | `/panel/admin/prompts/{name}` | 保存覆盖 (body: `{content: str}`) |
+| DELETE | `/panel/admin/prompts/{name}` | 重置 |
+| POST | `/panel/admin/prompts/{name}:validate` | dry-run 校验 |
+| GET | `/panel/admin/prompts/{name}/history` | 备份列表 |
 
-**认证**: 所有 `/api/v1/admin/*` 均需登录 (`Depends(get_current_user)`), 见 [auth.md](../auth.md#7-admin-接口鉴权)。
+**认证**: 所有 `/panel/admin/*` 均需登录 (`Depends(get_current_user)`), 见 [auth.md](../auth.md#7-admin-接口鉴权)。
 
 ### 7.5 安全边界
 

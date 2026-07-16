@@ -191,7 +191,7 @@ AstrBot / AIRI / Web  ── 走 /v1/chat/completions
 
 ## 7. Admin 接口鉴权
 
-`/api/v1/admin/*` 下的所有路由 (health / logs / memories / relationship / prompts) 从 v0.2.1 (2026-07-16) 起统一走 `Depends(get_current_user)` — **未携带有效 Bearer token 或 token 过期一律返回 401**。这是**路由级前置**, 在 [`src/api/routes/admin.py`](../src/api/routes/admin.py) 的 `APIRouter(..., dependencies=[Depends(get_current_user)])` 声明, 而非单接口装饰。
+`/panel/admin/*` 下的所有路由 (health / logs / memories / relationship / prompts) 从 v0.2.1 (2026-07-16) 起统一走 `Depends(get_current_user)` — **未携带有效 Bearer token 或 token 过期一律返回 401**。这是**路由级前置**, 在 [`src/api/routes/admin.py`](../src/api/routes/admin.py) 的 `APIRouter(..., dependencies=[Depends(get_current_user)])` 声明, 而非单接口装饰。
 
 **背景**: 此前 admin 面板的 health/logs/memories/relationship 均无鉴权 (裸奔), 引入 prompt 写接口时**一并**堵上。凡新增到 admin router 的路由自动继承鉴权, 不能在单路由上"跳过"。
 
@@ -227,3 +227,4 @@ A: 独立。API Key 只做鉴权; 代理思考当前硬编码 `False` ([forward.
 |------|------|------|
 | v0.2.0 | 2026-07-12 | 初始认证系统 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 路由前缀 `/auth` (非 `/api/v1/auth`), CLI 顶层命令列表修正, 代理思考启用方式修正 |
+| v0.2.3 | 2026-07-17 | 面板端口前缀由 `/api/v1` 改为 `/panel`, 与 OpenAI 兼容层 `/v1` 完全隔离 |

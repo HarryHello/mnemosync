@@ -134,7 +134,7 @@ onMounted(refresh)
       <div>
         <h2 class="page-title">请求日志</h2>
         <p class="page-subtitle">
-          由 HTTP 中间件异步写入, 记录所有 <span class="mono">/api/</span> 与
+          由 HTTP 中间件异步写入, 记录所有 <span class="mono">/panel/</span> 与
           <span class="mono">/v1/</span> 请求的入参、响应与耗时。
         </p>
       </div>

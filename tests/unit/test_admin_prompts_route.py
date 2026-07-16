@@ -53,7 +53,7 @@ def temp_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Prom
 def app_unauth() -> FastAPI:
     """不注入 get_current_user override → 触发 401."""
     app = FastAPI()
-    outer = APIRouter(prefix="/api/v1")
+    outer = APIRouter(prefix="/panel")
     outer.include_router(admin_router)
     app.include_router(outer)
     return app
@@ -63,7 +63,7 @@ def app_unauth() -> FastAPI:
 def app_auth() -> FastAPI:
     """override get_current_user 返回一个假 User."""
     app = FastAPI()
-    outer = APIRouter(prefix="/api/v1")
+    outer = APIRouter(prefix="/panel")
     outer.include_router(admin_router)
     app.include_router(outer)
 
@@ -87,12 +87,12 @@ def app_auth() -> FastAPI:
 def test_all_admin_routes_require_auth(app_unauth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_unauth)
     endpoints = [
-        ("GET", "/api/v1/admin/health"),
-        ("GET", "/api/v1/admin/logs"),
-        ("GET", "/api/v1/admin/memories"),
-        ("GET", "/api/v1/admin/relationship"),
-        ("GET", "/api/v1/admin/prompts"),
-        ("GET", "/api/v1/admin/prompts/memory_analysis"),
+        ("GET", "/panel/admin/health"),
+        ("GET", "/panel/admin/logs"),
+        ("GET", "/panel/admin/memories"),
+        ("GET", "/panel/admin/relationship"),
+        ("GET", "/panel/admin/prompts"),
+        ("GET", "/panel/admin/prompts/memory_analysis"),
     ]
     for method, path in endpoints:
         resp = client.request(method, path)
@@ -104,7 +104,7 @@ def test_all_admin_routes_require_auth(app_unauth: FastAPI, temp_store: PromptSt
 
 def test_list_prompts_returns_registry(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
-    resp = client.get("/api/v1/admin/prompts")
+    resp = client.get("/panel/admin/prompts")
     assert resp.status_code == 200
     body = resp.json()
     assert {item["name"] for item in body} == set(PROMPT_REGISTRY)
@@ -112,7 +112,7 @@ def test_list_prompts_returns_registry(app_auth: FastAPI, temp_store: PromptStor
 
 def test_get_prompt_detail(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
-    resp = client.get("/api/v1/admin/prompts/memory_analysis")
+    resp = client.get("/panel/admin/prompts/memory_analysis")
     assert resp.status_code == 200
     body = resp.json()
     assert body["name"] == "memory_analysis"
@@ -123,7 +123,7 @@ def test_get_prompt_detail(app_auth: FastAPI, temp_store: PromptStore) -> None:
 
 def test_get_prompt_unknown_returns_404(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
-    resp = client.get("/api/v1/admin/prompts/../etc/passwd")
+    resp = client.get("/panel/admin/prompts/../etc/passwd")
     # FastAPI 会先在路由匹配时 normalize, 或 registry 检查 → 404
     assert resp.status_code == 404
 
@@ -132,7 +132,7 @@ def test_put_prompt_saves_override(app_auth: FastAPI, temp_store: PromptStore) -
     client = TestClient(app_auth)
     content = "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ custom"
     resp = client.put(
-        "/api/v1/admin/prompts/memory_analysis",
+        "/panel/admin/prompts/memory_analysis",
         json={"content": content},
     )
     assert resp.status_code == 200
@@ -145,7 +145,7 @@ def test_put_prompt_missing_placeholder_returns_400(
 ) -> None:
     client = TestClient(app_auth)
     resp = client.put(
-        "/api/v1/admin/prompts/memory_analysis",
+        "/panel/admin/prompts/memory_analysis",
         json={"content": "只有 __SOURCE_USER__"},
     )
     assert resp.status_code == 400
@@ -156,9 +156,9 @@ def test_put_prompt_missing_placeholder_returns_400(
 def test_delete_prompt_resets_override(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
     content = "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__"
-    client.put("/api/v1/admin/prompts/memory_analysis", json={"content": content})
+    client.put("/panel/admin/prompts/memory_analysis", json={"content": content})
 
-    resp = client.delete("/api/v1/admin/prompts/memory_analysis")
+    resp = client.delete("/panel/admin/prompts/memory_analysis")
     assert resp.status_code == 200
     assert resp.json()["overridden"] is False
 
@@ -168,7 +168,7 @@ def test_validate_dry_run_does_not_persist(
 ) -> None:
     client = TestClient(app_auth)
     resp = client.post(
-        "/api/v1/admin/prompts/memory_analysis:validate",
+        "/panel/admin/prompts/memory_analysis:validate",
         json={"content": "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__"},
     )
     assert resp.status_code == 200
@@ -180,7 +180,7 @@ def test_validate_dry_run_does_not_persist(
 def test_validate_reports_missing(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
     resp = client.post(
-        "/api/v1/admin/prompts/memory_analysis:validate",
+        "/panel/admin/prompts/memory_analysis:validate",
         json={"content": "缺占位符"},
     )
     body = resp.json()
@@ -193,10 +193,10 @@ def test_history_lists_backups(app_auth: FastAPI, temp_store: PromptStore) -> No
     client = TestClient(app_auth)
     content = "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__"
     # 需要至少 2 次 save 才有 1 份备份 (首次无旧覆盖)
-    client.put("/api/v1/admin/prompts/memory_analysis", json={"content": content + " v0"})
-    client.put("/api/v1/admin/prompts/memory_analysis", json={"content": content + " v1"})
+    client.put("/panel/admin/prompts/memory_analysis", json={"content": content + " v0"})
+    client.put("/panel/admin/prompts/memory_analysis", json={"content": content + " v1"})
 
-    resp = client.get("/api/v1/admin/prompts/memory_analysis/history")
+    resp = client.get("/panel/admin/prompts/memory_analysis/history")
     assert resp.status_code == 200
     items = resp.json()["items"]
     assert len(items) >= 1

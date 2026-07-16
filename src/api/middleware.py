@@ -65,8 +65,8 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         if request.url.path.endswith(skip_extensions):
             return await call_next(request)
 
-        # 只记录 API 请求
-        if not request.url.path.startswith("/api/") and not request.url.path.startswith("/v1/"):
+        # 只记录 API 请求 (面板 /panel/* 与 OpenAI 兼容层 /v1/*)
+        if not request.url.path.startswith("/panel/") and not request.url.path.startswith("/v1/"):
             return await call_next(request)
 
         start_time = time.time()

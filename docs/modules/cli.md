@@ -233,7 +233,7 @@ mnemosync prompt reset memory_analysis
 ### 6.4 边界
 
 - CLI 只操作**本地文件**; 若在远端服务器, 通过 SSH 登录后运行 CLI 即可, 不需要 HTTP 客户端
-- 面板/WebUI 场景走 REST 接口 (`/api/v1/admin/prompts`), 见 [auth.md §5](../auth.md#5-角色-数据流) 与 admin 路由代码
+- 面板/WebUI 场景走 REST 接口 (`/panel/admin/prompts`), 见 [auth.md §5](../auth.md#5-角色-数据流) 与 admin 路由代码
 - 路径穿越已被 registry 白名单挡住: `prompt show ../etc/passwd` 会返回 "未知的提示词"
 
 ---
