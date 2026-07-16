@@ -1,6 +1,6 @@
 """管理 API 路由.
 
-提供日志查询、记忆管理、关系状态、Agent 提示词覆盖等管理接口.
+提供日志查询、记忆管理、关系状态、Agent 提示词覆盖、仪表盘聚合接口.
 
 **认证**: 所有路由要求登录 (Depends(get_current_user)).
 """
@@ -10,10 +10,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from src.api.deps import (
+    get_api_key_store,
+    get_http_log_store,
+    get_memory_store,
+)
 from src.api.routes.auth import get_current_user
 from src.api.schemas.admin import (
     PromptDetail,
@@ -23,16 +27,16 @@ from src.api.schemas.admin import (
     PromptValidateResponse,
     PromptWriteBody,
 )
-from src.core.config import get_settings
 from src.core.prompts import get_prompt_store
 from src.core.prompts.registry import PROMPT_REGISTRY
-from src.persistence.auth_store import User
+from src.persistence.api_key_store import SqliteApiKeyStore
+from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v1/admin",
+    prefix="/admin",
     tags=["Admin"],
     dependencies=[Depends(get_current_user)],
 )
@@ -96,6 +100,59 @@ class RelationshipResponse(BaseModel):
     updated_at: str
 
 
+class DashboardStatsResponse(BaseModel):
+    """仪表盘聚合数据. 单端点替换 5 次往返."""
+
+    api_keys: int
+    memories: int
+    logs: int
+    prompts_total: int
+    prompts_overridden: int
+    health: HealthResponse
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+def _row_to_log(row: tuple) -> HttpLogResponse:
+    return HttpLogResponse(
+        id=row[0],
+        method=row[1],
+        path=row[2],
+        query_params=row[3],
+        request_headers=json.loads(row[4]) if row[4] else None,
+        request_body=json.loads(row[5]) if row[5] else None,
+        response_status=row[6],
+        response_body=json.loads(row[7]) if row[7] else None,
+        duration_ms=row[8],
+        client_ip=row[9],
+        created_at=row[10],
+    )
+
+
+def _memory_to_response(m) -> MemoryResponse:
+    return MemoryResponse(
+        id=m.id,
+        content=m.content,
+        memory_type=m.memory_type.value,
+        importance=m.importance,
+        decay_rate=m.decay_rate,
+        access_count=m.access_count,
+        source_user=m.source_user or "",
+        created_at=m.created_at.isoformat() if m.created_at else "",
+        last_accessed_at=m.last_accessed.isoformat() if m.last_accessed else None,
+    )
+
+
+def _build_health() -> HealthResponse:
+    return HealthResponse(
+        status="ok",
+        version="0.2.0",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 # ============================================================================
 # Health Check
 # ============================================================================
@@ -103,10 +160,30 @@ class RelationshipResponse(BaseModel):
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
     """健康检查."""
-    return HealthResponse(
-        status="ok",
-        version="0.2.0",
-        timestamp=datetime.now(timezone.utc).isoformat(),
+    return _build_health()
+
+
+# ============================================================================
+# Dashboard aggregated stats (单端点)
+# ============================================================================
+
+@router.get("/stats", response_model=DashboardStatsResponse)
+async def dashboard_stats(
+    memory_store: SqliteMemoryStore = Depends(get_memory_store),
+    api_key_store: SqliteApiKeyStore = Depends(get_api_key_store),
+    http_log_store: HttpLogStore = Depends(get_http_log_store),
+) -> DashboardStatsResponse:
+    """仪表盘聚合: 一次查询代替 5 次 HTTP 往返."""
+    prompt_store = get_prompt_store()
+    prompt_infos = list(prompt_store.list())
+
+    return DashboardStatsResponse(
+        api_keys=await api_key_store.count_active(),
+        memories=await memory_store.count_all(),
+        logs=await http_log_store.count(),
+        prompts_total=len(prompt_infos),
+        prompts_overridden=sum(1 for p in prompt_infos if p.overridden),
+        health=_build_health(),
     )
 
 
@@ -121,103 +198,34 @@ async def list_logs(
     method: Optional[str] = None,
     path: Optional[str] = None,
     status: Optional[int] = None,
+    store: HttpLogStore = Depends(get_http_log_store),
 ):
     """查询 HTTP 日志."""
-    settings = get_settings()
-    db_path = "data/http_logs.db"
-
-    async with aiosqlite.connect(db_path) as db:
-        # 构建查询条件
-        conditions = []
-        params = []
-
-        if method:
-            conditions.append("method = ?")
-            params.append(method.upper())
-
-        if path:
-            conditions.append("path LIKE ?")
-            params.append(f"%{path}%")
-
-        if status:
-            conditions.append("response_status = ?")
-            params.append(status)
-
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-
-        # 获取总数
-        cursor = await db.execute(f"SELECT COUNT(*) FROM http_logs WHERE {where_clause}", params)
-        total = (await cursor.fetchone())[0]
-
-        # 分页查询
-        offset = (page - 1) * page_size
-        cursor = await db.execute(
-            f"SELECT * FROM http_logs WHERE {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [page_size, offset]
-        )
-        rows = await cursor.fetchall()
-
-        # 转换为响应格式
-        items = []
-        for row in rows:
-            items.append(HttpLogResponse(
-                id=row[0],
-                method=row[1],
-                path=row[2],
-                query_params=row[3],
-                request_headers=json.loads(row[4]) if row[4] else None,
-                request_body=json.loads(row[5]) if row[5] else None,
-                response_status=row[6],
-                response_body=json.loads(row[7]) if row[7] else None,
-                duration_ms=row[8],
-                client_ip=row[9],
-                created_at=row[10],
-            ))
-
-        return HttpLogListResponse(
-            items=items,
-            total=total,
-            page=page,
-            page_size=page_size,
-        )
+    total = await store.count(method=method, path=path, status=status)
+    rows = await store.list_paginated(
+        page=page, page_size=page_size, method=method, path=path, status=status
+    )
+    items = [_row_to_log(r) for r in rows]
+    return HttpLogListResponse(
+        items=items, total=total, page=page, page_size=page_size
+    )
 
 
 @router.get("/logs/{log_id}", response_model=HttpLogResponse)
-async def get_log(log_id: int):
+async def get_log(
+    log_id: int, store: HttpLogStore = Depends(get_http_log_store)
+):
     """获取单条日志详情."""
-    db_path = "data/http_logs.db"
-
-    async with aiosqlite.connect(db_path) as db:
-        cursor = await db.execute("SELECT * FROM http_logs WHERE id = ?", (log_id,))
-        row = await cursor.fetchone()
-
-        if not row:
-            raise HTTPException(status_code=404, detail="Log not found")
-
-        return HttpLogResponse(
-            id=row[0],
-            method=row[1],
-            path=row[2],
-            query_params=row[3],
-            request_headers=json.loads(row[4]) if row[4] else None,
-            request_body=json.loads(row[5]) if row[5] else None,
-            response_status=row[6],
-            response_body=json.loads(row[7]) if row[7] else None,
-            duration_ms=row[8],
-            client_ip=row[9],
-            created_at=row[10],
-        )
+    row = await store.get_by_id(log_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Log not found")
+    return _row_to_log(row)
 
 
 @router.delete("/logs")
-async def clear_logs():
+async def clear_logs(store: HttpLogStore = Depends(get_http_log_store)):
     """清空所有日志."""
-    db_path = "data/http_logs.db"
-
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("DELETE FROM http_logs")
-        await db.commit()
-
+    await store.clear_all()
     return {"success": True, "message": "All logs cleared"}
 
 
@@ -229,68 +237,35 @@ async def clear_logs():
 async def list_memories(
     source_user: str = "default",
     limit: int = Query(100, ge=1, le=500),
+    store: SqliteMemoryStore = Depends(get_memory_store),
 ):
     """查询记忆列表."""
-    settings = get_settings()
-    store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-    await store.init_db()
-
-    # 获取所有记忆
     all_memories = await store.list_all_for_user(source_user, limit=limit)
-    total = len(all_memories)
-
-    items = []
-    for m in all_memories:
-        items.append(MemoryResponse(
-            id=m.id,
-            content=m.content,
-            memory_type=m.memory_type.value,
-            importance=m.importance,
-            decay_rate=m.decay_rate,
-            access_count=m.access_count,
-            source_user=m.source_user,
-            created_at=m.created_at.isoformat() if m.created_at else "",
-            last_accessed_at=m.last_accessed_at.isoformat() if m.last_accessed_at else None,
-        ))
-
-    return MemoryListResponse(items=items, total=total)
-
-
-@router.get("/memories/{memory_id}", response_model=MemoryResponse)
-async def get_memory(memory_id: str):
-    """获取单条记忆详情."""
-    settings = get_settings()
-    store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-    await store.init_db()
-
-    memory = await store.get_by_id(memory_id)
-    if not memory:
-        raise HTTPException(status_code=404, detail="Memory not found")
-
-    return MemoryResponse(
-        id=memory.id,
-        content=memory.content,
-        memory_type=memory.memory_type.value,
-        importance=memory.importance,
-        decay_rate=memory.decay_rate,
-        access_count=memory.access_count,
-        source_user=memory.source_user,
-        created_at=memory.created_at.isoformat() if memory.created_at else "",
-        last_accessed_at=memory.last_accessed_at.isoformat() if memory.last_accessed_at else None,
+    return MemoryListResponse(
+        items=[_memory_to_response(m) for m in all_memories],
+        total=len(all_memories),
     )
 
 
-@router.delete("/memories/{memory_id}")
-async def delete_memory(memory_id: str):
-    """删除记忆."""
-    settings = get_settings()
-    store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-    await store.init_db()
+@router.get("/memories/{memory_id}", response_model=MemoryResponse)
+async def get_memory(
+    memory_id: str, store: SqliteMemoryStore = Depends(get_memory_store)
+):
+    """获取单条记忆详情."""
+    memory = await store.get_by_id(memory_id)
+    if not memory:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return _memory_to_response(memory)
 
+
+@router.delete("/memories/{memory_id}")
+async def delete_memory(
+    memory_id: str, store: SqliteMemoryStore = Depends(get_memory_store)
+):
+    """删除记忆."""
     success = await store.delete(memory_id)
     if not success:
         raise HTTPException(status_code=404, detail="Memory not found")
-
     return {"success": True, "message": "Memory deleted"}
 
 
@@ -299,12 +274,11 @@ async def delete_memory(memory_id: str):
 # ============================================================================
 
 @router.get("/relationship", response_model=RelationshipResponse)
-async def get_relationship(user_id: str = "default"):
+async def get_relationship(
+    user_id: str = "default",
+    store: SqliteMemoryStore = Depends(get_memory_store),
+):
     """获取关系状态."""
-    settings = get_settings()
-    store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-    await store.init_db()
-
     rel = await store.get_relationship("default", user_id)
     if not rel:
         raise HTTPException(status_code=404, detail="Relationship not found")
@@ -312,11 +286,11 @@ async def get_relationship(user_id: str = "default"):
     return RelationshipResponse(
         persona_id=rel.persona_id,
         user_id=rel.user_id,
-        intimacy=rel.intimacy,
-        trust=rel.trust,
-        relationship_type=rel.relationship_type,
+        intimacy=rel.intimacy_score,
+        trust=rel.trust_level,
+        relationship_type=rel.type,
         notes=rel.notes,
-        updated_at=rel.updated_at.isoformat() if rel.updated_at else "",
+        updated_at=rel.last_active.isoformat() if rel.last_active else "",
     )
 
 

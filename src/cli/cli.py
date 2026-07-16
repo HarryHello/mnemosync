@@ -90,6 +90,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         from fastapi.staticfiles import StaticFiles
         from starlette.responses import FileResponse
         from src.api import api_router, forward_router
+        from src.api.lifespan import app_lifespan
         from src.api.middleware import HttpLogMiddleware
     except ImportError as e:
         print(f"❌ 依赖未安装: {e}")
@@ -100,6 +101,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         title="Mnemosync API",
         description="智能代理中间件 - LLM 上下文编排与人格记忆管理",
         version="0.2.0",
+        lifespan=app_lifespan,
     )
 
     # 添加 CORS 中间件

@@ -9,6 +9,7 @@ from __future__ import annotations
 import aiosqlite
 import bcrypt
 import secrets
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -97,42 +98,80 @@ class AuthStore(Protocol):
 
 
 class SqliteAuthStore:
-    """SQLite 认证存储实现."""
+    """SQLite 认证存储实现.
+
+    使用方式:
+      * 长连接单例 (推荐, API 层): 应用启动时 ``await store.connect()``, 关闭时 ``await store.close()``.
+        所有方法共用同一条 aiosqlite 连接, 无每请求 open/close 开销.
+      * 短连接 (CLI / 一次性脚本): 不调 ``connect()``, 每次方法内部临时开连接 (旧行为).
+    """
 
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self._db: aiosqlite.Connection | None = None
+
+    async def connect(self) -> None:
+        """建立长连接并初始化 schema (幂等)."""
+        if self._db is not None:
+            return
+        self._db = await aiosqlite.connect(self.db_path)
+        # WAL + NORMAL 同步, 并发读性能显著优于默认 rollback journal.
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA synchronous=NORMAL")
+        await self._db.execute("PRAGMA foreign_keys=ON")
+        await self._init_schema(self._db)
+        await self._db.commit()
+
+    async def close(self) -> None:
+        if self._db is not None:
+            await self._db.close()
+            self._db = None
+
+    @asynccontextmanager
+    async def _conn(self):
+        """内部连接上下文: 长连接模式复用 self._db, 否则临时开连接 (旧行为)."""
+        if self._db is not None:
+            yield self._db
+        else:
+            async with aiosqlite.connect(self.db_path) as db:
+                yield db
+
+    @staticmethod
+    async def _init_schema(db: aiosqlite.Connection) -> None:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                must_change_password INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                last_login_at TIMESTAMP,
+                is_active INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                is_valid INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_username ON users(username)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_session_token ON sessions(token_hash)")
 
     async def init_db(self) -> None:
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id TEXT PRIMARY KEY,
-                    username TEXT NOT NULL UNIQUE,
-                    password_hash TEXT NOT NULL,
-                    must_change_password INTEGER NOT NULL DEFAULT 1,
-                    created_at TIMESTAMP NOT NULL,
-                    updated_at TIMESTAMP NOT NULL,
-                    last_login_at TIMESTAMP,
-                    is_active INTEGER NOT NULL DEFAULT 1
-                )
-            """)
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    token_hash TEXT NOT NULL UNIQUE,
-                    expires_at TIMESTAMP NOT NULL,
-                    created_at TIMESTAMP NOT NULL,
-                    is_valid INTEGER NOT NULL DEFAULT 1,
-                    FOREIGN KEY (user_id) REFERENCES users(id)
-                )
-            """)
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_username ON users(username)")
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_session_token ON sessions(token_hash)")
+        """兼容旧接口: 幂等地初始化 schema. 长连接模式下 connect() 已包含此步骤."""
+        async with self._conn() as db:
+            await self._init_schema(db)
             await db.commit()
 
     async def has_any_user(self) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute("SELECT COUNT(*) FROM users") as cursor:
                 row = await cursor.fetchone()
                 return bool(row and row[0] > 0)
@@ -144,7 +183,7 @@ class SqliteAuthStore:
         if not ok:
             raise ValueError(err or "密码强度不足")
         user = User.create("mnemosync", hash_password(password), must_change_password=True)
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 """
                 INSERT INTO users (id, username, password_hash, must_change_password,
@@ -158,7 +197,7 @@ class SqliteAuthStore:
         return user
 
     async def get_user_by_username(self, username: str) -> User | None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 "SELECT * FROM users WHERE username = ?", (username,)
             ) as cursor:
@@ -166,7 +205,7 @@ class SqliteAuthStore:
                 return self._row_to_user(row) if row else None
 
     async def get_user_by_id(self, user_id: str) -> User | None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 "SELECT * FROM users WHERE id = ?", (user_id,)
             ) as cursor:
@@ -179,7 +218,7 @@ class SqliteAuthStore:
             raise ValueError("用户名或密码错误")
         if not verify_password(password, user.password_hash):
             raise ValueError("用户名或密码错误")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 "UPDATE users SET last_login_at = ? WHERE id = ?",
                 (datetime.now(timezone.utc).isoformat(), user.id),
@@ -189,7 +228,7 @@ class SqliteAuthStore:
 
     async def create_session(self, user_id: str) -> SessionToken:
         session = SessionToken.generate(user_id)
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 """
                 INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at, is_valid)
@@ -206,7 +245,7 @@ class SqliteAuthStore:
         # 注意: 生产环境应 hash token 后比对。此处用 token_hash 字段存储 raw 的 sha256。
         import hashlib
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 "SELECT * FROM sessions WHERE token_hash = ? AND is_valid = 1",
                 (token_hash,),
@@ -223,7 +262,7 @@ class SqliteAuthStore:
     async def invalidate_session(self, token: str) -> None:
         import hashlib
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 "UPDATE sessions SET is_valid = 0 WHERE token_hash = ?", (token_hash,)
             )
@@ -243,7 +282,7 @@ class SqliteAuthStore:
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
         user.updated_at = datetime.now(timezone.utc)
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 """
                 UPDATE users
@@ -277,7 +316,7 @@ class SqliteAuthStore:
         user.must_change_password = False
         user.updated_at = datetime.now(timezone.utc)
 
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 """
                 UPDATE users

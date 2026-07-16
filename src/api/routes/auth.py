@@ -2,13 +2,11 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from src.persistence.auth_store import (
-    SqliteAuthStore,
-    User,
-)
+from src.api.deps import get_auth_store
+from src.persistence.auth_store import SqliteAuthStore, User
 
 from ..schemas.auth import (
     ChangePasswordRequest,
@@ -25,19 +23,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 security = HTTPBearer(auto_error=False)
 
-DB_PATH = "data/auth.db"
-
-
-def _get_auth_store() -> SqliteAuthStore:
-    """获取认证存储实例."""
-    return SqliteAuthStore(DB_PATH)
-
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
-    auth_store: SqliteAuthStore = Depends(_get_auth_store),
 ) -> User:
-    """获取当前登录用户."""
+    """获取当前登录用户.
+
+    先从 credentials 判 401, 只有确定要查库时才取 auth_store, 便于测试用
+    dependency_overrides 直接短路. 生产环境走 lifespan 已注入的单例长连接.
+    """
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -45,6 +40,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    auth_store: SqliteAuthStore = request.app.state.auth_store
     token = credentials.credentials
 
     try:
@@ -82,15 +78,12 @@ async def get_current_user(
 )
 async def login(
     request: LoginRequest,
-    auth_store: SqliteAuthStore = Depends(_get_auth_store),
+    auth_store: SqliteAuthStore = Depends(get_auth_store),
 ) -> LoginResponse:
     """用户登录."""
-    await auth_store.init_db()
-
     # 检查是否需要创建默认用户
     existing_user = await auth_store.get_user_by_username(request.username)
     if not existing_user:
-        # 尝试创建默认用户
         try:
             if request.username == "mnemosync" and request.password == "mnemosync":
                 await auth_store.create_default_user(request.password)
@@ -115,7 +108,6 @@ async def login(
             detail="用户名或密码错误",
         )
 
-    # 创建会话
     session = await auth_store.create_session(user.id)
 
     return LoginResponse(
@@ -135,11 +127,9 @@ async def login(
 )
 async def logout(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
-    auth_store: SqliteAuthStore = Depends(_get_auth_store),
+    auth_store: SqliteAuthStore = Depends(get_auth_store),
 ) -> MessageResponse:
     """用户登出."""
-    await auth_store.init_db()
-
     if credentials:
         await auth_store.invalidate_session(credentials.credentials)
 
@@ -180,11 +170,9 @@ async def get_current_user_info(
 async def change_password(
     request: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
-    auth_store: SqliteAuthStore = Depends(_get_auth_store),
+    auth_store: SqliteAuthStore = Depends(get_auth_store),
 ) -> ChangePasswordResponse:
     """修改密码."""
-    await auth_store.init_db()
-
     try:
         await auth_store.change_password(
             current_user.id,
@@ -206,11 +194,9 @@ async def change_password(
     description="创建默认管理员用户 (用户名和密码都是 mnemosync)",
 )
 async def init_default_user(
-    auth_store: SqliteAuthStore = Depends(_get_auth_store),
+    auth_store: SqliteAuthStore = Depends(get_auth_store),
 ) -> MessageResponse:
     """初始化默认用户."""
-    await auth_store.init_db()
-
     try:
         await auth_store.create_default_user("mnemosync")
         return MessageResponse(

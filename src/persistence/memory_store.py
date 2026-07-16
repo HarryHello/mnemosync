@@ -7,6 +7,7 @@ SQLite 存储记忆元数据 + 关系状态.
 from __future__ import annotations
 
 import aiosqlite
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -48,72 +49,104 @@ class MemoryStore(Protocol):
 class SqliteMemoryStore:
     """SQLite 记忆存储实现.
 
-    表结构:
-        memory_entries — 完整记忆字段
-        relationships  — 用户关系状态
+    使用方式:
+      * 长连接单例 (推荐, API 层): 应用启动时 ``await store.connect()``, 关闭时 ``await store.close()``.
+        所有方法共用同一条 aiosqlite 连接, 无每请求 open/close 开销.
+      * 短连接 (CLI / 一次性脚本 / 测试): 不调 ``connect()``, 每次方法内部临时开连接 (旧行为).
     """
 
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self._db: aiosqlite.Connection | None = None
+
+    async def connect(self) -> None:
+        """建立长连接并初始化 schema (幂等)."""
+        if self._db is not None:
+            return
+        self._db = await aiosqlite.connect(self.db_path)
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA synchronous=NORMAL")
+        await self._db.execute("PRAGMA foreign_keys=ON")
+        await self._init_schema(self._db)
+        await self._db.commit()
+
+    async def close(self) -> None:
+        if self._db is not None:
+            await self._db.close()
+            self._db = None
+
+    @asynccontextmanager
+    async def _conn(self):
+        """内部连接上下文: 长连接模式复用 self._db, 否则临时开连接 (旧行为)."""
+        if self._db is not None:
+            yield self._db
+        else:
+            async with aiosqlite.connect(self.db_path) as db:
+                yield db
+
+    @staticmethod
+    async def _init_schema(db: aiosqlite.Connection) -> None:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS memory_entries (
+                id TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                role TEXT NOT NULL,
+                source_user TEXT,
+                memory_type TEXT NOT NULL DEFAULT 'normal',
+                importance REAL NOT NULL DEFAULT 0.5,
+                decay_rate REAL NOT NULL DEFAULT 0.3,
+                priority REAL NOT NULL DEFAULT 0.5,
+                access_count INTEGER NOT NULL DEFAULT 0,
+                is_forgotten INTEGER NOT NULL DEFAULT 0,
+                visibility TEXT NOT NULL DEFAULT 'source_restricted',
+                custom_policies TEXT,
+                emotional_tags TEXT,
+                related_memories TEXT,
+                created_at TIMESTAMP NOT NULL,
+                last_accessed TIMESTAMP,
+                expires_at TIMESTAMP
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_source_user ON memory_entries(source_user)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_type ON memory_entries(memory_type)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_priority ON memory_entries(priority DESC)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_is_forgotten ON memory_entries(is_forgotten)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_created_at ON memory_entries(created_at DESC)"
+        )
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS relationships (
+                persona_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'stranger',
+                intimacy_score REAL NOT NULL DEFAULT 0.0,
+                trust_level REAL NOT NULL DEFAULT 0.0,
+                interaction_count INTEGER NOT NULL DEFAULT 0,
+                last_active TIMESTAMP,
+                notes TEXT,
+                PRIMARY KEY (persona_id, user_id)
+            )
+        """)
 
     async def init_db(self) -> None:
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS memory_entries (
-                    id TEXT PRIMARY KEY,
-                    content TEXT NOT NULL,
-                    role TEXT NOT NULL,
-                    source_user TEXT,
-                    memory_type TEXT NOT NULL DEFAULT 'normal',
-                    importance REAL NOT NULL DEFAULT 0.5,
-                    decay_rate REAL NOT NULL DEFAULT 0.3,
-                    priority REAL NOT NULL DEFAULT 0.5,
-                    access_count INTEGER NOT NULL DEFAULT 0,
-                    is_forgotten INTEGER NOT NULL DEFAULT 0,
-                    visibility TEXT NOT NULL DEFAULT 'source_restricted',
-                    custom_policies TEXT,
-                    emotional_tags TEXT,
-                    related_memories TEXT,
-                    created_at TIMESTAMP NOT NULL,
-                    last_accessed TIMESTAMP,
-                    expires_at TIMESTAMP
-                )
-            """)
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_source_user ON memory_entries(source_user)"
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_memory_type ON memory_entries(memory_type)"
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_priority ON memory_entries(priority DESC)"
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_is_forgotten ON memory_entries(is_forgotten)"
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_created_at ON memory_entries(created_at DESC)"
-            )
-
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS relationships (
-                    persona_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    type TEXT NOT NULL DEFAULT 'stranger',
-                    intimacy_score REAL NOT NULL DEFAULT 0.0,
-                    trust_level REAL NOT NULL DEFAULT 0.0,
-                    interaction_count INTEGER NOT NULL DEFAULT 0,
-                    last_active TIMESTAMP,
-                    notes TEXT,
-                    PRIMARY KEY (persona_id, user_id)
-                )
-            """)
+        """兼容旧接口: 幂等地初始化 schema. 长连接模式下 connect() 已包含此步骤."""
+        async with self._conn() as db:
+            await self._init_schema(db)
             await db.commit()
 
     # ============ MemoryEntry CRUD ============
 
     async def save(self, entry: MemoryEntry) -> None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO memory_entries
@@ -145,7 +178,7 @@ class SqliteMemoryStore:
             await db.commit()
 
     async def get_by_id(self, entry_id: str) -> MemoryEntry | None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 "SELECT * FROM memory_entries WHERE id = ?", (entry_id,)
             ) as cursor:
@@ -153,7 +186,7 @@ class SqliteMemoryStore:
                 return self._row_to_entry(row) if row else None
 
     async def delete(self, entry_id: str) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             cur = await db.execute(
                 "DELETE FROM memory_entries WHERE id = ?", (entry_id,)
             )
@@ -162,7 +195,7 @@ class SqliteMemoryStore:
 
     async def list_permanent(self, source_user: str, limit: int = 7) -> list[MemoryEntry]:
         """加载用户的永久记忆（按重要性降序）."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 """
                 SELECT * FROM memory_entries
@@ -182,7 +215,7 @@ class SqliteMemoryStore:
 
         用于主对话 Agent 上下文拼装（当无语义检索时）.
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 """
                 SELECT * FROM memory_entries
@@ -201,7 +234,7 @@ class SqliteMemoryStore:
         from datetime import timedelta
 
         threshold = (datetime.now(timezone.utc) - timedelta(hours=skip_hours)).isoformat()
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 """
                 SELECT * FROM memory_entries
@@ -218,7 +251,7 @@ class SqliteMemoryStore:
     async def update_priority(
         self, entry_id: str, priority: float, is_forgotten: bool
     ) -> None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 """
                 UPDATE memory_entries
@@ -231,7 +264,7 @@ class SqliteMemoryStore:
 
     async def mark_accessed(self, entry_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 """
                 UPDATE memory_entries
@@ -243,7 +276,7 @@ class SqliteMemoryStore:
             await db.commit()
 
     async def count_permanent(self, source_user: str) -> int:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 """
                 SELECT COUNT(*) FROM memory_entries
@@ -254,9 +287,18 @@ class SqliteMemoryStore:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
 
+    async def count_all(self) -> int:
+        """总记忆数 (含遗忘, 用于仪表盘)."""
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM memory_entries"
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
+
     async def list_all_for_user(self, source_user: str, limit: int = 20) -> list[MemoryEntry]:
         """列出用户的所有未遗忘记忆（调试用）."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 """
                 SELECT * FROM memory_entries
@@ -272,7 +314,7 @@ class SqliteMemoryStore:
     # ============ Relationship CRUD ============
 
     async def get_relationship(self, persona_id: str, user_id: str) -> Relationship | None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             async with db.execute(
                 """
                 SELECT * FROM relationships WHERE persona_id = ? AND user_id = ?
@@ -283,7 +325,7 @@ class SqliteMemoryStore:
                 return self._row_to_relationship(row) if row else None
 
     async def save_relationship(self, rel: Relationship) -> None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._conn() as db:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO relationships

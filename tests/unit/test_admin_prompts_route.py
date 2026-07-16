@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from src.api.routes.admin import router as admin_router
@@ -53,7 +53,9 @@ def temp_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Prom
 def app_unauth() -> FastAPI:
     """不注入 get_current_user override → 触发 401."""
     app = FastAPI()
-    app.include_router(admin_router)
+    outer = APIRouter(prefix="/api/v1")
+    outer.include_router(admin_router)
+    app.include_router(outer)
     return app
 
 
@@ -61,7 +63,9 @@ def app_unauth() -> FastAPI:
 def app_auth() -> FastAPI:
     """override get_current_user 返回一个假 User."""
     app = FastAPI()
-    app.include_router(admin_router)
+    outer = APIRouter(prefix="/api/v1")
+    outer.include_router(admin_router)
+    app.include_router(outer)
 
     def _fake_user() -> User:
         return User(

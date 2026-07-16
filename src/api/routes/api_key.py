@@ -1,7 +1,8 @@
 """API Key 管理路由."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from src.api.deps import get_api_key_store
 from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
 
 from ..schemas.api_key import (
@@ -14,13 +15,6 @@ from ..schemas.api_key import (
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
-DB_PATH = "data/api_keys.db"
-
-
-def _get_store() -> SqliteApiKeyStore:
-    """获取 API Key 存储实例."""
-    return SqliteApiKeyStore(DB_PATH)
-
 
 @router.post(
     "",
@@ -29,11 +23,11 @@ def _get_store() -> SqliteApiKeyStore:
     summary="生成 API Key",
     description="生成一个新的 API Key，需要提供备注信息",
 )
-async def create_api_key(request: ApiKeyCreateRequest) -> ApiKeyCreateResponse:
+async def create_api_key(
+    request: ApiKeyCreateRequest,
+    store: SqliteApiKeyStore = Depends(get_api_key_store),
+) -> ApiKeyCreateResponse:
     """生成新的 API Key."""
-    store = _get_store()
-    await store.init_db()
-
     api_key = ApiKey.generate(note=request.note)
     await store.save(api_key)
 
@@ -52,11 +46,10 @@ async def create_api_key(request: ApiKeyCreateRequest) -> ApiKeyCreateResponse:
     summary="列出所有 API Key",
     description="获取所有 API Key 的信息 (不包含完整密钥)",
 )
-async def list_api_keys() -> ApiKeyListResponse:
+async def list_api_keys(
+    store: SqliteApiKeyStore = Depends(get_api_key_store),
+) -> ApiKeyListResponse:
     """列出所有 API Key."""
-    store = _get_store()
-    await store.init_db()
-
     api_keys = await store.list_all()
     items = [
         ApiKeyInfo(
@@ -79,11 +72,11 @@ async def list_api_keys() -> ApiKeyListResponse:
     summary="撤销 API Key",
     description="根据 ID 撤销 (删除) 一个 API Key",
 )
-async def revoke_api_key(key_id: str) -> None:
+async def revoke_api_key(
+    key_id: str,
+    store: SqliteApiKeyStore = Depends(get_api_key_store),
+) -> None:
     """撤销 API Key."""
-    store = _get_store()
-    await store.init_db()
-
     api_key = await store.get_by_id(key_id)
     if not api_key:
         raise HTTPException(
@@ -100,11 +93,11 @@ async def revoke_api_key(key_id: str) -> None:
     summary="撤销 API Key (通过请求体)",
     description="通过请求体中的 key_id 撤销 API Key",
 )
-async def revoke_api_key_by_request(request: ApiKeyRevokeRequest) -> None:
+async def revoke_api_key_by_request(
+    request: ApiKeyRevokeRequest,
+    store: SqliteApiKeyStore = Depends(get_api_key_store),
+) -> None:
     """通过请求体撤销 API Key."""
-    store = _get_store()
-    await store.init_db()
-
     api_key = await store.get_by_id(request.key_id)
     if not api_key:
         raise HTTPException(
