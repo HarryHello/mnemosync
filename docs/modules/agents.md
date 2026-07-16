@@ -3,14 +3,14 @@
 > **系统版本**: v0.2.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-16
 > **作者**: HarryHelloo
 
 ---
 
 ## 1. 概述
 
-Mnemosync 一次请求由 LangGraph 编排 **4 个 Agent** 完成。代理推理是**原生推理的补齐**, 主模型无原生推理且前台点名要推理时自动启用 (详见 §4)。
+Mnemosync 一次请求由 LangGraph + API 层编排 **5 个 Agent** 完成。其中代理推理是**原生推理的补齐** (详见 §4), 提示词清洗是**服务器人格权威的守门员** (详见 §6)。
 
 ### 1.1 Agent 全景
 
@@ -20,12 +20,16 @@ Mnemosync 一次请求由 LangGraph 编排 **4 个 Agent** 完成。代理推理
 | 2 | 代理推理 | CoT (无工具) | 辅助模型 | 主模型无原生推理 & (前台点名推理 或 `proxy_thinking_default=true`) 时启用 | 供主对话参考的思考文本 + 前台 `reasoning_content` 字段 |
 | 3 | 记忆分析 | ReAct | 辅助模型 | 主对话后, 与关系分析并行 | 新记忆候选 + 衰减评估 JSON |
 | 4 | 关系分析 | ReAct | 辅助模型 | 主对话后, 与记忆分析并行 | 亲密度/信任度增量 JSON |
+| 5 | 提示词清洗 | ReAct | 辅助模型 | API 层预处理, 客户端 system 消息非空时 | 保留的功能性指令 + 丢弃的人格描述 JSON |
 
 **代码位置**: 所有 Agent 的执行函数集中在 [src/core/agents/factory.py](../../src/core/agents/factory.py); ReAct 循环由 [src/core/agents/base.py](../../src/core/agents/base.py) 的 `run_react_loop` 驱动。
 
 ### 1.2 LangGraph 拓扑
 
 ```
+[API 层预处理: 服务器人格加载 + 提示词清洗 Agent (可选)]
+      │
+      ▼
 parse_request
       │
       ├─ proxy_thinking_enabled? ──► proxy_thinking
@@ -43,6 +47,7 @@ parse_request
 
 **要点**:
 - `parse_request` 不是 Agent, 是纯 Python 预处理节点 (提取新消息 + 用户标识)
+- **提示词清洗 Agent 不在图中**: 在 [forward.py](../../src/api/routes/forward.py) API 层同步运行, 输出的最终 persona 通过 `initial_state["persona"]` 注入图, 清洗结果落到 `state["prompt_cleaning_result"]` 便于观察 (详见 §6)
 - `relationship_analysis` 和 `memory_analysis` 是**并行边**, 主对话完成后同时触发
 - 向量索引 (嵌入写入 Chroma) 在 `memory_analysis` 节点内部由 `MemoryLifecycle.store_candidate()` 顺手完成, **不是独立节点**
 - **流式路径不经过图**: [forward.py `_handle_stream`](../../src/api/routes/forward.py) 在 API 层直接编织 "加载记忆 → 代理推理 (可选, 同步) → 合成 reasoning SSE 帧 → 上游 chat_stream 透传 → 后台记忆图", 图仅用于后台跑记忆/关系两个分析节点, 主对话与代理推理在 API 层就完成。见 [forward.md](forward.md) §6
@@ -288,7 +293,72 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 
 ---
 
-## 6. AgentState (共享状态)
+## 6. 提示词清洗 Agent
+
+**代码**: [factory.py:246 `run_prompt_cleaning`](../../src/core/agents/factory.py#L246) · 工具: [tools/sentence_classifier.py](../../src/tools/sentence_classifier.py)
+**Prompt**: [prompts/prompt_cleaning.py](../../src/core/agents/prompts/prompt_cleaning.py)
+
+### 6.1 定位 (服务器人格权威守门员)
+
+Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `[persona]` 配置权威定义, 客户端请求中的 `system` 消息**不被信任**为人格来源。
+
+但客户端 `system` 消息里常同时含**功能性指令** (格式约束 / 工具约束 / 输出规则), 简单丢弃会误伤这些合法配置。提示词清洗 Agent 的职责: **逐句分离人格描述与功能性指令**, 前者丢弃, 后者与服务器人格合并注入主对话。
+
+参见 [architecture.md](../architecture.md) 和 [dev-decisions.md](../dev-decisions.md)。
+
+### 6.2 触发时机
+
+在 [forward.py `create_chat_completion`](../../src/api/routes/forward.py) 中, 收到请求后:
+
+1. 从 `settings.persona` 加载服务器人格 (`prompt` + `name`)
+2. 提取客户端 `system` 消息第一条 (若为空则跳过清洗, 直接用服务器人格)
+3. 若非空 → 调 `run_prompt_cleaning` → 得 `PromptCleaningOutput(retained, discarded, reasoning)`
+4. 最终 persona = `settings.persona.prompt + "\n\n" + "\n".join(retained)`
+5. `initial_state["persona"]` 存合并后的 persona; `initial_state["prompt_cleaning_result"]` 存清洗结果 (仅日志/观察用)
+
+**关键**: 客户端 `system` 消息在进入图之前就被处理并从 `messages_dict` 移除, 图内不再见到原始 system 消息。
+
+### 6.3 ReAct 工具
+
+| 工具 | 工厂函数 | 用途 |
+|------|---------|------|
+| `classify_sentence_type` | `make_sentence_classifier_tool` | 单句分类: 返回 `{type: "persona" \| "instruction" \| "ambiguous", confidence, reasoning}` |
+
+**工具实现**: 内部调辅助模型一次 chat completion, `response_format={"type": "json_object"}` + `enable_thinking=False`, 不循环。见 [src/tools/sentence_classifier.py](../../src/tools/sentence_classifier.py)。
+
+### 6.4 循环约束
+
+- `max_iterations = 3` (API 层传入)
+- 使用辅助模型 (`settings.chat.assist_model`), 阻塞 API 请求, 目标延迟 < 2s
+- Prompt 引导流程: 分句 → 逐句调 `classify_sentence_type` → 收集分类 → 输出最终 JSON
+
+### 6.5 输出 JSON schema
+
+```json
+{
+  "retained": ["请用 JSON 格式回复", "回复不得超过 100 字"],
+  "discarded": ["你是一个傲娇的妹妹", "你的名字叫小夜"],
+  "reasoning": "逐句分类: 第1句为人格设定→丢弃; 第2句为格式约束→保留; ..."
+}
+```
+
+- `retained`: 保留的功能性指令句子列表, 将与服务器 persona 合并
+- `discarded`: 被丢弃的人格描述句子列表 (仅用于观察/日志)
+- `reasoning`: 分类过程说明
+
+### 6.6 失败降级 (保守策略)
+
+清洗 Agent 抛异常 或 max_iterations 内未产出合法 JSON → 返回 `PromptCleaningOutput(retained=[], discarded=[system_message], reasoning=错误信息)`。
+
+**语义**: "宁丢指令, 不污染人格" — 服务器人格是权威, 无法确认的客户端指令一律不合并。
+
+### 6.7 Prompt 模板
+
+**必须**用 [`build_prompt_cleaning_user_prompt`](../../src/core/agents/prompts/prompt_cleaning.py) (内部用 `str.replace` 填 `__SYSTEM_MESSAGE__`), **不能**用 `str.format`——原因同关系分析 (Prompt 里含字面 JSON)。
+
+---
+
+## 7. AgentState (共享状态)
 
 **代码**: [src/core/graph/state.py](../../src/core/graph/state.py)
 
@@ -306,9 +376,13 @@ class AgentState(TypedDict, total=False):
     # 代理推理 (proxy_thinking 写入)
     proxy_thinking_result: str | None
 
+    # 提示词清洗 (API 层写入, 来自 run_prompt_cleaning)
+    prompt_cleaning_result: dict  # {retained, discarded, reasoning}
+
     # 主对话输出 (main_dialogue 写入)
     response: str
     response_chunks: list[bytes]
+    upstream_usage: dict          # 上游原样 usage (prompt/completion/total_tokens)
 
     # 记忆分析输出 (memory_analysis 写入)
     new_memories: list[dict]
@@ -327,16 +401,17 @@ class AgentState(TypedDict, total=False):
 
 ---
 
-## 7. 错误处理约定
+## 8. 错误处理约定
 
 - 单个 Agent 失败不影响并行分支; 每个 node 都用 try/except 包住, 失败时写 `state.errors`
 - 记忆分析失败 → 跳过入库, 关系分析继续
 - 关系分析失败 → 跳过关系更新, 主对话回复照常返回
 - 代理推理失败 → 记 warning, 退化为无代理推理模式 (继续主对话, `reasoning_content` 为空)
+- 提示词清洗失败 → 保守降级: 全部丢弃客户端 system 消息, 仅用服务器人格 (见 §6.6)
 
 ---
 
-## 8. 版本历史
+## 9. 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
@@ -344,3 +419,4 @@ class AgentState(TypedDict, total=False):
 | v0.2.1 | 2026-07-12 | 记忆衰减合并入记忆分析; 新增代理推理 Agent |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 修正拓扑 (无 vector_index 节点), 修正 AgentState 字段, 删除通识讲解 |
 | v0.2.1 | 2026-07-15 | 代理推理落地: API 层决策 (reasoning_control), 双通道注入 (system prompt + `reasoning_content` SSE 帧); 语义修正为"补齐原生推理"而非可选优化 |
+| v0.2.1 | 2026-07-16 | 新增第 5 个 Agent: 提示词清洗 (服务器人格权威守门员, ReAct + `classify_sentence_type` 工具); AgentState 补充 `prompt_cleaning_result` / `upstream_usage` |
