@@ -54,6 +54,7 @@ async def list_api_keys(
     items = [
         ApiKeyInfo(
             id=ak.id,
+            key=ak.key_full,
             key_prefix=ak.key_prefix,
             note=ak.note,
             created_at=ak.created_at.isoformat(),

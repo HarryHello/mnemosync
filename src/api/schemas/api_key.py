@@ -20,9 +20,13 @@ class ApiKeyCreateResponse(BaseModel):
 
 
 class ApiKeyInfo(BaseModel):
-    """API Key 信息 (不包含完整密钥)."""
+    """API Key 信息.
+
+    ``key`` 为解密后的完整密钥, 供管理面板复制使用; 若历史数据未加密存储会为 ``None``.
+    """
 
     id: str = Field(..., description="API Key ID")
+    key: str | None = Field(None, description="完整 API Key (解密后)")
     key_prefix: str = Field(..., description="API Key 前缀")
     note: str = Field(..., description="备注")
     created_at: str = Field(..., description="创建时间")

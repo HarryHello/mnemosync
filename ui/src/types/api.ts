@@ -52,6 +52,7 @@ export interface ApiKeyCreateResponse {
 
 export interface ApiKeyInfo {
   id: string
+  key: string | null
   key_prefix: string
   note: string
   created_at: string

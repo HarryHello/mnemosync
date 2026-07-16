@@ -66,6 +66,22 @@ async function copyKey(text: string) {
   }
 }
 
+function maskKey(row: ApiKeyInfo): string {
+  if (row.key && row.key.length >= 10) {
+    return `${row.key.slice(0, 4)}******${row.key.slice(-4)}`
+  }
+  // 历史遗留数据无法解密, 只展示前缀
+  return `${row.key_prefix}…`
+}
+
+async function onCopyRow(row: ApiKeyInfo) {
+  if (!row.key) {
+    ElMessage.warning('该 Key 无法读取完整值 (可能为历史数据), 请重新生成')
+    return
+  }
+  await copyKey(row.key)
+}
+
 async function onRevoke(row: ApiKeyInfo) {
   try {
     await ElMessageBox.confirm(
@@ -99,7 +115,7 @@ onMounted(refresh)
       <div>
         <h2 class="page-title">API Key</h2>
         <p class="page-subtitle">
-          管理第三方客户端接入 Mnemosync 的密钥。完整 Key 仅在创建时显示一次, 请立即复制保存。
+          管理第三方客户端接入 Mnemosync 的密钥。密钥经 Fernet 加密后存储, 点击表格中的 Key 可随时复制完整值。
         </p>
       </div>
       <div class="head-actions">
@@ -128,9 +144,22 @@ onMounted(refresh)
         row-key="id"
         empty-text="暂无 API Key"
       >
-        <el-table-column label="Key 前缀" min-width="200">
+        <el-table-column label="Key" min-width="220">
           <template #default="{ row }">
-            <span class="mono">{{ row.key_prefix }}…</span>
+            <el-tooltip
+              :content="row.key ? '点击复制完整 Key' : '历史数据, 无法读取完整 Key'"
+              placement="top"
+              :disabled="false"
+            >
+              <span
+                class="key-cell mono"
+                :class="{ 'key-cell-disabled': !row.key }"
+                @click="onCopyRow(row)"
+              >
+                <span>{{ maskKey(row) }}</span>
+                <el-icon v-if="row.key" class="copy-icon"><CopyDocument /></el-icon>
+              </span>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column prop="note" label="备注" min-width="220" show-overflow-tooltip />
@@ -195,9 +224,9 @@ onMounted(refresh)
       width="520px"
       :close-on-click-modal="false"
     >
-      <el-alert type="warning" :closable="false" show-icon>
+      <el-alert type="success" :closable="false" show-icon>
         <template #title>
-          完整 Key <b>仅显示一次</b>, 关闭后无法再次查看。请立即复制保存。
+          Key 已生成并加密存储。你也可以稍后在列表页点击 Key 再次复制。
         </template>
       </el-alert>
       <div v-if="newKey" class="secret-block">
@@ -242,6 +271,35 @@ onMounted(refresh)
 
 .muted {
   color: var(--el-text-color-secondary);
+}
+
+.key-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-1;
+  padding: 2px 8px;
+  border-radius: $radius-sm;
+  cursor: pointer;
+  user-select: all;
+  transition: background 0.15s;
+
+  &:hover {
+    background: var(--el-fill-color-light);
+  }
+}
+
+.key-cell-disabled {
+  cursor: not-allowed;
+  color: var(--el-text-color-secondary);
+
+  &:hover {
+    background: transparent;
+  }
+}
+
+.copy-icon {
+  color: var(--el-text-color-secondary);
+  font-size: 14px;
 }
 
 .secret-block {
