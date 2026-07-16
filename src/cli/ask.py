@@ -29,13 +29,23 @@ DEFAULT_PERSONA = "你是一个温暖、有记忆能力的 AI 助手。"
 DEFAULT_PERSONA_NAME = "助手"
 
 
+def _get_default_persona() -> tuple[str, str]:
+    """从服务器配置获取默认人格."""
+    try:
+        from src.core.config import get_settings
+        s = get_settings()
+        return s.persona.prompt, s.persona.name
+    except Exception:
+        return DEFAULT_PERSONA, DEFAULT_PERSONA_NAME
+
+
 def _read_persona(path: str | None) -> tuple[str, str]:
     """从文件读取人格 prompt. 返回 (persona, persona_name).
 
     persona_name 从文件名 (不含扩展名) 派生, 便于观察多人格差异.
     """
     if not path:
-        return DEFAULT_PERSONA, DEFAULT_PERSONA_NAME
+        return _get_default_persona()
     p = Path(path)
     if not p.is_file():
         print(f"❌ 人格文件不存在: {path}", file=sys.stderr)

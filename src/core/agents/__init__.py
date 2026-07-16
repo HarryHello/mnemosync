@@ -8,9 +8,11 @@ from .base import (
 )
 from .factory import (
     MemoryAnalysisOutput,
+    PromptCleaningOutput,
     RelationshipAnalysisOutput,
     run_main_dialogue,
     run_memory_analysis,
+    run_prompt_cleaning,
     run_proxy_thinking,
     run_relationship_analysis,
 )
@@ -26,4 +28,6 @@ __all__ = [
     "run_relationship_analysis",
     "RelationshipAnalysisOutput",
     "run_proxy_thinking",
+    "run_prompt_cleaning",
+    "PromptCleaningOutput",
 ]

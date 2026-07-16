@@ -167,8 +167,8 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
         conversation_history = [m for m in conversation_history if m.get("role") != "system"]
 
         messages = build_main_dialogue_messages(
-            persona_prompt=state.get("persona", "你是一个温暖、有记忆能力的 AI 助手。"),
-            persona_name=state.get("persona_name", "助手"),
+            persona_prompt=state.get("persona") or settings.persona.prompt,
+            persona_name=state.get("persona_name") or settings.persona.name,
             user_name=source_user,
             permanent_memories=perms,
             retrieved_memories=retrieved_entries,

@@ -23,8 +23,11 @@ class AgentState(TypedDict, total=False):
     thread_id: str                          # 会话 ID（checkpoint 用）
     proxy_thinking_enabled: bool            # 是否启用代理思考
 
-    # === 代理思考（proxy_thinking 写入） ===
+    # === 代理推理 (proxy_thinking 写入) ===
     proxy_thinking_result: str | None
+
+    # === 提示词清洗 (API 层写入, 来自 run_prompt_cleaning) ===
+    prompt_cleaning_result: dict[str, Any]
 
     # === 检索结果（main_dialogue 内部, 不必入 state） ===
     # retrieved_memories / permanent_memories 由 main_dialogue 节点内部处理

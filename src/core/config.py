@@ -96,6 +96,14 @@ DEFAULT_NATIVE_REASONING_MODELS: tuple[str, ...] = (
 
 
 @dataclass
+class PersonaConfig:
+    """服务器人格配置 (server-first: 人格由服务器端权威定义)."""
+
+    name: str = "助手"
+    prompt: str = "你是一个温暖、有记忆能力的 AI 助手。"
+
+
+@dataclass
 class GraphConfig:
     """LangGraph 编排配置."""
 
@@ -122,6 +130,7 @@ class Settings:
     chat: ChatConfig
     embedding: EmbeddingConfig
     rerank: RerankConfig | None = None
+    persona: PersonaConfig = field(default_factory=PersonaConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     graph: GraphConfig = field(default_factory=GraphConfig)
@@ -189,6 +198,9 @@ def load_settings() -> Settings:
     # storage
     storage = StorageConfig(**data.get("storage", {}))
 
+    # persona
+    persona = PersonaConfig(**data.get("persona", {}))
+
     # memory
     memory = MemoryConfig(**data.get("memory", {}))
 
@@ -202,6 +214,7 @@ def load_settings() -> Settings:
         chat=chat,
         embedding=embedding,
         rerank=rerank,
+        persona=persona,
         storage=storage,
         memory=memory,
         graph=graph,

@@ -31,7 +31,7 @@ from src.api.reasoning_control import (
 from src.core.config import get_settings
 from src.core.graph import build_graph
 from src.core.memory.context import build_main_dialogue_messages
-from src.core.agents import run_proxy_thinking
+from src.core.agents import run_proxy_thinking, run_prompt_cleaning
 from src.core.memory import format_relationship
 from src.infra.forwarder import (
     Forwarder,
@@ -43,7 +43,7 @@ from src.infra.forwarder import (
 from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.memory_store import SqliteMemoryStore
-from src.tools import MemoryRetriever
+from src.tools import MemoryRetriever, make_sentence_classifier_tool
 
 router = APIRouter(prefix="/v1")
 logger = logging.getLogger(__name__)
@@ -149,15 +149,54 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     # 提取 source_user (从 user 字段或默认)
     source_user = request.user or "default"
 
-    # 提取 persona (从 system 消息)
-    persona = "你是一个温暖、有记忆能力的 AI 助手。"
-    persona_name = "助手"
+    # 服务器优先人格: 从配置加载, 不从客户端 system 消息提取
+    settings = get_settings()
+    persona = settings.persona.prompt
+    persona_name = settings.persona.name
+    logger.debug("  服务器人格: %s (长度: %d)", persona_name, len(persona))
+
+    # 提取客户端 system 消息 + 提示词清洗
+    prompt_cleaning_result: dict[str, Any] | None = None
+    client_system_msg = ""
     for msg in request.messages:
         if msg.role == "system" and msg.content:
-            persona = msg.content
+            client_system_msg = msg.content
             break
 
-    settings = get_settings()
+    if client_system_msg.strip():
+        logger.debug("  🧹 清洗客户端 system 消息 (长度: %d)", len(client_system_msg))
+        cleaning_config = ForwarderConfig(
+            base_url=settings.chat.base_url,
+            api_key=settings.chat.api_key,
+            default_model=settings.chat.assist_model,
+            timeout=30.0,
+        )
+        try:
+            async with Forwarder(cleaning_config) as fwd_clean:
+                cleaning_tools = [make_sentence_classifier_tool(fwd_clean)]
+                cleaning_out = await run_prompt_cleaning(
+                    forwarder=fwd_clean,
+                    system_message=client_system_msg,
+                    tools=cleaning_tools,
+                    max_iterations=3,
+                )
+            prompt_cleaning_result = {
+                "retained": cleaning_out.retained,
+                "discarded": cleaning_out.discarded,
+                "reasoning": cleaning_out.reasoning,
+            }
+            # 合并: 服务器人格 + 保留的功能性指令
+            if cleaning_out.retained:
+                retained_text = "\n".join(cleaning_out.retained)
+                persona = persona + "\n\n" + retained_text
+                logger.debug("  ✅ 清洗完成: 保留 %d 条指令, 丢弃 %d 条人格描述",
+                             len(cleaning_out.retained), len(cleaning_out.discarded))
+            else:
+                logger.debug("  ✅ 清洗完成: 无保留指令, 全部丢弃")
+        except Exception as e:
+            logger.warning("提示词清洗失败, 降级: 全部丢弃客户端 system 消息 (%s)", e)
+            prompt_cleaning_result = {"retained": [], "discarded": [client_system_msg], "reasoning": str(e)}
+
     use_proxy = should_use_proxy_thinking(
         request, settings, main_model=settings.chat.main_model
     )
@@ -171,6 +210,8 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "proxy_thinking_enabled": use_proxy,
         "stream_mode": bool(request.stream),
     }
+    if prompt_cleaning_result:
+        initial_state["prompt_cleaning_result"] = prompt_cleaning_result
 
     if request.stream:
         return await _handle_stream(http_request, initial_state, request, use_proxy)
@@ -317,8 +358,8 @@ async def _handle_stream(
             reasoning_text = None
 
     # 5. 构建带记忆 + 推理注入的 prompt
-    persona = initial_state.get("persona", "你是一个温暖、有记忆能力的 AI 助手。")
-    persona_name = initial_state.get("persona_name", "助手")
+    persona = initial_state.get("persona") or settings.persona.prompt
+    persona_name = initial_state.get("persona_name") or settings.persona.name
     messages_dict = initial_state["messages"]
 
     # 去掉原始 system 消息，用我们的拼装

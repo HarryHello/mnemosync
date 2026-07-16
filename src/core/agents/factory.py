@@ -14,8 +14,10 @@ from src.core.agents.base import (
 )
 from src.core.agents.prompts import (
     DECAY_TARGETS_HEADER,
+    PROMPT_CLEANING_SYSTEM,
     PROXY_THINKING_PROMPT,
     build_memory_analysis_prompt,
+    build_prompt_cleaning_user_prompt,
     build_relationship_analysis_prompt,
 )
 from src.core.config import get_settings
@@ -228,6 +230,74 @@ async def run_relationship_analysis(
     except Exception as e:
         logger.warning("关系分析异常: %s", e)
         return RelationshipAnalysisOutput(intimacy_delta=0.0, trust_delta=0.0, new_relationship_type=None, notes="", reasoning=str(e), raw_output="")
+
+
+@dataclass
+class PromptCleaningOutput:
+    """提示词清洗 Agent 的解析输出."""
+
+    retained: list[str]   # 保留的功能性指令
+    discarded: list[str]  # 丢弃的人格描述
+    reasoning: str        # 分类理由
+    raw_output: str       # 原始输出
+    steps: list           # ReAct 步骤
+
+
+async def run_prompt_cleaning(
+    forwarder: Forwarder,
+    system_message: str,
+    tools: list,
+    max_iterations: int = 3,
+) -> PromptCleaningOutput:
+    """提示词清洗 Agent: ReAct 循环, 分离人格描述与功能性指令.
+
+    Args:
+        forwarder: 上游转发器
+        system_message: 客户端发来的 system 消息
+        tools: 工具列表 (应包含 classify_sentence_type)
+        max_iterations: ReAct 最大迭代轮数
+
+    Returns:
+        PromptCleaningOutput: retained(保留的指令), discarded(丢弃的人格), reasoning, raw_output, steps
+    """
+    settings = get_settings()
+    user_prompt = build_prompt_cleaning_user_prompt(system_message)
+
+    logger.debug("=" * 60)
+    logger.debug("🧹 [prompt_cleaning] 开始, 输入长度: %d", len(system_message))
+
+    try:
+        result = await run_react_loop(
+            forwarder=forwarder,
+            model=settings.chat.assist_model,
+            system_prompt=PROMPT_CLEANING_SYSTEM,
+            user_prompt=user_prompt,
+            tools=tools,
+            max_iterations=max_iterations,
+            temperature=0.2,
+        )
+        if not result.succeeded:
+            logger.warning("提示词清洗 ReAct 失败: %s, 降级为全部丢弃", result.error)
+            return PromptCleaningOutput(
+                retained=[], discarded=[system_message] if system_message else [],
+                reasoning=f"清洗失败: {result.error}", raw_output="", steps=result.steps,
+            )
+        parsed = _extract_json(result.output) or {}
+        retained = parsed.get("retained", []) or []
+        discarded = parsed.get("discarded", []) or []
+        reasoning = parsed.get("reasoning", "")
+
+        logger.debug("  ✅ 清洗完成: 保留 %d 条指令, 丢弃 %d 条人格描述", len(retained), len(discarded))
+        return PromptCleaningOutput(
+            retained=retained, discarded=discarded,
+            reasoning=reasoning, raw_output=result.output, steps=result.steps,
+        )
+    except Exception as e:
+        logger.warning("提示词清洗异常: %s, 降级为全部丢弃", e)
+        return PromptCleaningOutput(
+            retained=[], discarded=[system_message] if system_message else [],
+            reasoning=str(e), raw_output="", steps=[],
+        )
 
 
 async def run_proxy_thinking(
