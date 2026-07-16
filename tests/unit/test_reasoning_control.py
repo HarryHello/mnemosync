@@ -21,9 +21,7 @@ from src.api.reasoning_control import (
 )
 from src.api.schemas.forward import ChatCompletionRequest, ChatMessage
 from src.core.config import (
-    ChatConfig,
     DEFAULT_NATIVE_REASONING_MODELS,
-    EmbeddingConfig,
     GraphConfig,
     Settings,
 )
@@ -38,8 +36,6 @@ def _isolate_cache():
 
 def _mk_settings(*, default: bool = False, patterns: list[str] | None = None) -> Settings:
     return Settings(
-        chat=ChatConfig(base_url="x", api_key="x", main_model="x", assist_model="x"),
-        embedding=EmbeddingConfig(base_url="x", api_key="x", model="x"),
         graph=GraphConfig(
             proxy_thinking_default=default,
             proxy_thinking_native_reasoning_models=patterns

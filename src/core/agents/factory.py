@@ -1,4 +1,7 @@
-"""Agent 执行函数: prompt + 工具 + ReAct 循环组装."""
+"""Agent 执行函数: prompt + 工具 + ReAct 循环组装.
+
+角色 → 模型 由 ``MultiForwarder`` + ``RoleResolver`` 解析, 无需显式传 ``model``.
+"""
 
 from __future__ import annotations
 
@@ -20,9 +23,9 @@ from src.core.agents.prompts import (
     load_decay_targets_header,
     load_prompt_cleaning_system,
 )
-from src.core.config import get_settings
 from src.core.memory.models import CandidateMemory, DecayEvaluation, DecayState, MemoryType
-from src.infra import Forwarder
+from src.infra.forwarder.multi import MultiForwarder
+from src.infra.llm_service.models import ModelType
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +52,7 @@ def _extract_json(content: str) -> dict | None:
         if len(parts) >= 2:
             content = parts[-2]
     content = content.strip()
-    
-    # 移除可能的 JSON 前缀/后缀文本
+
     lines = content.split("\n")
     json_lines = []
     in_json = False
@@ -61,23 +63,21 @@ def _extract_json(content: str) -> dict | None:
             json_lines.append(line)
             if stripped.endswith("}"):
                 break
-    
+
     if json_lines:
         content = "\n".join(json_lines)
-    
+
     start = content.find("{")
     end = content.rfind("}")
     if start == -1 or end == -1 or end <= start:
         return None
-    
+
     json_str = content[start : end + 1]
-    
+
     try:
         return json.loads(json_str)
     except json.JSONDecodeError:
-        # 尝试修复常见问题: 缺少引号的键
         import re
-        # 给没有引号的键加上引号
         fixed = re.sub(r'(\s*)(\w+)(\s*:)', r'\1"\2"\3', json_str)
         try:
             return json.loads(fixed)
@@ -122,21 +122,18 @@ def _parse_decay_eval(d: dict) -> DecayEvaluation:
 
 
 async def run_main_dialogue(
-    forwarder: Forwarder,
+    forwarder: MultiForwarder,
     messages: list[dict[str, Any]],
-    model: str | None = None,
     temperature: float = 0.7,
 ) -> tuple[str, dict[str, Any] | None]:
-    """主对话 Agent: 直接调用主模型生成回复.
+    """主对话 Agent: 使用 MAIN 角色候选生成回复.
 
     Returns:
         (content, usage) — content 为回复文本, usage 为上游原样返回的 token 计数字典
         (可能为 None, 例如上游未返回 usage 段).
     """
-    settings = get_settings()
-    model = model or settings.chat.main_model
     resp = await forwarder.chat(
-        messages=messages, model=model, temperature=temperature,
+        ModelType.MAIN, messages=messages, temperature=temperature,
     )
     content = resp["choices"][0]["message"]["content"] or ""
     usage = resp.get("usage")
@@ -144,7 +141,7 @@ async def run_main_dialogue(
 
 
 async def run_memory_analysis(
-    forwarder: Forwarder,
+    forwarder: MultiForwarder,
     source_user: str,
     conversation: str,
     tools: list,
@@ -152,7 +149,6 @@ async def run_memory_analysis(
     max_iterations: int = 6,
 ) -> MemoryAnalysisOutput:
     """记忆分析 Agent: ReAct 循环, 提取候选 + 衰减评估."""
-    settings = get_settings()
     decay_section = ""
     if decay_targets:
         lines = []
@@ -168,7 +164,7 @@ async def run_memory_analysis(
         decay_targets_section=decay_section,
     )
     result = await run_react_loop(
-        forwarder=forwarder, model=settings.chat.assist_model,
+        forwarder=forwarder, role=ModelType.ASSIST,
         system_prompt="你是记忆分析 Agent。按指令调用工具后输出 JSON。",
         user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
         temperature=0.2,
@@ -197,20 +193,19 @@ class RelationshipAnalysisOutput:
 
 
 async def run_relationship_analysis(
-    forwarder: Forwarder,
+    forwarder: MultiForwarder,
     current_relationship: str,
     conversation: str,
     tools: list,
     max_iterations: int = 3,
 ) -> RelationshipAnalysisOutput:
     """关系分析 Agent: CoT, 调用 emotion_analyzer 后输出亲密度增量."""
-    settings = get_settings()
     user_prompt = build_relationship_analysis_prompt(
         current_relationship=current_relationship, conversation=conversation,
     )
     try:
         result = await run_react_loop(
-            forwarder=forwarder, model=settings.chat.assist_model,
+            forwarder=forwarder, role=ModelType.ASSIST,
             system_prompt="你是关系分析 Agent。调用 emotion_analyzer 后输出 JSON。",
             user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
             temperature=0.2,
@@ -236,15 +231,15 @@ async def run_relationship_analysis(
 class PromptCleaningOutput:
     """提示词清洗 Agent 的解析输出."""
 
-    retained: list[str]   # 保留的功能性指令
-    discarded: list[str]  # 丢弃的人格描述
-    reasoning: str        # 分类理由
-    raw_output: str       # 原始输出
-    steps: list           # ReAct 步骤
+    retained: list[str]
+    discarded: list[str]
+    reasoning: str
+    raw_output: str
+    steps: list
 
 
 async def run_prompt_cleaning(
-    forwarder: Forwarder,
+    forwarder: MultiForwarder,
     system_message: str,
     tools: list,
     max_iterations: int = 3,
@@ -252,7 +247,7 @@ async def run_prompt_cleaning(
     """提示词清洗 Agent: ReAct 循环, 分离人格描述与功能性指令.
 
     Args:
-        forwarder: 上游转发器
+        forwarder: 多候选转发器
         system_message: 客户端发来的 system 消息
         tools: 工具列表 (应包含 classify_sentence_type)
         max_iterations: ReAct 最大迭代轮数
@@ -260,7 +255,6 @@ async def run_prompt_cleaning(
     Returns:
         PromptCleaningOutput: retained(保留的指令), discarded(丢弃的人格), reasoning, raw_output, steps
     """
-    settings = get_settings()
     user_prompt = build_prompt_cleaning_user_prompt(system_message)
 
     logger.debug("=" * 60)
@@ -269,7 +263,7 @@ async def run_prompt_cleaning(
     try:
         result = await run_react_loop(
             forwarder=forwarder,
-            model=settings.chat.assist_model,
+            role=ModelType.ASSIST,
             system_prompt=load_prompt_cleaning_system(),
             user_prompt=user_prompt,
             tools=tools,
@@ -301,7 +295,7 @@ async def run_prompt_cleaning(
 
 
 async def run_proxy_thinking(
-    forwarder: Forwarder,
+    forwarder: MultiForwarder,
     user_name: str,
     relationship: str,
     memories: str,
@@ -310,7 +304,6 @@ async def run_proxy_thinking(
     max_iterations: int = 3,
 ) -> str:
     """代理思考 Agent: CoT, 输出推理过程供主对话参考."""
-    settings = get_settings()
     user_prompt = build_proxy_thinking_prompt(
         user_name=user_name,
         relationship=relationship,
@@ -319,14 +312,14 @@ async def run_proxy_thinking(
     )
     if tools:
         result = await run_react_loop(
-            forwarder=forwarder, model=settings.chat.assist_model,
+            forwarder=forwarder, role=ModelType.ASSIST,
             system_prompt="你是代理思考助手。可调用工具检索记忆，然后输出分析。",
             user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
             temperature=0.3,
         )
         return result.output
     return await run_simple_completion(
-        forwarder=forwarder, model=settings.chat.assist_model,
+        forwarder=forwarder, role=ModelType.ASSIST,
         system_prompt="你是代理思考助手。输出供主 AI 参考的推理分析。",
         user_prompt=user_prompt, temperature=0.3,
         extra_body={"enable_thinking": False},

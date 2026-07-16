@@ -2,6 +2,9 @@
 
 从 config.local.toml 读取配置（开发）或环境变量（生产）.
 提供单例 Settings 供所有模块使用.
+
+v0.2.3 起, chat/embedding/rerank 模型不再来自本文件, 而是由
+llm_service.db 的 role_bindings 表管理 (由 UI/CLI 增删改).
 """
 
 from __future__ import annotations
@@ -16,35 +19,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # 本地配置文件路径（被 gitignore 忽略）
 LOCAL_CONFIG_PATH = PROJECT_ROOT / "config.local.toml"
-
-
-@dataclass
-class ChatConfig:
-    """对话模型配置."""
-
-    base_url: str
-    api_key: str
-    main_model: str
-    assist_model: str
-
-
-@dataclass
-class EmbeddingConfig:
-    """嵌入模型配置."""
-
-    base_url: str
-    api_key: str
-    model: str
-    dimensions: int | None = None  # None = 由模型默认值决定
-
-
-@dataclass
-class RerankConfig:
-    """重排序模型配置（可选）."""
-
-    base_url: str
-    api_key: str
-    model: str
 
 
 @dataclass
@@ -130,11 +104,12 @@ class RuntimeConfig:
 
 @dataclass
 class Settings:
-    """全局配置聚合."""
+    """全局配置聚合.
 
-    chat: ChatConfig
-    embedding: EmbeddingConfig
-    rerank: RerankConfig | None = None
+    v0.2.3 起, 模型绑定 (chat/embedding/rerank) 由 role_bindings 表管理,
+    本类只保留纯粹的应用参数.
+    """
+
     persona: PersonaConfig = field(default_factory=PersonaConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -142,83 +117,25 @@ class Settings:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
 
-def _coerce_section(data: dict[str, Any], section: str) -> dict[str, Any]:
-    """提取并校验一个配置段."""
-    if section not in data:
-        raise ValueError(f"config.local.toml 缺少 [{section}] 段")
-    return data[section]
-
-
 def load_settings() -> Settings:
     """加载配置.
 
-    优先级: config.local.toml > 报错（必须有本地配置才能运行）.
-
-    Returns:
-        Settings 实例
-
-    Raises:
-        FileNotFoundError: 配置文件不存在
-        ValueError: 配置项缺失或非法
+    优先级: config.local.toml > 缺失时使用全默认值 (不再必需文件存在).
     """
     if not LOCAL_CONFIG_PATH.exists():
-        raise FileNotFoundError(
-            f"找不到 {LOCAL_CONFIG_PATH}\n"
-            f"请复制模板: cp config.example.toml config.local.toml\n"
-            f"然后填入真实凭证。"
-        )
+        # 无本地配置也允许启动 (v0.2.3 起模型绑定不再依赖配置文件)
+        return Settings()
 
     with open(LOCAL_CONFIG_PATH, "rb") as f:
         data = tomllib.load(f)
 
-    # chat
-    chat_data = _coerce_section(data, "chat")
-    chat = ChatConfig(
-        base_url=chat_data["base_url"],
-        api_key=chat_data["api_key"],
-        main_model=chat_data["main_model"],
-        assist_model=chat_data["assist_model"],
-    )
-
-    # embedding
-    emb_data = _coerce_section(data, "embedding")
-    embedding = EmbeddingConfig(
-        base_url=emb_data["base_url"],
-        api_key=emb_data["api_key"],
-        model=emb_data["model"],
-        dimensions=emb_data.get("dimensions"),
-    )
-
-    # rerank（可选）
-    rerank: RerankConfig | None = None
-    if "rerank" in data and data["rerank"]:
-        rr = data["rerank"]
-        if rr.get("base_url") and rr.get("api_key") and rr.get("model"):
-            rerank = RerankConfig(
-                base_url=rr["base_url"],
-                api_key=rr["api_key"],
-                model=rr["model"],
-            )
-
-    # storage
     storage = StorageConfig(**data.get("storage", {}))
-
-    # persona
     persona = PersonaConfig(**data.get("persona", {}))
-
-    # memory
     memory = MemoryConfig(**data.get("memory", {}))
-
-    # graph
     graph = GraphConfig(**data.get("graph", {}))
-
-    # runtime
     runtime = RuntimeConfig(**data.get("runtime", {}))
 
     return Settings(
-        chat=chat,
-        embedding=embedding,
-        rerank=rerank,
         persona=persona,
         storage=storage,
         memory=memory,

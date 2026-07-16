@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from src.core.models.resolver import RoleResolver
+from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.auth_store import SqliteAuthStore
@@ -52,16 +54,25 @@ async def app_lifespan(app: FastAPI):
     await http_log_store.connect()
     await llm_service_store.init_db()
 
+    resolver = RoleResolver(llm_service_store)
+    multi_forwarder = MultiForwarder(resolver)
+
     app.state.auth_store = auth_store
     app.state.api_key_store = api_key_store
     app.state.memory_store = memory_store
     app.state.http_log_store = http_log_store
     app.state.llm_service_store = llm_service_store
-    logger.info("Stores connected (auth / api_key / memory / http_log / llm_service)")
+    app.state.resolver = resolver
+    app.state.multi_forwarder = multi_forwarder
+    logger.info("Stores connected (auth / api_key / memory / http_log / llm_service); resolver + multi_forwarder ready")
 
     try:
         yield
     finally:
+        try:
+            await multi_forwarder.close()
+        except Exception as e:
+            logger.warning("Error closing multi_forwarder: %s", e)
         for store in (http_log_store, memory_store, api_key_store, auth_store):
             try:
                 await store.close()

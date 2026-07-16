@@ -97,7 +97,11 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
     from src.core.graph import build_graph
     from src.core.memory import format_relationship
     from src.core.memory.context import build_main_dialogue_messages
-    from src.infra.forwarder import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout, parse_sse_stream
+    from src.core.models.resolver import RoleResolver
+    from src.infra.forwarder import UpstreamError, UpstreamTimeout, parse_sse_stream
+    from src.infra.forwarder.multi import MultiForwarder
+    from src.infra.llm_service.models import ModelType
+    from src.infra.llm_service.store import LLMServiceStore
     from src.infra.vector_store import VectorStore
     from src.persistence.memory_store import SqliteMemoryStore
     from src.tools import MemoryRetriever
@@ -109,15 +113,13 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
 
     perms = await memory_store.list_permanent(source_user, limit=settings.memory.permanent_load_top)
 
+    llm_store = LLMServiceStore("data/llm_service.db")
+    resolver = RoleResolver(llm_store)
+    multi_forwarder = MultiForwarder(resolver)
+
     retrieved_entries: list = []
-    forwarder_config = ForwarderConfig(
-        base_url=settings.chat.base_url,
-        api_key=settings.chat.api_key,
-        default_model=settings.chat.main_model,
-        timeout=30.0,
-    )
-    async with Forwarder(forwarder_config) as forwarder:
-        retriever = MemoryRetriever(forwarder, vector_store, memory_store)
+    try:
+        retriever = MemoryRetriever(multi_forwarder, vector_store, memory_store)
         results = await retriever.search(
             question, top_k=settings.memory.retrieval_top_k, source_user=source_user,
         )
@@ -127,38 +129,31 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
             if entry:
                 retrieved_entries.append(entry)
 
-    rel = await memory_store.get_relationship("default", source_user)
-    print(
-        f"🧠 记忆: 永久 {len(perms)} 条 · 检索 {len(retrieved_entries)} 条 · 关系 "
-        f"{format_relationship(rel) if rel else '(无)'}",
-        file=sys.stderr,
-    )
+        rel = await memory_store.get_relationship("default", source_user)
+        print(
+            f"🧠 记忆: 永久 {len(perms)} 条 · 检索 {len(retrieved_entries)} 条 · 关系 "
+            f"{format_relationship(rel) if rel else '(无)'}",
+            file=sys.stderr,
+        )
 
-    messages_with_memory = build_main_dialogue_messages(
-        persona_prompt=persona,
-        persona_name=persona_name,
-        user_name=source_user,
-        permanent_memories=perms,
-        retrieved_memories=retrieved_entries,
-        conversation_history=[{"role": "user", "content": question}],
-        relationship=rel,
-    )
+        messages_with_memory = build_main_dialogue_messages(
+            persona_prompt=persona,
+            persona_name=persona_name,
+            user_name=source_user,
+            permanent_memories=perms,
+            retrieved_memories=retrieved_entries,
+            conversation_history=[{"role": "user", "content": question}],
+            relationship=rel,
+        )
 
-    print(f"💬 [{source_user} → {persona_name}] {question}\n", file=sys.stderr)
+        print(f"💬 [{source_user} → {persona_name}] {question}\n", file=sys.stderr)
 
-    stream_config = ForwarderConfig(
-        base_url=settings.chat.base_url,
-        api_key=settings.chat.api_key,
-        default_model=settings.chat.main_model,
-        timeout=90.0,
-    )
-    chunks: list[bytes] = []
-    buf = b""
-    async with Forwarder(stream_config) as forwarder:
+        chunks: list[bytes] = []
+        buf = b""
         try:
-            async for chunk in forwarder.chat_stream(
+            async for chunk in multi_forwarder.chat_stream(
+                ModelType.MAIN,
                 messages=messages_with_memory,
-                model=settings.chat.main_model,
                 temperature=None,
                 max_tokens=None,
             ):
@@ -187,6 +182,8 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
         except UpstreamError as e:
             print(f"\n❌ 上游错误: {e.message}", file=sys.stderr)
             return 1
+    finally:
+        await multi_forwarder.close()
 
     print()
 

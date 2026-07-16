@@ -18,7 +18,7 @@ from src.core.memory.models import (
     MemoryType,
     Relationship,
 )
-from src.infra import Forwarder
+from src.infra.forwarder.multi import MultiForwarder
 
 if TYPE_CHECKING:
     from src.infra.vector_store import VectorStore
@@ -41,7 +41,7 @@ class MemoryLifecycle:
         self,
         memory_store: SqliteMemoryStore,
         vector_store: "VectorStore",
-        forwarder: Forwarder,
+        forwarder: MultiForwarder,
     ):
         self.memory_store = memory_store
         self.vector_store = vector_store
@@ -93,10 +93,7 @@ class MemoryLifecycle:
 
         # 生成 embedding 并入库
         try:
-            vecs = await self.forwarder.embed(
-                entry.content, model=settings.embedding.model,
-                dimensions=settings.embedding.dimensions,
-            )
+            vecs = await self.forwarder.embed(entry.content)
         except Exception as e:
             logger.error("生成 embedding 失败, 记忆未入库: %s", e)
             return None

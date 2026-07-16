@@ -33,13 +33,17 @@ from src.core.graph import build_graph
 from src.core.memory.context import build_main_dialogue_messages
 from src.core.agents import run_proxy_thinking, run_prompt_cleaning
 from src.core.memory import format_relationship
+from src.core.models.resolver import NoCandidateForRoleError
 from src.infra.forwarder import (
-    Forwarder,
-    ForwarderConfig,
     UpstreamError,
     UpstreamTimeout,
     parse_sse_stream,
 )
+from src.infra.forwarder.multi import (
+    MultiForwarder,
+    UpstreamAllCandidatesFailed,
+)
+from src.infra.llm_service.models import ModelType
 from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.memory_store import SqliteMemoryStore
@@ -65,6 +69,21 @@ def _get_compiled_graph():
     if _compiled_graph is None:
         _compiled_graph = build_graph()
     return _compiled_graph
+
+
+def _get_multi_forwarder(http_request: Request) -> MultiForwarder:
+    """从 app.state 取共享 MultiForwarder (由 lifespan 建立)."""
+    return http_request.app.state.multi_forwarder
+
+
+async def _resolve_main_model(http_request: Request) -> str:
+    """解析 MAIN 角色最高优先级候选的模型名 (供 usage/response.model/推理判定使用)."""
+    resolver = http_request.app.state.resolver
+    try:
+        top = await resolver.first(ModelType.MAIN)
+        return top.model
+    except NoCandidateForRoleError:
+        return "mnemosync-any"
 
 
 async def _verify_api_key(request: Request) -> str | None:
@@ -165,27 +184,20 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
 
     if client_system_msg.strip():
         logger.debug("  🧹 清洗客户端 system 消息 (长度: %d)", len(client_system_msg))
-        cleaning_config = ForwarderConfig(
-            base_url=settings.chat.base_url,
-            api_key=settings.chat.api_key,
-            default_model=settings.chat.assist_model,
-            timeout=30.0,
-        )
+        multi_forwarder = _get_multi_forwarder(http_request)
         try:
-            async with Forwarder(cleaning_config) as fwd_clean:
-                cleaning_tools = [make_sentence_classifier_tool(fwd_clean)]
-                cleaning_out = await run_prompt_cleaning(
-                    forwarder=fwd_clean,
-                    system_message=client_system_msg,
-                    tools=cleaning_tools,
-                    max_iterations=3,
-                )
+            cleaning_tools = [make_sentence_classifier_tool(multi_forwarder)]
+            cleaning_out = await run_prompt_cleaning(
+                forwarder=multi_forwarder,
+                system_message=client_system_msg,
+                tools=cleaning_tools,
+                max_iterations=3,
+            )
             prompt_cleaning_result = {
                 "retained": cleaning_out.retained,
                 "discarded": cleaning_out.discarded,
                 "reasoning": cleaning_out.reasoning,
             }
-            # 合并: 服务器人格 + 保留的功能性指令
             if cleaning_out.retained:
                 retained_text = "\n".join(cleaning_out.retained)
                 persona = persona + "\n\n" + retained_text
@@ -197,10 +209,9 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
             logger.warning("提示词清洗失败, 降级: 全部丢弃客户端 system 消息 (%s)", e)
             prompt_cleaning_result = {"retained": [], "discarded": [client_system_msg], "reasoning": str(e)}
 
-    use_proxy = should_use_proxy_thinking(
-        request, settings, main_model=settings.chat.main_model
-    )
-    logger.debug("  代理推理: %s", "启用" if use_proxy else "跳过")
+    main_model = await _resolve_main_model(http_request)
+    use_proxy = should_use_proxy_thinking(request, settings, main_model=main_model)
+    logger.debug("  代理推理: %s (main_model=%s)", "启用" if use_proxy else "跳过", main_model)
 
     initial_state = {
         "messages": messages_dict,
@@ -209,6 +220,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "persona_name": persona_name,
         "proxy_thinking_enabled": use_proxy,
         "stream_mode": bool(request.stream),
+        "main_model": main_model,
     }
     if prompt_cleaning_result:
         initial_state["prompt_cleaning_result"] = prompt_cleaning_result
@@ -216,15 +228,15 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     if request.stream:
         return await _handle_stream(http_request, initial_state, request, use_proxy)
     else:
-        return await _handle_non_stream(initial_state, request)
+        return await _handle_non_stream(http_request, initial_state, request)
 
 
 async def _handle_non_stream(
+    http_request: Request,
     initial_state: dict[str, Any],
     request: ChatCompletionRequest,
 ) -> JSONResponse:
     """非流式: 运行完整图, 返回结果."""
-    settings = get_settings()
     graph = _get_compiled_graph()
 
     logger.debug("🚀 开始执行图 (非流式)...")
@@ -240,6 +252,7 @@ async def _handle_non_stream(
     reasoning = final_state.get("proxy_thinking_result") or None
     upstream_usage = final_state.get("upstream_usage") or {}
     response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    main_model = initial_state.get("main_model") or await _resolve_main_model(http_request)
 
     usage_info = UsageInfo(
         prompt_tokens=int(upstream_usage.get("prompt_tokens", 0)),
@@ -252,7 +265,7 @@ async def _handle_non_stream(
     return JSONResponse(
         content=ChatCompletionResponse(
             id=response_id,
-            model=settings.chat.main_model,
+            model=main_model,
             choices=[
                 ChatCompletionChoice(
                     index=0,
@@ -283,21 +296,19 @@ async def _handle_stream(
     """
     settings = get_settings()
     source_user = initial_state.get("source_user", "default")
-    main_model = settings.chat.main_model
+    main_model = initial_state.get("main_model") or await _resolve_main_model(http_request)
+    multi_forwarder = _get_multi_forwarder(http_request)
 
-    # 加载记忆
     logger.debug("🧠 加载记忆上下文...")
     memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
     await memory_store.init_db()
     vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
 
-    # 1. 加载永久记忆
     perms = await memory_store.list_permanent(
         source_user, limit=settings.memory.permanent_load_top
     )
     logger.debug("  📚 永久记忆: %d 条", len(perms))
 
-    # 2. 语义检索相关记忆
     conversation_history = initial_state.get("messages", [])
     query = ""
     for m in reversed(conversation_history):
@@ -306,52 +317,37 @@ async def _handle_stream(
             break
 
     retrieved_entries: list = []
-    forwarder_config_retrieve = ForwarderConfig(
-        base_url=settings.chat.base_url,
-        api_key=settings.chat.api_key,
-        default_model=main_model,
-        timeout=30.0,
-    )
     if query:
-        async with Forwarder(forwarder_config_retrieve) as forwarder:
-            retriever = MemoryRetriever(forwarder, vector_store, memory_store)
-            results = await retriever.search(
-                query, top_k=settings.memory.retrieval_top_k,
-                source_user=source_user,
-            )
-            for r in results:
-                await memory_store.mark_accessed(r.memory_id)
-                entry = await memory_store.get_by_id(r.memory_id)
-                if entry:
-                    retrieved_entries.append(entry)
+        retriever = MemoryRetriever(multi_forwarder, vector_store, memory_store)
+        results = await retriever.search(
+            query, top_k=settings.memory.retrieval_top_k,
+            source_user=source_user,
+        )
+        for r in results:
+            await memory_store.mark_accessed(r.memory_id)
+            entry = await memory_store.get_by_id(r.memory_id)
+            if entry:
+                retrieved_entries.append(entry)
         logger.debug("  🔍 检索结果: %d 条", len(retrieved_entries))
 
-    # 3. 加载关系状态
     rel = await memory_store.get_relationship("default", source_user)
     logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
 
-    # 4. 代理推理 (可选, 同步, 与检索串行) ─────────────────────
+    # 4. 代理推理 (可选, 同步, 与检索串行)
     reasoning_text: str | None = None
     if use_proxy_thinking:
-        logger.debug("🤔 [代理推理] 开始 (assist_model: %s)", settings.chat.assist_model)
-        assist_config = ForwarderConfig(
-            base_url=settings.chat.base_url,
-            api_key=settings.chat.api_key,
-            default_model=settings.chat.assist_model,
-            timeout=60.0,
-        )
+        logger.debug("🤔 [代理推理] 开始 (ASSIST role)")
         try:
             perms_text = "\n".join(f"- {e.content}" for e in perms) or "（无）"
             user_msg_for_thinking = query
-            async with Forwarder(assist_config) as fwd_assist:
-                reasoning_text = await run_proxy_thinking(
-                    forwarder=fwd_assist,
-                    user_name=source_user,
-                    relationship=format_relationship(rel) if rel else "新用户",
-                    memories=perms_text,
-                    user_message=user_msg_for_thinking,
-                    tools=None,
-                )
+            reasoning_text = await run_proxy_thinking(
+                forwarder=multi_forwarder,
+                user_name=source_user,
+                relationship=format_relationship(rel) if rel else "新用户",
+                memories=perms_text,
+                user_message=user_msg_for_thinking,
+                tools=None,
+            )
             logger.debug("  ✅ 代理推理完成, 长度: %d", len(reasoning_text) if reasoning_text else 0)
         except Exception as e:
             logger.warning("代理推理失败, 退化为普通转发: %s", e)
@@ -362,7 +358,6 @@ async def _handle_stream(
     persona_name = initial_state.get("persona_name") or settings.persona.name
     messages_dict = initial_state["messages"]
 
-    # 去掉原始 system 消息，用我们的拼装
     conversation_history = [m for m in messages_dict if m.get("role") != "system"]
 
     messages_with_memory = build_main_dialogue_messages(
@@ -378,21 +373,8 @@ async def _handle_stream(
 
     logger.debug("  📝 构建消息数: %d (含记忆上下文)", len(messages_with_memory))
 
-    forwarder_config = ForwarderConfig(
-        base_url=settings.chat.base_url,
-        api_key=settings.chat.api_key,
-        default_model=main_model,
-        timeout=90.0,
-    )
-
     chatcmpl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
-    # 组装透传给上游的可选字段 (tools / tool_choice / response_format / stream_options
-    # / top_p / stop / seed / frequency_penalty / presence_penalty / logit_bias
-    # / logprobs / top_logprobs / n / user / reasoning_effort / reasoning / thinking).
-    # 注意: DashScope 兼容端点在 stream=True 下不允许 tools; 若配置的是 DashScope,
-    # 上游会返回 4xx, 错误信息经由 UpstreamError 走 SSE error 帧回给客户端 — 是有意的
-    # "让服务商说话", 而非我们静默丢字段。
     passthrough: dict[str, Any] = {}
     _optional_fields = (
         "tools", "tool_choice", "response_format", "stream_options",
@@ -408,7 +390,6 @@ async def _handle_stream(
         logger.debug("  🔗 透传上游可选字段: %s", list(passthrough.keys()))
 
     async def stream_generator():
-        # ── 先吐合成的 reasoning_content 帧 ──
         if reasoning_text:
             for frame in build_reasoning_stream_frames(
                 reasoning_text, chatcmpl_id=chatcmpl_id, model=main_model,
@@ -417,34 +398,40 @@ async def _handle_stream(
 
         collected_chunks: list[bytes] = []
         saw_native = False
-        async with Forwarder(forwarder_config) as forwarder:
-            try:
-                logger.debug("🚀 开始流式转发 (带记忆上下文)...")
-                async for chunk in forwarder.chat_stream(
-                    messages=messages_with_memory,
-                    model=main_model,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    **passthrough,
-                ):
-                    collected_chunks.append(chunk)
-                    if not saw_native and chunk_has_native_reasoning(chunk):
-                        saw_native = True
-                    yield chunk
-                logger.debug("✅ 流式转发完成, chunks: %d", len(collected_chunks))
-            except UpstreamTimeout as e:
-                logger.debug("⏰ 流式超时: %s", e)
-                yield f'data: {{"error": "{e}"}}\n\n'.encode("utf-8")
-                return
-            except UpstreamError as e:
-                logger.debug("❌ 流式错误: %s", e.message)
-                yield f'data: {{"error": "{e.message}"}}\n\n'.encode("utf-8")
-                return
+        try:
+            logger.debug("🚀 开始流式转发 (带记忆上下文)...")
+            async for chunk in multi_forwarder.chat_stream(
+                ModelType.MAIN,
+                messages=messages_with_memory,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                **passthrough,
+            ):
+                collected_chunks.append(chunk)
+                if not saw_native and chunk_has_native_reasoning(chunk):
+                    saw_native = True
+                yield chunk
+            logger.debug("✅ 流式转发完成, chunks: %d", len(collected_chunks))
+        except UpstreamTimeout as e:
+            logger.debug("⏰ 流式超时: %s", e)
+            yield f'data: {{"error": "{e}"}}\n\n'.encode("utf-8")
+            return
+        except UpstreamError as e:
+            logger.debug("❌ 流式错误: %s", e.message)
+            yield f'data: {{"error": "{e.message}"}}\n\n'.encode("utf-8")
+            return
+        except UpstreamAllCandidatesFailed as e:
+            logger.debug("❌ 所有候选失败: %s", e)
+            yield f'data: {{"error": "all candidates failed: {e}"}}\n\n'.encode("utf-8")
+            return
+        except NoCandidateForRoleError as e:
+            logger.debug("❌ 无候选: %s", e)
+            yield f'data: {{"error": "no candidate: {e}"}}\n\n'.encode("utf-8")
+            return
 
         if saw_native:
             mark_native_reasoning(main_model)
 
-        # 后台记忆图 (跳过代理推理节点, 复用已算好的推理结果)
         logger.debug("🔄 触发后台记忆图...")
         initial_state["proxy_thinking_enabled"] = False
         if reasoning_text:

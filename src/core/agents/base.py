@@ -10,7 +10,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from src.infra import Forwarder, UpstreamError
+from src.infra.forwarder import UpstreamError
+from src.infra.forwarder.multi import MultiForwarder
+from src.infra.llm_service.models import ModelType
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +86,8 @@ async def _execute_tool(tool, args: dict[str, Any]) -> Any:
 
 
 async def run_react_loop(
-    forwarder: Forwarder,
-    model: str,
+    forwarder: MultiForwarder,
+    role: ModelType,
     system_prompt: str,
     user_prompt: str,
     tools: list,
@@ -97,13 +99,13 @@ async def run_react_loop(
 
     流程:
         1. 组装 messages (system + user) + tools schema
-        2. 通过 Forwarder 调用模型
+        2. 通过 MultiForwarder 按角色候选调用模型
         3. 若模型返回 tool_calls → 执行工具 → 把结果以 role=tool 喂回 → 回到 1
         4. 若模型返回最终内容 → 返回 ReActResult
 
     Args:
-        forwarder: 模型调用通道
-        model: 模型名
+        forwarder: 多候选模型调用通道
+        role: 角色 (决定候选列表; 通常 ASSIST)
         system_prompt: system 消息
         user_prompt: user 消息（任务描述）
         tools: LangChain Tool 列表
@@ -125,8 +127,8 @@ async def run_react_loop(
     for round_num in range(1, max_iterations + 1):
         try:
             resp = await forwarder.chat(
+                role,
                 messages=messages,
-                model=model,
                 tools=tools_schema,
                 tool_choice="auto",
                 temperature=temperature,
@@ -210,8 +212,8 @@ async def run_react_loop(
 
 
 async def run_simple_completion(
-    forwarder: Forwarder,
-    model: str,
+    forwarder: MultiForwarder,
+    role: ModelType,
     system_prompt: str,
     user_prompt: str,
     temperature: float = 0.7,
@@ -228,8 +230,8 @@ async def run_simple_completion(
         {"role": "user", "content": user_prompt},
     ]
     resp = await forwarder.chat(
+        role,
         messages=messages,
-        model=model,
         temperature=temperature,
         max_tokens=max_tokens,
         extra_body=extra_body,

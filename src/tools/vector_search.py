@@ -13,8 +13,8 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from src.core.config import get_settings
-from src.infra import Forwarder, ForwarderConfig
+from src.infra.forwarder.multi import MultiForwarder
+from src.infra.llm_service.models import ModelType
 from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
 
@@ -51,7 +51,7 @@ class MemoryRetriever:
 
     def __init__(
         self,
-        forwarder: Forwarder,
+        forwarder: MultiForwarder,
         vector_store: VectorStore,
         memory_store: SqliteMemoryStore,
     ):
@@ -72,15 +72,12 @@ class MemoryRetriever:
             query: 查询文本
             top_k: 最终返回条数
             source_user: 限定来源用户
-            use_rerank: 是否使用 reranker 精排（无配置则降级）
-        """
-        settings = get_settings()
+            use_rerank: 是否使用 reranker 精排（无候选则降级）
 
-        # 1. embedding
-        vectors = await self.forwarder.embed(
-            query, model=settings.embedding.model,
-            dimensions=settings.embedding.dimensions,
-        )
+        embedding 维度由所选模型决定, 无需外部配置.
+        """
+        # 1. embedding (role=EMBEDDING, 维度由绑定模型决定)
+        vectors = await self.forwarder.embed(query)
         query_vector = vectors[0]
 
         # 2. ChromaDB 粗筛（取 top_k * 2 候选）
@@ -91,15 +88,14 @@ class MemoryRetriever:
         if not candidates:
             return []
 
-        # 3. reranker 精排（可选）
+        # 3. reranker 精排（可选; 无绑定则降级为纯 cosine）
         results: list[RetrievedMemory] = []
-        if use_rerank and settings.rerank:
+        if use_rerank:
             try:
                 documents = [c["content"] for c in candidates]
                 rerank_results = await self.forwarder.rerank(
-                    query, documents, model=settings.rerank.model, top_n=top_k,
+                    query, documents, top_n=top_k,
                 )
-                # 构建 memory_id → relevance 映射
                 for r in rerank_results:
                     idx = r["index"]
                     if idx >= len(candidates):
@@ -110,15 +106,11 @@ class MemoryRetriever:
                         continue
                     results.append(self._build_result(entry, c["similarity"], r.get("relevance_score")))
             except Exception:
-                # rerank 失败降级为纯 cosine
-                results = [self._build_result_from_search(c) for c in candidates[:top_k]]
-                # 补完整字段
-                patched: list[RetrievedMemory] = []
-                for r in results:
-                    entry = await self.memory_store.get_by_id(r.memory_id)
+                # rerank 未配置或失败降级为纯 cosine
+                for c in candidates[:top_k]:
+                    entry = await self.memory_store.get_by_id(c["id"])
                     if entry:
-                        patched.append(self._build_result(entry, r.similarity, None))
-                results = patched
+                        results.append(self._build_result(entry, c["similarity"], None))
         else:
             for c in candidates[:top_k]:
                 entry = await self.memory_store.get_by_id(c["id"])
@@ -140,20 +132,6 @@ class MemoryRetriever:
             emotional_tags=entry.emotional_tags,
             source_user=entry.source_user,
         )
-
-    def _build_result_from_search(self, c: dict) -> RetrievedMemory:
-        meta = c.get("metadata", {})
-        return RetrievedMemory(
-            memory_id=c["id"],
-            content=c["content"],
-            similarity=c["similarity"],
-            relevance_score=None,
-            importance=meta.get("importance", 0.5),
-            memory_type=meta.get("memory_type", "normal"),
-            emotional_tags=meta.get("emotional_tags", "").split("|") if meta.get("emotional_tags") else [],
-            source_user=meta.get("source_user"),
-        )
-
 
 def make_vector_search_tool(retriever: MemoryRetriever):
     """创建 vector_search LangChain Tool.

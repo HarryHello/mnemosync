@@ -12,8 +12,8 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from src.core.config import get_settings
-from src.infra import Forwarder, ForwarderConfig
+from src.infra.forwarder.multi import MultiForwarder
+from src.infra.llm_service.models import ModelType
 
 EMOTION_PROMPT = """你是情绪分析助手。分析以下文本的情绪内容，以 JSON 格式返回：
 
@@ -49,23 +49,19 @@ class EmotionResult:
 
 
 async def analyze_emotion(
-    forwarder: Forwarder, text: str, model: str | None = None
+    forwarder: MultiForwarder, text: str,
 ) -> EmotionResult:
     """调用辅助模型分析文本情绪（非 Tool 部分, 便于直接复用）."""
-    settings = get_settings()
-    model = model or settings.chat.assist_model
-
     messages = [
         {"role": "system", "content": "你是情绪分析助手。只返回 JSON。"},
         {"role": "user", "content": EMOTION_PROMPT.format(text=text)},
     ]
     resp = await forwarder.chat(
-        messages=messages, model=model, temperature=0.1,
+        ModelType.ASSIST, messages=messages, temperature=0.1,
         response_format={"type": "json_object"},
-        extra_body={"enable_thinking": False},  # 关闭 Qwen3 thinking, 保证 JSON 输出
+        extra_body={"enable_thinking": False},
     )
     content = resp["choices"][0]["message"]["content"].strip()
-    # 防御性剥离 <think>...</think>（即使关闭 thinking 也可能有残留）
     if "<think>" in content:
         content = content.split("</think>")[-1].strip()
     data = json.loads(content)
@@ -78,7 +74,7 @@ async def analyze_emotion(
     )
 
 
-def make_emotion_analyzer_tool(forwarder: Forwarder):
+def make_emotion_analyzer_tool(forwarder: MultiForwarder):
     """创建 emotion_analyzer LangChain Tool."""
 
     @tool
@@ -102,3 +98,4 @@ def make_emotion_analyzer_tool(forwarder: Forwarder):
         return result.to_dict()
 
     return emotion_analyzer
+

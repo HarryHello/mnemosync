@@ -16,9 +16,9 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from src.core.config import get_settings
 from src.core.prompts import get_prompt_store
-from src.infra import Forwarder
+from src.infra.forwarder.multi import MultiForwarder
+from src.infra.llm_service.models import ModelType
 
 
 def build_classifier_prompt(text: str) -> str:
@@ -39,23 +39,19 @@ class SentenceClassifyResult:
 
 
 async def classify_sentence(
-    forwarder: Forwarder, text: str, model: str | None = None
+    forwarder: MultiForwarder, text: str,
 ) -> SentenceClassifyResult:
     """调用辅助模型对单句分类 (非 Tool 部分, 便于直接复用)."""
-    settings = get_settings()
-    model = model or settings.chat.assist_model
-
     messages = [
         {"role": "system", "content": "你是句子分类助手。只返回 JSON。"},
         {"role": "user", "content": build_classifier_prompt(text)},
     ]
     resp = await forwarder.chat(
-        messages=messages, model=model, temperature=0.1,
+        ModelType.ASSIST, messages=messages, temperature=0.1,
         response_format={"type": "json_object"},
         extra_body={"enable_thinking": False},
     )
     content = resp["choices"][0]["message"]["content"].strip()
-    # 防御性剥离 <think>...</think> (即使关闭 thinking 也可能有残留)
     if "<think>" in content:
         content = content.split("</think>")[-1].strip()
     data = json.loads(content)
@@ -66,7 +62,7 @@ async def classify_sentence(
     )
 
 
-def make_sentence_classifier_tool(forwarder: Forwarder):
+def make_sentence_classifier_tool(forwarder: MultiForwarder):
     """创建 classify_sentence_type LangChain Tool."""
 
     @tool
