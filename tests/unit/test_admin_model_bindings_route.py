@@ -1,0 +1,194 @@
+"""Admin /model-bindings REST 路由测试.
+
+覆盖:
+- 鉴权前置: 未登录 → 401
+- CRUD: list / add / reorder / delete
+- 无效 role → 400
+- 缺失 binding → 404
+- 每次 mutation 触发 resolver.invalidate()
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Iterator
+
+import pytest
+from fastapi import APIRouter, FastAPI
+from fastapi.testclient import TestClient
+
+from src.api.routes.admin import router as admin_router
+from src.api.routes.auth import get_current_user
+from src.core.models.resolver import RoleResolver
+from src.infra.llm_service.models import LLMServiceProvider, ModelType
+from src.infra.llm_service.store import LLMServiceStore
+from src.persistence.auth_store import User
+
+
+@pytest.fixture
+def store(tmp_path: Path) -> Iterator[LLMServiceStore]:
+    db = tmp_path / "llm_service.db"
+    s = LLMServiceStore(str(db))
+
+    import asyncio
+
+    asyncio.get_event_loop().run_until_complete(s.init_db())
+    # 预置两个 service
+    for svc_id in ("s1", "s2"):
+        svc = LLMServiceProvider.create(
+            service_id=svc_id, base_url="https://x", api_key="k",
+        )
+        asyncio.get_event_loop().run_until_complete(s.save_service(svc))
+    yield s
+
+
+@pytest.fixture
+def app(store: LLMServiceStore) -> FastAPI:
+    app = FastAPI()
+    outer = APIRouter(prefix="/api/v1")
+    outer.include_router(admin_router)
+    app.include_router(outer)
+
+    resolver = RoleResolver(store)
+
+    def _fake_user() -> User:
+        return User(
+            id="test", username="test", password_hash="",
+            is_active=True, created_at=None, updated_at=None,
+        )
+
+    app.state.llm_service_store = store
+    app.state.resolver = resolver
+    app.dependency_overrides[get_current_user] = _fake_user
+    return app
+
+
+@pytest.fixture
+def app_unauth(store: LLMServiceStore) -> FastAPI:
+    app = FastAPI()
+    outer = APIRouter(prefix="/api/v1")
+    outer.include_router(admin_router)
+    app.include_router(outer)
+    app.state.llm_service_store = store
+    app.state.resolver = RoleResolver(store)
+    return app
+
+
+def test_model_bindings_require_auth(app_unauth: FastAPI) -> None:
+    client = TestClient(app_unauth)
+    for method, path in [
+        ("GET", "/api/v1/admin/model-bindings"),
+        ("POST", "/api/v1/admin/model-bindings"),
+        ("DELETE", "/api/v1/admin/model-bindings/main/0"),
+        ("PUT", "/api/v1/admin/model-bindings/main/reorder"),
+    ]:
+        resp = client.request(method, path, json={} if method != "GET" else None)
+        assert resp.status_code == 401, f"{method} {path}: {resp.status_code}"
+
+
+def test_add_list_and_reorder(app: FastAPI) -> None:
+    client = TestClient(app)
+
+    # 空
+    resp = client.get("/api/v1/admin/model-bindings?role=main")
+    assert resp.status_code == 200
+    assert resp.json()["items"] == []
+
+    # add 两条
+    for sid, model in [("s1", "m1"), ("s2", "m2")]:
+        resp = client.post(
+            "/api/v1/admin/model-bindings",
+            json={"role": "main", "service_id": sid, "model": model},
+        )
+        assert resp.status_code == 200, resp.text
+
+    resp = client.get("/api/v1/admin/model-bindings?role=main")
+    items = resp.json()["items"]
+    assert [(i["priority"], i["service_id"], i["model"]) for i in items] == [
+        (0, "s1", "m1"),
+        (1, "s2", "m2"),
+    ]
+
+    # reorder: 把 s2/m2 提到 0
+    resp = client.put(
+        "/api/v1/admin/model-bindings/main/reorder",
+        json={"order": [["s2", "m2"], ["s1", "m1"]]},
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    assert [(i["priority"], i["service_id"]) for i in items] == [(0, "s2"), (1, "s1")]
+
+
+def test_add_invalid_role_400(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/admin/model-bindings",
+        json={"role": "bogus", "service_id": "s1", "model": "m"},
+    )
+    assert resp.status_code == 400
+
+
+def test_delete_missing_returns_404(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.delete("/api/v1/admin/model-bindings/main/99")
+    assert resp.status_code == 404
+
+
+def test_delete_shifts_priorities_and_invalidates_cache(app: FastAPI) -> None:
+    client = TestClient(app)
+    for sid, model in [("s1", "m1"), ("s2", "m2")]:
+        client.post(
+            "/api/v1/admin/model-bindings",
+            json={"role": "main", "service_id": sid, "model": model},
+        )
+
+    # 预热 resolver 缓存
+    resolver: RoleResolver = app.state.resolver
+    import asyncio
+    top = asyncio.get_event_loop().run_until_complete(resolver.first(ModelType.MAIN))
+    assert top.service_id == "s1"
+    initial_version = resolver.version
+
+    # 删除 priority 0
+    resp = client.delete("/api/v1/admin/model-bindings/main/0")
+    assert resp.status_code == 200
+
+    # 缓存应被 invalidate (version 提升)
+    assert resolver.version > initial_version
+    top2 = asyncio.get_event_loop().run_until_complete(resolver.first(ModelType.MAIN))
+    assert top2.service_id == "s2"
+    assert top2.priority == 0
+
+
+def test_add_with_priority_shifts_existing(app: FastAPI) -> None:
+    client = TestClient(app)
+    for sid, model in [("s1", "m1"), ("s2", "m2")]:
+        client.post(
+            "/api/v1/admin/model-bindings",
+            json={"role": "assist", "service_id": sid, "model": model},
+        )
+    # 插入到 priority 0 → 原 s1/s2 各后移一位
+    resp = client.post(
+        "/api/v1/admin/model-bindings",
+        json={"role": "assist", "service_id": "s2", "model": "m2b", "priority": 0},
+    )
+    assert resp.status_code == 200
+    items = client.get("/api/v1/admin/model-bindings?role=assist").json()["items"]
+    assert [(i["priority"], i["service_id"], i["model"]) for i in items] == [
+        (0, "s2", "m2b"),
+        (1, "s1", "m1"),
+        (2, "s2", "m2"),
+    ]
+
+
+def test_reorder_mismatch_returns_400(app: FastAPI) -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/v1/admin/model-bindings",
+        json={"role": "main", "service_id": "s1", "model": "m1"},
+    )
+    resp = client.put(
+        "/api/v1/admin/model-bindings/main/reorder",
+        json={"order": [["s2", "does-not-exist"]]},
+    )
+    assert resp.status_code == 400

@@ -18,8 +18,10 @@ from src.api.deps import (
     get_http_log_store,
     get_llm_service_store,
     get_memory_store,
+    get_resolver,
 )
 from src.api.routes.auth import get_current_user
+from src.core.models.resolver import RoleResolver
 from src.api.schemas.admin import (
     PromptDetail,
     PromptHistoryItem,
@@ -27,6 +29,10 @@ from src.api.schemas.admin import (
     PromptSummary,
     PromptValidateResponse,
     PromptWriteBody,
+    RoleBindingAddBody,
+    RoleBindingItem,
+    RoleBindingListResponse,
+    RoleBindingReorderBody,
 )
 from src.core.prompts import get_prompt_store
 from src.core.prompts.registry import PROMPT_REGISTRY
@@ -609,3 +615,98 @@ async def list_upstream_available_models(
         raise HTTPException(status_code=502, detail=f"上游错误: {e}")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"拉取模型失败: {e}")
+
+
+# ============================================================================
+# Role Bindings (v0.2.3 起模型绑定单一真相源)
+# ============================================================================
+
+
+def _parse_role(role: str) -> ModelType:
+    try:
+        return ModelType(role)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"role 必须是 {sorted(_VALID_MODEL_TYPES)} 之一",
+        )
+
+
+def _binding_to_item(b) -> RoleBindingItem:
+    return RoleBindingItem(
+        role=b.role.value,
+        priority=b.priority,
+        service_id=b.service_id,
+        model=b.model,
+        created_at=b.created_at.isoformat(),
+    )
+
+
+@router.get("/model-bindings", response_model=RoleBindingListResponse)
+async def list_model_bindings(
+    role: Optional[str] = None,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+):
+    """列出角色绑定. role 省略时返回所有角色."""
+    role_enum = _parse_role(role) if role else None
+    bindings = await store.list_role_bindings(role_enum)
+    return RoleBindingListResponse(items=[_binding_to_item(b) for b in bindings])
+
+
+@router.post("/model-bindings", response_model=RoleBindingItem)
+async def add_model_binding(
+    body: RoleBindingAddBody,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+    resolver: RoleResolver = Depends(get_resolver),
+):
+    """追加一条角色绑定. priority 省略排到末尾, 指定时后续条目自动让位."""
+    role_enum = _parse_role(body.role)
+    if not body.service_id.strip() or not body.model.strip():
+        raise HTTPException(status_code=400, detail="service_id / model 不可为空")
+    try:
+        binding = await store.add_role_binding(
+            role_enum,
+            body.service_id.strip(),
+            body.model.strip(),
+            priority=body.priority,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    resolver.invalidate(role_enum)
+    return _binding_to_item(binding)
+
+
+@router.delete("/model-bindings/{role}/{priority}")
+async def delete_model_binding(
+    role: str,
+    priority: int,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+    resolver: RoleResolver = Depends(get_resolver),
+):
+    """删除一条绑定, 后续条目 priority 前移."""
+    role_enum = _parse_role(role)
+    ok = await store.delete_role_binding(role_enum, priority)
+    if not ok:
+        raise HTTPException(status_code=404, detail="binding not found")
+    resolver.invalidate(role_enum)
+    return {"success": True}
+
+
+@router.put("/model-bindings/{role}/reorder", response_model=RoleBindingListResponse)
+async def reorder_model_bindings(
+    role: str,
+    body: RoleBindingReorderBody,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+    resolver: RoleResolver = Depends(get_resolver),
+):
+    """按新优先级重排角色的全部绑定. order 必须与现有绑定完全一一对应."""
+    role_enum = _parse_role(role)
+    try:
+        bindings = await store.reorder_role_bindings(
+            role_enum, [(sid, m) for sid, m in body.order]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    resolver.invalidate(role_enum)
+    return RoleBindingListResponse(items=[_binding_to_item(b) for b in bindings])
+

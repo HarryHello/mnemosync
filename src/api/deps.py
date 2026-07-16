@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi import Request
 
 from src.infra.llm_service.store import LLMServiceStore
@@ -9,6 +11,9 @@ from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.auth_store import SqliteAuthStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
+
+if TYPE_CHECKING:
+    from src.core.models.resolver import RoleResolver
 
 
 def get_auth_store(request: Request) -> SqliteAuthStore:
@@ -29,3 +34,7 @@ def get_http_log_store(request: Request) -> HttpLogStore:
 
 def get_llm_service_store(request: Request) -> LLMServiceStore:
     return request.app.state.llm_service_store
+
+
+def get_resolver(request: Request) -> "RoleResolver":
+    return request.app.state.resolver

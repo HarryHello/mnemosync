@@ -9,9 +9,8 @@ import sys
 import termios
 import tty
 
-from src.core.config_writer import update_chat_model, update_model, get_current_config
 from src.infra.forwarder.forwarder import Forwarder, ForwarderConfig
-from src.infra.llm_service.models import LLMServiceProvider, ModelConfiguration, ModelType
+from src.infra.llm_service.models import LLMServiceProvider, ModelType
 from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
 from src.persistence.auth_store import SqliteAuthStore
@@ -123,7 +122,6 @@ Common Commands:
   help        Show this page
   logout      Exit this CLI environment
   stop        Stop the Mnemosync server
-  show-config Show current config.local.toml settings
 
 Debug:
   ask [flags] "<question>"   In-process 跑一次主对话 (加载记忆 + 图流程)
@@ -139,15 +137,18 @@ LLM Service Commands:
   ls-service               List existing llm service provider
   ad-service               Add a new llm service provider
   rm-service [srv_id]      Remove a llm service provider
-  show-service             Show the information
+  show-service [srv_id]    Show the information
   ls-models [srv_id]       List available models from provider API
 
-Models Commands (writes to config.local.toml):
-  set-main-model [srv_id] [model]      Set the main chat model
-  set-assist-model [srv_id] [model]    Set the assist chat model
-  set-embedding-model [srv_id] [model] Set the embedding model
-  set-rerank-model [srv_id] [model]    Set the rerank model (optional)
-  test-model [srv_id] [model]          Test if able to connect to a model
+Model Binding Commands (role_bindings table, hot-reloaded):
+  model ls [role]                       List bindings (optionally filter by role)
+  model add <role> <srv_id> <model> [--priority N]
+                                        Append (or insert at N) a candidate for a role
+  model rm <role> <priority>            Remove a candidate at priority
+  model reorder <role> <srv_id:model,...>
+                                        Reorder candidates for a role
+  model test <role>                     Test top candidate for the role
+  test-model [srv_id] [model]           Test a specific provider/model pair
 """
         print(help_text)
 
@@ -359,13 +360,14 @@ Models Commands (writes to config.local.toml):
         print(f"Updated: {service.updated_at.isoformat()}")
         print("\n⚠️  Do not let others get your keys!\n")
 
-        main_model = await self.llm_service_store.get_model(service_id, ModelType.MAIN)
-        assist_model = await self.llm_service_store.get_model(service_id, ModelType.ASSIST)
-
-        if main_model:
-            print(f"Main Model: {main_model.model}")
-        if assist_model:
-            print(f"Assist Model: {assist_model.model}")
+        all_bindings = await self.llm_service_store.list_role_bindings()
+        related = [b for b in all_bindings if b.service_id == service_id]
+        if related:
+            print("Role bindings using this service:")
+            for b in related:
+                print(f"  [{b.role.value}] priority={b.priority} model={b.model}")
+        else:
+            print("(no role bindings reference this service)")
         print()
 
     async def cmd_ad_service(self):
@@ -452,101 +454,134 @@ Models Commands (writes to config.local.toml):
         except Exception as e:
             print(f"❌ Failed to fetch models: {e}\n")
 
-    async def cmd_set_main_model(self, service_id: str, model: str):
-        """设置主模型."""
-        service = await self.llm_service_store.get_service(service_id)
-        if not service:
-            print(f"❌ Service '{service_id}' not found.")
+    # ---- Role bindings (v0.2.3): 单一真相源在 llm_service.db.role_bindings ----
+
+    _VALID_ROLES = {mt.value for mt in ModelType}
+
+    def _parse_role(self, role: str) -> ModelType | None:
+        if role not in self._VALID_ROLES:
+            print(f"❌ role 必须是 {sorted(self._VALID_ROLES)} 之一\n")
+            return None
+        return ModelType(role)
+
+    async def cmd_model_ls(self, role: str | None = None):
+        """列出角色绑定."""
+        role_enum = self._parse_role(role) if role else None
+        if role and role_enum is None:
+            return
+        bindings = await self.llm_service_store.list_role_bindings(role_enum)
+        if not bindings:
+            scope = f"role '{role}'" if role else "any role"
+            print(f"No bindings for {scope}.\n")
+            return
+        print(f"{'role':<10} {'prio':<5} {'service-id':<20} {'model':<30}")
+        print("-" * 65)
+        for b in bindings:
+            print(f"{b.role.value:<10} {b.priority:<5} {b.service_id:<20} {b.model:<30}")
+        print()
+
+    async def cmd_model_add(self, argv: list[str]):
+        """model add <role> <service_id> <model> [--priority N]."""
+        import argparse as _argparse
+
+        parser = _argparse.ArgumentParser(prog="model add", add_help=False)
+        parser.add_argument("role")
+        parser.add_argument("service_id")
+        parser.add_argument("model")
+        parser.add_argument("--priority", type=int, default=None)
+        try:
+            a = parser.parse_args(argv)
+        except SystemExit:
+            print("❌ Usage: model add <role> <service_id> <model> [--priority N]\n")
             return
 
-        try:
-            update_chat_model(main_model=model, base_url=service.base_url, api_key=service.api_key)
-            print(f"✅ Main model set to '{model}'.")
-            print(f"   Updated config.local.toml [chat] section.\n")
-        except Exception as e:
-            print(f"❌ Failed to update config: {e}\n")
-
-    async def cmd_set_assist_model(self, service_id: str, model: str):
-        """设置辅助模型."""
-        service = await self.llm_service_store.get_service(service_id)
-        if not service:
-            print(f"❌ Service '{service_id}' not found.")
+        role_enum = self._parse_role(a.role)
+        if role_enum is None:
             return
-
-        try:
-            update_chat_model(assist_model=model, base_url=service.base_url, api_key=service.api_key)
-            print(f"✅ Assist model set to '{model}'.")
-            print(f"   Updated config.local.toml [chat] section.\n")
-        except Exception as e:
-            print(f"❌ Failed to update config: {e}\n")
-
-    async def cmd_set_embedding_model(self, service_id: str, model: str):
-        """设置嵌入模型."""
-        service = await self.llm_service_store.get_service(service_id)
-        if not service:
-            print(f"❌ Service '{service_id}' not found.")
+        if await self.llm_service_store.get_service(a.service_id) is None:
+            print(f"❌ Service '{a.service_id}' not found.\n")
             return
-
         try:
-            update_model("embedding", "model", model, base_url=service.base_url, api_key=service.api_key)
-            print(f"✅ Embedding model set to '{model}'.")
-            print(f"   Updated config.local.toml [embedding] section.\n")
-        except Exception as e:
-            print(f"❌ Failed to update config: {e}\n")
+            binding = await self.llm_service_store.add_role_binding(
+                role_enum, a.service_id, a.model, priority=a.priority,
+            )
+            print(
+                f"✅ Added [{binding.role.value}] priority={binding.priority} "
+                f"service={binding.service_id} model={binding.model}\n"
+            )
+        except ValueError as e:
+            print(f"❌ {e}\n")
 
-    async def cmd_set_rerank_model(self, service_id: str, model: str):
-        """设置重排序模型."""
-        service = await self.llm_service_store.get_service(service_id)
-        if not service:
-            print(f"❌ Service '{service_id}' not found.")
+    async def cmd_model_rm(self, role: str, priority_str: str):
+        """删除角色的某个优先级."""
+        role_enum = self._parse_role(role)
+        if role_enum is None:
             return
-
         try:
-            update_model("rerank", "model", model, base_url=service.base_url, api_key=service.api_key)
-            print(f"✅ Rerank model set to '{model}'.")
-            print(f"   Updated config.local.toml [rerank] section.\n")
-        except Exception as e:
-            print(f"❌ Failed to update config: {e}\n")
+            priority = int(priority_str)
+        except ValueError:
+            print("❌ priority 必须是整数\n")
+            return
+        ok = await self.llm_service_store.delete_role_binding(role_enum, priority)
+        if ok:
+            print(f"✅ Removed [{role}] priority={priority}\n")
+        else:
+            print(f"❌ Binding not found: [{role}] priority={priority}\n")
 
-    async def cmd_show_config(self):
-        """显示当前配置."""
+    async def cmd_model_reorder(self, role: str, spec: str):
+        """model reorder <role> <srv:model,srv:model,...>."""
+        role_enum = self._parse_role(role)
+        if role_enum is None:
+            return
+        pairs: list[tuple[str, str]] = []
+        for item in spec.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if ":" not in item:
+                print(f"❌ 无效项 '{item}', 应为 service_id:model\n")
+                return
+            sid, model = item.split(":", 1)
+            pairs.append((sid.strip(), model.strip()))
         try:
-            config = get_current_config()
-            print("\nCurrent config.local.toml settings:")
-            print("-" * 50)
-
-            for section in ["chat", "embedding", "rerank"]:
-                if section in config:
-                    print(f"\n[{section}]")
-                    for key, value in config[section].items():
-                        if key == "api_key" and value:
-                            # 遮蔽 API key
-                            if len(value) > 8:
-                                value = f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
-                        print(f"  {key} = {value}")
-                else:
-                    print(f"\n[{section}] (not configured)")
-
+            bindings = await self.llm_service_store.reorder_role_bindings(role_enum, pairs)
+            print(f"✅ Reordered [{role}]:")
+            for b in bindings:
+                print(f"  priority={b.priority} service={b.service_id} model={b.model}")
             print()
-        except Exception as e:
-            print(f"❌ Failed to read config: {e}\n")
+        except ValueError as e:
+            print(f"❌ {e}\n")
+
+    async def cmd_model_test(self, role: str):
+        """测试角色的最高优先级候选."""
+        role_enum = self._parse_role(role)
+        if role_enum is None:
+            return
+        candidates = await self.llm_service_store.resolve_role(role_enum)
+        if not candidates:
+            print(f"❌ role '{role}' 无任何候选\n")
+            return
+        top = candidates[0]
+        print(f"Testing top candidate: service={top.service_id} model={top.model}")
+        await self._test_upstream(top.base_url, top.api_key, top.model)
 
     async def cmd_test_model(self, service_id: str, model: str):
-        """测试模型."""
+        """测试指定 service_id 的模型直连."""
         service = await self.llm_service_store.get_service(service_id)
         if not service:
             print(f"❌ Service '{service_id}' not found.")
             return
-
         print(f"Testing connection to {model} from {service_id}...")
+        await self._test_upstream(service.base_url, service.api_key, model)
 
+    async def _test_upstream(self, base_url: str, api_key: str, model: str) -> None:
         import httpx
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
-                    f"{service.base_url}/chat/completions",
+                    f"{base_url}/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {service.api_key}",
+                        "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
                     json={
@@ -555,15 +590,53 @@ Models Commands (writes to config.local.toml):
                         "max_tokens": 1,
                     },
                 )
-
                 if response.status_code == 200:
                     print("✅ Connection successful!\n")
                 else:
-                    print(f"❌ Connection failed: {response.status_code} - {response.text[:200]}\n")
+                    print(
+                        f"❌ Connection failed: {response.status_code} - "
+                        f"{response.text[:200]}\n"
+                    )
         except httpx.RequestError as e:
             print(f"❌ Connection error: {e}\n")
         except Exception as e:
             print(f"❌ Unexpected error: {e}\n")
+
+    async def cmd_model(self, argv: list[str]):
+        """model 子命令派发."""
+        if not argv:
+            print(
+                "❌ Usage: model {ls|add|rm|reorder|test} ...\n"
+                "  model ls [role]\n"
+                "  model add <role> <service_id> <model> [--priority N]\n"
+                "  model rm <role> <priority>\n"
+                "  model reorder <role> <srv:model,srv:model,...>\n"
+                "  model test <role>\n"
+            )
+            return
+        sub = argv[0]
+        rest = argv[1:]
+        if sub == "ls":
+            await self.cmd_model_ls(rest[0] if rest else None)
+        elif sub == "add":
+            await self.cmd_model_add(rest)
+        elif sub == "rm":
+            if len(rest) < 2:
+                print("❌ Usage: model rm <role> <priority>\n")
+                return
+            await self.cmd_model_rm(rest[0], rest[1])
+        elif sub == "reorder":
+            if len(rest) < 2:
+                print("❌ Usage: model reorder <role> <srv:model,srv:model,...>\n")
+                return
+            await self.cmd_model_reorder(rest[0], " ".join(rest[1:]))
+        elif sub == "test":
+            if not rest:
+                print("❌ Usage: model test <role>\n")
+                return
+            await self.cmd_model_test(rest[0])
+        else:
+            print(f"❌ Unknown model subcommand: {sub}\n")
 
     async def cmd_ask(self, argv: list[str]) -> None:
         """在登入 CLI 内直连主对话 (调试用).
@@ -666,28 +739,8 @@ Models Commands (writes to config.local.toml):
                     await self.cmd_ls_models(args[0])
                 else:
                     print("❌ Usage: ls-models [srv_id]\n")
-            elif cmd == "set-main-model":
-                if len(args) >= 2:
-                    await self.cmd_set_main_model(args[0], args[1])
-                else:
-                    print("❌ Usage: set-main-model [srv_id] [model]\n")
-            elif cmd == "set-assist-model":
-                if len(args) >= 2:
-                    await self.cmd_set_assist_model(args[0], args[1])
-                else:
-                    print("❌ Usage: set-assist-model [srv_id] [model]\n")
-            elif cmd == "set-embedding-model":
-                if len(args) >= 2:
-                    await self.cmd_set_embedding_model(args[0], args[1])
-                else:
-                    print("❌ Usage: set-embedding-model [srv_id] [model]\n")
-            elif cmd == "set-rerank-model":
-                if len(args) >= 2:
-                    await self.cmd_set_rerank_model(args[0], args[1])
-                else:
-                    print("❌ Usage: set-rerank-model [srv_id] [model]\n")
-            elif cmd == "show-config":
-                await self.cmd_show_config()
+            elif cmd == "model":
+                await self.cmd_model(args)
             elif cmd == "test-model":
                 if len(args) >= 2:
                     await self.cmd_test_model(args[0], args[1])
