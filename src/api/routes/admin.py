@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from src.api.deps import (
     get_api_key_store,
     get_http_log_store,
+    get_llm_service_store,
     get_memory_store,
 )
 from src.api.routes.auth import get_current_user
@@ -29,6 +30,13 @@ from src.api.schemas.admin import (
 )
 from src.core.prompts import get_prompt_store
 from src.core.prompts.registry import PROMPT_REGISTRY
+from src.infra.forwarder import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
+from src.infra.llm_service.models import (
+    LLMServiceProvider,
+    ModelConfiguration,
+    ModelType,
+)
+from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
@@ -109,6 +117,35 @@ class DashboardStatsResponse(BaseModel):
     prompts_total: int
     prompts_overridden: int
     health: HealthResponse
+
+
+class UpstreamServiceResponse(BaseModel):
+    id: str
+    base_url: str
+    api_key_masked: str
+    created_at: str
+    updated_at: str
+    models: dict[str, str]  # model_type -> model name
+
+
+class UpstreamServiceCreateBody(BaseModel):
+    id: str
+    base_url: str
+    api_key: str
+
+
+class UpstreamServiceUpdateBody(BaseModel):
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+
+
+class UpstreamModelBody(BaseModel):
+    model_type: str  # main | assist | embedding | rerank
+    model: str
+
+
+class UpstreamModelListResponse(BaseModel):
+    models: list[str]
 
 
 # ============================================================================
@@ -410,3 +447,165 @@ async def list_prompt_history(name: str):
         for item in store.list_history(name)
     ]
     return PromptHistoryResponse(items=items)
+
+
+# ============================================================================
+# Upstream LLM Services (服务商 + 模型绑定)
+# ============================================================================
+
+_VALID_MODEL_TYPES = {mt.value for mt in ModelType}
+
+
+async def _service_to_response(
+    service: LLMServiceProvider, store: LLMServiceStore
+) -> UpstreamServiceResponse:
+    models = await store.list_models(service.id)
+    return UpstreamServiceResponse(
+        id=service.id,
+        base_url=service.base_url,
+        api_key_masked=service.api_key_masked,
+        created_at=service.created_at.isoformat(),
+        updated_at=service.updated_at.isoformat(),
+        models={m.model_type.value: m.model for m in models},
+    )
+
+
+@router.get("/upstream/services", response_model=list[UpstreamServiceResponse])
+async def list_upstream_services(
+    store: LLMServiceStore = Depends(get_llm_service_store),
+):
+    """列出全部上游服务商及其模型绑定."""
+    services = await store.list_services()
+    return [await _service_to_response(s, store) for s in services]
+
+
+@router.post("/upstream/services", response_model=UpstreamServiceResponse)
+async def create_upstream_service(
+    body: UpstreamServiceCreateBody,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+):
+    """新增服务商 (API Key 存加密)."""
+    if not body.id.strip() or not body.base_url.strip() or not body.api_key.strip():
+        raise HTTPException(status_code=400, detail="id / base_url / api_key 均不可为空")
+    service = LLMServiceProvider.create(
+        service_id=body.id.strip(),
+        base_url=body.base_url.strip(),
+        api_key=body.api_key.strip(),
+    )
+    try:
+        await store.save_service(service)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await _service_to_response(service, store)
+
+
+@router.get("/upstream/services/{service_id}", response_model=UpstreamServiceResponse)
+async def get_upstream_service(
+    service_id: str,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+):
+    """获取单个服务商详情."""
+    service = await store.get_service(service_id)
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return await _service_to_response(service, store)
+
+
+@router.patch("/upstream/services/{service_id}", response_model=UpstreamServiceResponse)
+async def update_upstream_service(
+    service_id: str,
+    body: UpstreamServiceUpdateBody,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+):
+    """更新 base_url / api_key. 未提供的字段保持不变.
+
+    LLMServiceStore 无直接 update 接口, 只能删后重建 (同 id).
+    模型绑定 ON DELETE CASCADE 会随之丢失, 因此先备份再重放.
+    """
+    old = await store.get_service(service_id)
+    if not old:
+        raise HTTPException(status_code=404, detail="Service not found")
+    new_base = (body.base_url or old.base_url).strip()
+    new_key = (body.api_key or old.api_key).strip()
+    if not new_base or not new_key:
+        raise HTTPException(status_code=400, detail="base_url / api_key 不可为空")
+
+    prev_models = await store.list_models(service_id)
+    await store.delete_service(service_id)
+    updated = LLMServiceProvider(
+        id=service_id,
+        base_url=new_base,
+        api_key=new_key,
+        created_at=old.created_at,
+        updated_at=datetime.now(timezone.utc),
+    )
+    await store.save_service(updated)
+    for m in prev_models:
+        await store.save_model(m)
+    return await _service_to_response(updated, store)
+
+
+@router.delete("/upstream/services/{service_id}")
+async def delete_upstream_service(
+    service_id: str,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+):
+    """删除服务商 (级联删除其模型绑定)."""
+    ok = await store.delete_service(service_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return {"success": True}
+
+
+@router.post(
+    "/upstream/services/{service_id}/models", response_model=UpstreamServiceResponse
+)
+async def set_upstream_model(
+    service_id: str,
+    body: UpstreamModelBody,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+):
+    """绑定/更新指定角色 (main/assist/embedding/rerank) 的模型名."""
+    service = await store.get_service(service_id)
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    if body.model_type not in _VALID_MODEL_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"model_type 必须是 {sorted(_VALID_MODEL_TYPES)} 之一",
+        )
+    config = ModelConfiguration.create(
+        service_id=service_id,
+        model=body.model.strip(),
+        model_type=ModelType(body.model_type),
+    )
+    try:
+        await store.save_model(config)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await _service_to_response(service, store)
+
+
+@router.get(
+    "/upstream/services/{service_id}/available-models",
+    response_model=UpstreamModelListResponse,
+)
+async def list_upstream_available_models(
+    service_id: str,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+):
+    """调用上游 /v1/models 获取该服务商可用模型列表 (用于下拉选择)."""
+    service = await store.get_service(service_id)
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    try:
+        config = ForwarderConfig(base_url=service.base_url, api_key=service.api_key)
+        async with Forwarder(config) as forwarder:
+            models = await forwarder.list_models()
+        return UpstreamModelListResponse(models=list(models))
+    except UpstreamTimeout as e:
+        raise HTTPException(status_code=504, detail=f"上游超时: {e}")
+    except UpstreamError as e:
+        raise HTTPException(status_code=502, detail=f"上游错误: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"拉取模型失败: {e}")

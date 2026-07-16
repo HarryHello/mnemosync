@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.auth_store import SqliteAuthStore
 from src.persistence.http_log_store import HttpLogStore
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 AUTH_DB_PATH = "data/auth.db"
 API_KEY_DB_PATH = "data/api_keys.db"
 HTTP_LOG_DB_PATH = "data/http_logs.db"
+LLM_SERVICE_DB_PATH = "data/llm_service.db"
 
 
 def _memory_db_path() -> str:
@@ -42,17 +44,20 @@ async def app_lifespan(app: FastAPI):
     api_key_store = SqliteApiKeyStore(API_KEY_DB_PATH)
     memory_store = SqliteMemoryStore(_memory_db_path())
     http_log_store = HttpLogStore(HTTP_LOG_DB_PATH)
+    llm_service_store = LLMServiceStore(LLM_SERVICE_DB_PATH)
 
     await auth_store.connect()
     await api_key_store.connect()
     await memory_store.connect()
     await http_log_store.connect()
+    await llm_service_store.init_db()
 
     app.state.auth_store = auth_store
     app.state.api_key_store = api_key_store
     app.state.memory_store = memory_store
     app.state.http_log_store = http_log_store
-    logger.info("Stores connected (auth / api_key / memory / http_log)")
+    app.state.llm_service_store = llm_service_store
+    logger.info("Stores connected (auth / api_key / memory / http_log / llm_service)")
 
     try:
         yield

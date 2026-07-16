@@ -20,6 +20,11 @@ import type {
   PromptDetail,
   PromptValidateResponse,
   PromptHistoryResponse,
+  UpstreamService,
+  UpstreamServiceCreateBody,
+  UpstreamServiceUpdateBody,
+  UpstreamModelBindBody,
+  UpstreamAvailableModels,
 } from '@/types/api'
 
 // ============================================================================
@@ -241,6 +246,63 @@ export async function validatePrompt(
 export async function getPromptHistory(name: string): Promise<PromptHistoryResponse> {
   return request<PromptHistoryResponse>(
     `${API_BASE}/admin/prompts/${encodeURIComponent(name)}/history`,
+  )
+}
+
+// ============================================================================
+// Admin API - Upstream LLM Services
+// ============================================================================
+
+export async function listUpstreamServices(): Promise<UpstreamService[]> {
+  return request<UpstreamService[]>(`${API_BASE}/admin/upstream/services`)
+}
+
+export async function createUpstreamService(
+  body: UpstreamServiceCreateBody,
+): Promise<UpstreamService> {
+  return request<UpstreamService>(`${API_BASE}/admin/upstream/services`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateUpstreamService(
+  id: string,
+  body: UpstreamServiceUpdateBody,
+): Promise<UpstreamService> {
+  return request<UpstreamService>(
+    `${API_BASE}/admin/upstream/services/${encodeURIComponent(id)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+export async function deleteUpstreamService(id: string): Promise<void> {
+  await request(`${API_BASE}/admin/upstream/services/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function bindUpstreamModel(
+  id: string,
+  body: UpstreamModelBindBody,
+): Promise<UpstreamService> {
+  return request<UpstreamService>(
+    `${API_BASE}/admin/upstream/services/${encodeURIComponent(id)}/models`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+export async function listUpstreamAvailableModels(
+  id: string,
+): Promise<UpstreamAvailableModels> {
+  return request<UpstreamAvailableModels>(
+    `${API_BASE}/admin/upstream/services/${encodeURIComponent(id)}/available-models`,
   )
 }
 

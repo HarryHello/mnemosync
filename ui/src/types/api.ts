@@ -171,6 +171,41 @@ export interface PromptHistoryResponse {
 }
 
 // ============================================================================
+// Upstream LLM Services (Admin)
+// ============================================================================
+
+export type UpstreamModelType = 'main' | 'assist' | 'embedding' | 'rerank'
+
+export interface UpstreamService {
+  id: string
+  base_url: string
+  api_key_masked: string
+  created_at: string
+  updated_at: string
+  models: Partial<Record<UpstreamModelType, string>>
+}
+
+export interface UpstreamServiceCreateBody {
+  id: string
+  base_url: string
+  api_key: string
+}
+
+export interface UpstreamServiceUpdateBody {
+  base_url?: string
+  api_key?: string
+}
+
+export interface UpstreamModelBindBody {
+  model_type: UpstreamModelType
+  model: string
+}
+
+export interface UpstreamAvailableModels {
+  models: string[]
+}
+
+// ============================================================================
 // Chat (OpenAI Compatible)
 // ============================================================================
 

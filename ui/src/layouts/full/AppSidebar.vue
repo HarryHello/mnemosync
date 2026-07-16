@@ -14,6 +14,7 @@ const router = useRouter()
 const items: MenuItem[] = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer' },
   { path: '/prompts', title: '提示词管理', icon: 'EditPen' },
+  { path: '/upstream', title: '上游 API', icon: 'Link' },
   { path: '/api-keys', title: 'API Key', icon: 'Key' },
   { path: '/logs', title: '请求日志', icon: 'Document' },
   { path: '/memories', title: '记忆管理', icon: 'Cpu' },

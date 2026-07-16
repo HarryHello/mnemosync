@@ -43,6 +43,11 @@ const MainRoutes: RouteRecordRaw = {
       component: () => import('@/views/RelationshipsPage.vue'),
     },
     {
+      path: 'upstream',
+      name: 'upstream',
+      component: () => import('@/views/UpstreamPage.vue'),
+    },
+    {
       path: 'settings',
       name: 'settings',
       component: () => import('@/views/SettingsPage.vue'),
