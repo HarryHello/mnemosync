@@ -23,8 +23,10 @@ import type {
   UpstreamService,
   UpstreamServiceCreateBody,
   UpstreamServiceUpdateBody,
-  UpstreamModelBindBody,
   UpstreamAvailableModels,
+  RoleBindingItem,
+  RoleBindingListResponse,
+  RoleBindingAddBody,
 } from '@/types/api'
 
 // ============================================================================
@@ -285,24 +287,47 @@ export async function deleteUpstreamService(id: string): Promise<void> {
   })
 }
 
-export async function bindUpstreamModel(
-  id: string,
-  body: UpstreamModelBindBody,
-): Promise<UpstreamService> {
-  return request<UpstreamService>(
-    `${API_BASE}/admin/upstream/services/${encodeURIComponent(id)}/models`,
-    {
-      method: 'POST',
-      body: JSON.stringify(body),
-    },
-  )
-}
-
 export async function listUpstreamAvailableModels(
   id: string,
 ): Promise<UpstreamAvailableModels> {
   return request<UpstreamAvailableModels>(
     `${API_BASE}/admin/upstream/services/${encodeURIComponent(id)}/available-models`,
+  )
+}
+
+// ============================================================================
+// Admin API - Role Bindings (v0.2.3)
+// ============================================================================
+
+export async function listModelBindings(role?: string): Promise<RoleBindingListResponse> {
+  const q = role ? `?role=${encodeURIComponent(role)}` : ''
+  return request<RoleBindingListResponse>(`${API_BASE}/admin/model-bindings${q}`)
+}
+
+export async function addModelBinding(body: RoleBindingAddBody): Promise<RoleBindingItem> {
+  return request<RoleBindingItem>(`${API_BASE}/admin/model-bindings`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteModelBinding(role: string, priority: number): Promise<void> {
+  await request(
+    `${API_BASE}/admin/model-bindings/${encodeURIComponent(role)}/${priority}`,
+    { method: 'DELETE' },
+  )
+}
+
+export async function reorderModelBindings(
+  role: string,
+  order: [string, string][],
+): Promise<RoleBindingListResponse> {
+  return request<RoleBindingListResponse>(
+    `${API_BASE}/admin/model-bindings/${encodeURIComponent(role)}/reorder`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ order }),
+    },
   )
 }
 

@@ -48,6 +48,11 @@ const MainRoutes: RouteRecordRaw = {
       component: () => import('@/views/UpstreamPage.vue'),
     },
     {
+      path: 'models',
+      name: 'models',
+      component: () => import('@/views/ModelsPage.vue'),
+    },
+    {
       path: 'settings',
       name: 'settings',
       component: () => import('@/views/SettingsPage.vue'),

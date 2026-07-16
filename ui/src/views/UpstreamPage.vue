@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import {
@@ -7,21 +7,11 @@ import {
   createUpstreamService,
   updateUpstreamService,
   deleteUpstreamService,
-  bindUpstreamModel,
-  listUpstreamAvailableModels,
 } from '@/api/client'
-import type { UpstreamModelType, UpstreamService } from '@/types/api'
+import type { UpstreamService } from '@/types/api'
 
 const services = ref<UpstreamService[]>([])
 const loading = ref(false)
-
-const ROLE_LABELS: Record<UpstreamModelType, string> = {
-  main: '主模型',
-  assist: '辅助模型',
-  embedding: '嵌入模型',
-  rerank: '重排序',
-}
-const ROLE_ORDER: UpstreamModelType[] = ['main', 'assist', 'embedding', 'rerank']
 
 // ── Create dialog ──────────────────────────────────────────────────────────
 const createDialog = ref(false)
@@ -44,19 +34,6 @@ const editRef = ref<FormInstance | null>(null)
 const editing = ref<UpstreamService | null>(null)
 const editForm = reactive({ base_url: '', api_key: '' })
 const editSubmitting = ref(false)
-
-// ── Bind dialog ────────────────────────────────────────────────────────────
-const bindDialog = ref(false)
-const bindTarget = ref<UpstreamService | null>(null)
-const bindForm = reactive({ model_type: 'main' as UpstreamModelType, model: '' })
-const availableModels = ref<string[]>([])
-const availableLoading = ref(false)
-const bindSubmitting = ref(false)
-
-const bindCurrent = computed(() => {
-  if (!bindTarget.value) return ''
-  return bindTarget.value.models[bindForm.model_type] ?? ''
-})
 
 // ──────────────────────────────────────────────────────────────────────────
 async function refresh() {
@@ -131,7 +108,7 @@ async function onEdit() {
 async function onDelete(row: UpstreamService) {
   try {
     await ElMessageBox.confirm(
-      `将删除服务 "${row.id}" 及其全部模型绑定, 不可恢复。确认删除？`,
+      `将删除服务 "${row.id}", 该服务所引用的所有模型绑定项也会失效, 需要在『模型管理』页重新配置。确认删除？`,
       '删除上游服务',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
@@ -144,53 +121,6 @@ async function onDelete(row: UpstreamService) {
     await refresh()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
-  }
-}
-
-async function openBind(row: UpstreamService, role: UpstreamModelType = 'main') {
-  bindTarget.value = row
-  bindForm.model_type = role
-  bindForm.model = row.models[role] ?? ''
-  availableModels.value = []
-  bindDialog.value = true
-  fetchAvailable(row.id)
-}
-
-async function fetchAvailable(id: string) {
-  availableLoading.value = true
-  try {
-    const res = await listUpstreamAvailableModels(id)
-    availableModels.value = res.models
-  } catch (err) {
-    ElMessage.warning(
-      '拉取模型列表失败, 你仍可手动输入: ' +
-        (err instanceof Error ? err.message : String(err)),
-    )
-  } finally {
-    availableLoading.value = false
-  }
-}
-
-async function onBind() {
-  if (!bindTarget.value) return
-  const model = bindForm.model.trim()
-  if (!model) {
-    ElMessage.warning('请填写模型名')
-    return
-  }
-  bindSubmitting.value = true
-  try {
-    await bindUpstreamModel(bindTarget.value.id, {
-      model_type: bindForm.model_type,
-      model,
-    })
-    ElMessage.success('已绑定')
-    bindDialog.value = false
-    await refresh()
-  } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : String(err))
-  } finally {
-    bindSubmitting.value = false
   }
 }
 
@@ -207,8 +137,9 @@ onMounted(refresh)
       <div>
         <h2 class="page-title">上游 API</h2>
         <p class="page-subtitle">
-          管理 Mnemosync 使用的 OpenAI 兼容上游服务商 (如 DashScope), 以及每个角色绑定的模型名。
-          API Key 存储时使用 Fernet 对称加密。
+          管理 Mnemosync 使用的 OpenAI 兼容上游服务商 (如 DashScope), 只维护凭证 (Base URL + API Key)。
+          API Key 存储时使用 Fernet 对称加密。要为具体角色 (主 / 辅助 / 嵌入 / 重排) 绑定模型,
+          请前往<router-link to="/models" class="inline-link">『模型管理』</router-link>。
         </p>
       </div>
       <div class="head-actions">
@@ -224,69 +155,40 @@ onMounted(refresh)
     </div>
 
     <div v-loading="loading">
-      <div v-if="services.length" class="grid">
-        <el-card
-          v-for="svc in services"
-          :key="svc.id"
-          shadow="hover"
-          class="svc-card"
-        >
-          <template #header>
-            <div class="svc-head">
-              <div class="svc-title">
-                <el-icon :size="18"><Link /></el-icon>
-                <span class="mono">{{ svc.id }}</span>
-              </div>
-              <div class="svc-actions">
-                <el-button link type="primary" @click="openEdit(svc)">
-                  <el-icon><Edit /></el-icon>
-                  <span>编辑</span>
-                </el-button>
-                <el-button link type="danger" @click="onDelete(svc)">
-                  <el-icon><Delete /></el-icon>
-                  <span>删除</span>
-                </el-button>
-              </div>
-            </div>
+      <el-table v-if="services.length" :data="services" stripe>
+        <el-table-column label="服务 ID" prop="id" min-width="160">
+          <template #default="{ row }: { row: UpstreamService }">
+            <span class="mono">{{ row.id }}</span>
           </template>
-
-          <el-descriptions :column="1" size="small" border>
-            <el-descriptions-item label="Base URL">
-              <span class="mono">{{ svc.base_url }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="API Key">
-              <span class="mono">{{ svc.api_key_masked }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="创建时间">
-              <span class="mono muted">{{ fmtDate(svc.created_at) }}</span>
-            </el-descriptions-item>
-          </el-descriptions>
-
-          <div class="roles">
-            <div class="roles-title">模型绑定</div>
-            <div class="role-grid">
-              <div
-                v-for="role in ROLE_ORDER"
-                :key="role"
-                class="role-item"
-                :class="{ bound: !!svc.models[role] }"
-              >
-                <div class="role-label">
-                  <span class="dot" />
-                  <span>{{ ROLE_LABELS[role] }}</span>
-                </div>
-                <div class="role-value">
-                  <span v-if="svc.models[role]" class="mono">{{ svc.models[role] }}</span>
-                  <span v-else class="muted">未绑定</span>
-                </div>
-                <el-button link type="primary" size="small" @click="openBind(svc, role)">
-                  {{ svc.models[role] ? '更换' : '绑定' }}
-                </el-button>
-              </div>
-            </div>
-          </div>
-        </el-card>
-      </div>
+        </el-table-column>
+        <el-table-column label="Base URL" prop="base_url" min-width="320">
+          <template #default="{ row }: { row: UpstreamService }">
+            <span class="mono">{{ row.base_url }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="API Key" min-width="180">
+          <template #default="{ row }: { row: UpstreamService }">
+            <span class="mono muted">{{ row.api_key_masked }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" min-width="180">
+          <template #default="{ row }: { row: UpstreamService }">
+            <span class="mono muted">{{ fmtDate(row.created_at) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="180" fixed="right">
+          <template #default="{ row }: { row: UpstreamService }">
+            <el-button link type="primary" @click="openEdit(row)">
+              <el-icon><Edit /></el-icon>
+              <span>编辑</span>
+            </el-button>
+            <el-button link type="danger" @click="onDelete(row)">
+              <el-icon><Delete /></el-icon>
+              <span>删除</span>
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
 
       <el-empty
         v-else-if="!loading"
@@ -358,64 +260,6 @@ onMounted(refresh)
         </el-button>
       </template>
     </el-dialog>
-
-    <!-- Bind model -->
-    <el-dialog
-      v-model="bindDialog"
-      :title="`绑定模型: ${bindTarget?.id ?? ''}`"
-      width="520px"
-    >
-      <el-form label-width="100px">
-        <el-form-item label="角色">
-          <el-radio-group v-model="bindForm.model_type">
-            <el-radio-button
-              v-for="role in ROLE_ORDER"
-              :key="role"
-              :value="role"
-            >
-              {{ ROLE_LABELS[role] }}
-            </el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="当前绑定">
-          <span v-if="bindCurrent" class="mono">{{ bindCurrent }}</span>
-          <span v-else class="muted">未绑定</span>
-        </el-form-item>
-        <el-form-item label="模型名">
-          <div class="model-input">
-            <el-select
-              v-model="bindForm.model"
-              filterable
-              allow-create
-              default-first-option
-              placeholder="从可用列表选择或直接输入"
-              style="width: 100%"
-              :loading="availableLoading"
-            >
-              <el-option
-                v-for="m in availableModels"
-                :key="m"
-                :label="m"
-                :value="m"
-              />
-            </el-select>
-            <el-button
-              :loading="availableLoading"
-              :disabled="!bindTarget"
-              @click="bindTarget && fetchAvailable(bindTarget.id)"
-            >
-              <el-icon><Refresh /></el-icon>
-            </el-button>
-          </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="bindDialog = false">取消</el-button>
-        <el-button type="primary" :loading="bindSubmitting" @click="onBind">
-          绑定
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -434,100 +278,16 @@ onMounted(refresh)
   gap: $space-2;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: $space-4;
-
-  @include respond-to(lg) {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-.svc-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.svc-title {
-  display: flex;
-  align-items: center;
-  gap: $space-2;
-  font-weight: 600;
-}
-
-.svc-actions {
-  display: flex;
-  gap: $space-1;
-}
-
-.roles {
-  margin-top: $space-4;
-}
-
-.roles-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-text-color-secondary);
-  margin-bottom: $space-2;
-}
-
-.role-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: $space-2;
-}
-
-.role-item {
-  display: grid;
-  grid-template-columns: 110px 1fr auto;
-  align-items: center;
-  gap: $space-2;
-  padding: $space-2 $space-3;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: $radius-sm;
-  background: var(--el-fill-color-lighter);
-
-  &.bound {
-    border-color: var(--el-color-primary-light-5);
-    background: var(--el-color-primary-light-9);
-
-    .dot {
-      background: var(--el-color-primary);
-    }
-  }
-}
-
-.role-label {
-  display: flex;
-  align-items: center;
-  gap: $space-2;
-  font-size: 13px;
-}
-
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--el-border-color);
-}
-
-.role-value {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
 .muted {
   color: var(--el-text-color-secondary);
 }
 
-.model-input {
-  display: flex;
-  gap: $space-2;
-  width: 100%;
+.inline-link {
+  color: var(--el-color-primary);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 </style>

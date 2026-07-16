@@ -183,6 +183,7 @@ export interface UpstreamService {
   api_key_masked: string
   created_at: string
   updated_at: string
+  /** @deprecated v0.2.3 起模型绑定改由 role_bindings 表管理, UpstreamPage 不再展示 */
   models: Partial<Record<UpstreamModelType, string>>
 }
 
@@ -197,13 +198,35 @@ export interface UpstreamServiceUpdateBody {
   api_key?: string
 }
 
-export interface UpstreamModelBindBody {
-  model_type: UpstreamModelType
-  model: string
-}
-
 export interface UpstreamAvailableModels {
   models: string[]
+}
+
+// ============================================================================
+// Role bindings (v0.2.3 单一真相源)
+// ============================================================================
+
+export interface RoleBindingItem {
+  role: UpstreamModelType
+  priority: number
+  service_id: string
+  model: string
+  created_at: string
+}
+
+export interface RoleBindingListResponse {
+  items: RoleBindingItem[]
+}
+
+export interface RoleBindingAddBody {
+  role: UpstreamModelType
+  service_id: string
+  model: string
+  priority?: number | null
+}
+
+export interface RoleBindingReorderBody {
+  order: [string, string][]
 }
 
 // ============================================================================
