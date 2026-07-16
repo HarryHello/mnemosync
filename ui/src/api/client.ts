@@ -16,6 +16,10 @@ import type {
   HealthResponse,
   ChatCompletionRequest,
   ChatCompletionResponse,
+  PromptSummary,
+  PromptDetail,
+  PromptValidateResponse,
+  PromptHistoryResponse,
 } from '@/types/api'
 
 // ============================================================================
@@ -181,6 +185,63 @@ export async function getRelationship(userId: string = 'default'): Promise<Relat
 
 export async function healthCheck(): Promise<HealthResponse> {
   return request<HealthResponse>(`${API_BASE}/admin/health`)
+}
+
+export interface DashboardStats {
+  api_keys: number
+  memories: number
+  logs: number
+  prompts_total: number
+  prompts_overridden: number
+  health: HealthResponse
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  return request<DashboardStats>(`${API_BASE}/admin/stats`)
+}
+
+// ============================================================================
+// Admin API - Prompts
+// ============================================================================
+
+export async function listPrompts(): Promise<PromptSummary[]> {
+  return request<PromptSummary[]>(`${API_BASE}/admin/prompts`)
+}
+
+export async function getPrompt(name: string): Promise<PromptDetail> {
+  return request<PromptDetail>(`${API_BASE}/admin/prompts/${encodeURIComponent(name)}`)
+}
+
+export async function putPrompt(name: string, content: string): Promise<PromptSummary> {
+  return request<PromptSummary>(`${API_BASE}/admin/prompts/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  })
+}
+
+export async function resetPrompt(name: string): Promise<PromptSummary> {
+  return request<PromptSummary>(`${API_BASE}/admin/prompts/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function validatePrompt(
+  name: string,
+  content: string,
+): Promise<PromptValidateResponse> {
+  return request<PromptValidateResponse>(
+    `${API_BASE}/admin/prompts/${encodeURIComponent(name)}:validate`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    },
+  )
+}
+
+export async function getPromptHistory(name: string): Promise<PromptHistoryResponse> {
+  return request<PromptHistoryResponse>(
+    `${API_BASE}/admin/prompts/${encodeURIComponent(name)}/history`,
+  )
 }
 
 // ============================================================================

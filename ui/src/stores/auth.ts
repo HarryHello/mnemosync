@@ -1,13 +1,20 @@
-/** 认证状态 composable */
+/** 认证状态 Pinia store. */
 
-import { ref, computed } from 'vue'
+import { defineStore } from 'pinia'
+import { computed, ref } from 'vue'
 import type { UserInfo } from '@/types/api'
-import { login as apiLogin, logout as apiLogout, getCurrentUser, setToken, getToken } from '@/api/client'
+import {
+  login as apiLogin,
+  logout as apiLogout,
+  getCurrentUser,
+  setToken,
+  getToken,
+} from '@/api/client'
 
-const user = ref<UserInfo | null>(null)
-const isAuthenticated = computed(() => !!getToken())
+export const useAuthStore = defineStore('auth', () => {
+  const user = ref<UserInfo | null>(null)
+  const isAuthenticated = computed(() => !!getToken())
 
-export function useAuth() {
   async function login(username: string, password: string) {
     const result = await apiLogin({ username, password })
     user.value = {
@@ -49,4 +56,4 @@ export function useAuth() {
     logout,
     fetchUser,
   }
-}
+})

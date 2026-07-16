@@ -134,6 +134,43 @@ export interface HealthResponse {
 }
 
 // ============================================================================
+// Prompts (Admin)
+// ============================================================================
+
+export interface PromptSummary {
+  name: string
+  description: string
+  placeholders: string[]
+  overridden: boolean
+  version: number
+}
+
+export interface PromptDetail extends PromptSummary {
+  current: string
+  default: string
+}
+
+export interface PromptWriteBody {
+  content: string
+}
+
+export interface PromptValidateResponse {
+  ok: boolean
+  missing_placeholders: string[]
+  error: string | null
+}
+
+export interface PromptHistoryItem {
+  filename: string
+  mtime: string
+  size: number
+}
+
+export interface PromptHistoryResponse {
+  items: PromptHistoryItem[]
+}
+
+// ============================================================================
 // Chat (OpenAI Compatible)
 // ============================================================================
 

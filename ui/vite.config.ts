@@ -15,4 +15,24 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        additionalData: `@use "@/scss/variables" as *; @use "@/scss/mixins" as *;`,
+      },
+    },
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:16125',
+        changeOrigin: true,
+      },
+      '/v1': {
+        target: 'http://localhost:16125',
+        changeOrigin: true,
+      },
+    },
+  },
 })
