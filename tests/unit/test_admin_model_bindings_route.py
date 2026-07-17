@@ -192,3 +192,76 @@ def test_reorder_mismatch_returns_400(app: FastAPI) -> None:
         json={"order": [["s2", "does-not-exist"]]},
     )
     assert resp.status_code == 400
+
+
+def test_add_second_embedding_returns_409(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/model-bindings",
+        json={"role": "embedding", "service_id": "s1", "model": "e1"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = client.post(
+        "/panel/admin/model-bindings",
+        json={"role": "embedding", "service_id": "s2", "model": "e2"},
+    )
+    assert resp.status_code == 409
+    assert "嵌入模型只允许一条绑定" in resp.json()["detail"]
+
+
+def test_add_with_metadata_fields(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/model-bindings",
+        json={
+            "role": "main",
+            "service_id": "s1",
+            "model": "m1",
+            "context_length": 131072,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["context_length"] == 131072
+    assert body["embedding_dim"] is None
+
+    resp = client.post(
+        "/panel/admin/model-bindings",
+        json={
+            "role": "embedding",
+            "service_id": "s1",
+            "model": "e1",
+            "embedding_dim": 1024,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["embedding_dim"] == 1024
+
+
+def test_probe_dimension_returns_length(app: FastAPI) -> None:
+    """probe-dimension 用真实 Forwarder.embed (mock 掉), 校验维度回传."""
+    from unittest.mock import AsyncMock, patch
+    from src.infra.forwarder.forwarder import Forwarder
+
+    client = TestClient(app)
+    with patch.object(
+        Forwarder,
+        "embed",
+        new=AsyncMock(return_value=[[0.1] * 1024]),
+    ):
+        resp = client.post(
+            "/panel/admin/model-bindings/probe-dimension",
+            json={"service_id": "s1", "model": "text-embedding-v3", "dimensions": 1024},
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"dimensions": 1024}
+
+
+def test_probe_dimension_unknown_service_404(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/model-bindings/probe-dimension",
+        json={"service_id": "does-not-exist", "model": "x"},
+    )
+    assert resp.status_code == 404

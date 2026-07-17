@@ -236,23 +236,59 @@ async def test_stream_all_fail_raises_aggregate(resolver):
 
 # ─── embed / rerank ──────────────────────────────────────
 
-async def test_embed_falls_back(tmp_path):
+async def test_embed_uses_first_candidate_no_fallback(tmp_path):
+    """嵌入是单绑定, 不 fallback: 上游报错直接抛."""
     store = LLMServiceStore(str(tmp_path / "e.db"))
     await store.init_db()
     await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
-    await store.save_service(LLMServiceProvider.create("b", "https://b", "sk-b"))
     await store.add_role_binding(ModelType.EMBEDDING, "a", "embed-1")
-    await store.add_role_binding(ModelType.EMBEDDING, "b", "embed-2")
     multi = MultiForwarder(RoleResolver(store))
 
     async def side_effect(*, model, **_):
-        if model == "embed-1":
-            raise UpstreamError(500, "down")
+        assert model == "embed-1"
         return [[0.1, 0.2]]
 
     with patch.object(Forwarder, "embed", new=AsyncMock(side_effect=side_effect)):
         vecs = await multi.embed("hello")
         assert vecs == [[0.1, 0.2]]
+
+
+async def test_embed_no_fallback_on_error(tmp_path):
+    """嵌入上游 5xx 也不 fallback (语义空间不兼容)."""
+    store = LLMServiceStore(str(tmp_path / "e.db"))
+    await store.init_db()
+    await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
+    await store.add_role_binding(ModelType.EMBEDDING, "a", "embed-1")
+    multi = MultiForwarder(RoleResolver(store))
+
+    with patch.object(
+        Forwarder,
+        "embed",
+        new=AsyncMock(side_effect=UpstreamError(500, "down")),
+    ):
+        with pytest.raises(UpstreamError):
+            await multi.embed("hello")
+
+
+async def test_embed_passes_embedding_dim_from_binding(tmp_path):
+    """绑定带 embedding_dim 时, 未显式传 dimensions 参数则用元数据."""
+    store = LLMServiceStore(str(tmp_path / "e.db"))
+    await store.init_db()
+    await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
+    await store.add_role_binding(
+        ModelType.EMBEDDING, "a", "embed-v3", embedding_dim=1024
+    )
+    multi = MultiForwarder(RoleResolver(store))
+
+    captured: dict = {}
+
+    async def side_effect(*, model, dimensions=None, **_):
+        captured["dimensions"] = dimensions
+        return [[0.0] * 1024]
+
+    with patch.object(Forwarder, "embed", new=AsyncMock(side_effect=side_effect)):
+        await multi.embed("hi")
+    assert captured["dimensions"] == 1024
 
 
 async def test_rerank_falls_back(tmp_path):

@@ -194,21 +194,16 @@ class MultiForwarder:
         candidates: Iterable[ResolvedCandidate] | None = None,
         dimensions: int | None = None,
     ) -> list[list[float]]:
+        """嵌入调用. 嵌入语义空间不兼容不同模型, 不做 fallback: 只用第一条候选.
+
+        若绑定携带 `embedding_dim` 元数据, 且调用方未显式传 dimensions, 则透传给上游
+        (DashScope v3 等可变维模型需要).
+        """
         cands = await self._candidates(role, candidates)
-        errors: list[tuple[ResolvedCandidate, Exception]] = []
-        for c in cands:
-            fwd = self._get_forwarder(c)
-            try:
-                return await fwd.embed(input=input, model=c.model, dimensions=dimensions)
-            except Exception as exc:  # noqa: BLE001
-                if not _should_fallback(exc):
-                    raise
-                logger.warning(
-                    "embed fallback: service=%s model=%s error=%s",
-                    c.service_id, c.model, exc,
-                )
-                errors.append((c, exc))
-        raise UpstreamAllCandidatesFailed(role, errors)
+        c = cands[0]
+        fwd = self._get_forwarder(c)
+        effective_dim = dimensions if dimensions is not None else c.embedding_dim
+        return await fwd.embed(input=input, model=c.model, dimensions=effective_dim)
 
     # ============ 重排序 ============
 

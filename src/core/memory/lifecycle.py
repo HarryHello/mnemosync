@@ -2,6 +2,10 @@
 
 协调 memory_store / vector_store / forwarder 完成记忆的创建、入库、衰减更新.
 记忆分析 Agent 产出 CandidateMemory 后, 由本模块负责持久化.
+
+**嵌入锁定** (v0.2.4+): 每次写入向量库前, 通过 `resolver` 查得当前嵌入角色的
+`(service_id, model, embedding_dim)`, 调用 `vector_store.assert_embedding_matches`.
+首次写入时自动 lock; 之后不一致直接抛 `VectorStoreLockError`, 必须走 reindex.
 """
 
 from __future__ import annotations
@@ -18,9 +22,12 @@ from src.core.memory.models import (
     MemoryType,
     Relationship,
 )
+from src.core.models.resolver import RoleResolver
 from src.infra.forwarder.multi import MultiForwarder
+from src.infra.llm_service.models import ModelType
 
 if TYPE_CHECKING:
+    from src.core.memory.reindex import ReindexProgress
     from src.infra.vector_store import VectorStore
     from src.persistence.memory_store import SqliteMemoryStore
 
@@ -35,17 +42,27 @@ class MemoryLifecycle:
     - 应用衰减评估结果（更新 priority/is_forgotten）
     - 永久记忆限额检查与覆盖
     - 关系状态更新
+
+    `resolver` 用于在写入时读取当前嵌入角色的元数据 (service_id/model/dim), 供
+    向量库锁定校验; `apply_relationship_update` 等不涉及向量写入的调用允许传 None.
+
+    `reindex_progress` 非 None 且 state==RUNNING 时, 写入被拒绝 (log warning), 避免
+    重建期间的语义混杂.
     """
 
     def __init__(
         self,
         memory_store: SqliteMemoryStore,
-        vector_store: "VectorStore",
+        vector_store: "VectorStore | None",
         forwarder: MultiForwarder,
+        resolver: RoleResolver | None = None,
+        reindex_progress: "ReindexProgress | None" = None,
     ):
         self.memory_store = memory_store
         self.vector_store = vector_store
         self.forwarder = forwarder
+        self.resolver = resolver
+        self.reindex_progress = reindex_progress
 
     async def store_candidate(
         self,
@@ -60,6 +77,11 @@ class MemoryLifecycle:
         Returns:
             入库的 MemoryEntry, 若失败返回 None
         """
+        # Reindex 正在运行 → 拒写
+        if self.reindex_progress is not None and self.reindex_progress.is_running():
+            logger.warning("reindex 运行中, 记忆入库被跳过: %s", candidate.content[:40])
+            return None
+
         settings = get_settings()
 
         # 永久记忆限额检查
@@ -68,10 +90,8 @@ class MemoryLifecycle:
             count = await self.memory_store.count_permanent(source_user)
             if count >= settings.memory.permanent_limit:
                 if candidate.overrides:
-                    # 覆盖指定记忆
                     await self._delete_memory(candidate.overrides)
                 else:
-                    # 无明确覆盖目标, 降级为普通记忆
                     logger.warning(
                         "永久记忆已满（%d/%d）且未指定 overrides, 降级为普通记忆: %s",
                         count, settings.memory.permanent_limit, candidate.content[:30],
@@ -98,15 +118,24 @@ class MemoryLifecycle:
             logger.error("生成 embedding 失败, 记忆未入库: %s", e)
             return None
 
+        # 校验向量库嵌入锁 (首次写入自动 lock; 换模型未走 reindex 会抛)
+        if self.vector_store is not None and self.resolver is not None:
+            try:
+                cand = await self.resolver.first(ModelType.EMBEDDING)
+                self.vector_store.assert_embedding_matches(
+                    cand.service_id, cand.model, len(vecs[0])
+                )
+            except Exception as e:
+                logger.error("向量库嵌入锁校验失败, 记忆未入库: %s", e)
+                return None
+
         try:
             await self.memory_store.save(entry)
-            self.vector_store.add(entry, vecs[0])
+            if self.vector_store is not None:
+                self.vector_store.add(entry, vecs[0])
         except Exception as e:
             logger.error("记忆入库失败: %s", e)
             return None
-
-        # 处理 overrides（如果覆盖的是永久记忆, 现在新记忆已入库, 旧的需要删除）
-        # 注意: 上面已经 _delete_memory 了, 这里不重复
 
         logger.info(
             "记忆入库: id=%s type=%s importance=%.2f content=%s",

@@ -19,6 +19,7 @@ const items: MenuItem[] = [
   { path: '/api-keys', title: 'API Key', icon: 'Key' },
   { path: '/logs', title: '请求日志', icon: 'Document' },
   { path: '/memories', title: '记忆管理', icon: 'Cpu' },
+  { path: '/maintenance', title: '记忆维护', icon: 'Tools' },
   { path: '/relationships', title: '关系状态', icon: 'Connection' },
   { path: '/settings', title: '设置', icon: 'Setting' },
 ]

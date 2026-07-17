@@ -110,6 +110,8 @@ class LLMServiceStore:
                     service_id TEXT NOT NULL,
                     model TEXT NOT NULL,
                     created_at TIMESTAMP NOT NULL,
+                    context_length INTEGER,
+                    embedding_dim INTEGER,
                     PRIMARY KEY (role, priority),
                     FOREIGN KEY (service_id) REFERENCES llm_services(id) ON DELETE CASCADE
                 )
@@ -117,7 +119,21 @@ class LLMServiceStore:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_role_priority ON role_bindings(role, priority)"
             )
+            await self._ensure_role_binding_columns(db)
             await db.commit()
+
+    async def _ensure_role_binding_columns(self, db) -> None:
+        """v0.2.4 迁移: 为 role_bindings 表补 context_length / embedding_dim 两列.
+
+        SQLite ALTER TABLE ADD COLUMN 是 O(1) 元数据更新, 幂等.
+        """
+        async with db.execute("PRAGMA table_info(role_bindings)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        for col in ("context_length", "embedding_dim"):
+            if col not in cols:
+                await db.execute(
+                    f"ALTER TABLE role_bindings ADD COLUMN {col} INTEGER"
+                )
 
     # ============ 服务商 CRUD ============
 
@@ -256,13 +272,15 @@ class LLMServiceStore:
         async with aiosqlite.connect(self.db_path) as db:
             if role is None:
                 query = (
-                    "SELECT role, priority, service_id, model, created_at "
+                    "SELECT role, priority, service_id, model, created_at, "
+                    "context_length, embedding_dim "
                     "FROM role_bindings ORDER BY role, priority"
                 )
                 params: tuple = ()
             else:
                 query = (
-                    "SELECT role, priority, service_id, model, created_at "
+                    "SELECT role, priority, service_id, model, created_at, "
+                    "context_length, embedding_dim "
                     "FROM role_bindings WHERE role = ? ORDER BY priority"
                 )
                 params = (role.value,)
@@ -275,6 +293,8 @@ class LLMServiceStore:
                 service_id=r[2],
                 model=r[3],
                 created_at=self._parse_dt(r[4]),
+                context_length=r[5],
+                embedding_dim=r[6],
             )
             for r in rows
         ]
@@ -285,10 +305,13 @@ class LLMServiceStore:
         service_id: str,
         model: str,
         priority: Optional[int] = None,
+        context_length: Optional[int] = None,
+        embedding_dim: Optional[int] = None,
     ) -> RoleBinding:
         """追加一条角色绑定. priority 省略时排到列表末尾.
 
         指定 priority 时若已被占用, 后续所有条目 priority += 1 让位.
+        EMBEDDING 角色只允许一条绑定 (换模型会破坏向量语义空间, 走 reindex 流程).
         """
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
@@ -297,6 +320,17 @@ class LLMServiceStore:
                 row = await cursor.fetchone()
                 if not row or row[0] == 0:
                     raise ValueError(f"服务 '{service_id}' 不存在")
+
+            if role == ModelType.EMBEDDING:
+                async with db.execute(
+                    "SELECT COUNT(*) FROM role_bindings WHERE role = ?",
+                    (role.value,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row and row[0] > 0:
+                        raise ValueError(
+                            "嵌入模型只允许一条绑定, 请先删除现有绑定 (换模型需走 reindex)"
+                        )
 
             async with db.execute(
                 "SELECT COALESCE(MAX(priority), -1) FROM role_bindings WHERE role = ?",
@@ -326,14 +360,29 @@ class LLMServiceStore:
 
             now = datetime.now(timezone.utc)
             await db.execute(
-                "INSERT INTO role_bindings (role, priority, service_id, model, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (role.value, priority, service_id, model, now.isoformat()),
+                "INSERT INTO role_bindings "
+                "(role, priority, service_id, model, created_at, context_length, embedding_dim) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    role.value,
+                    priority,
+                    service_id,
+                    model,
+                    now.isoformat(),
+                    context_length,
+                    embedding_dim,
+                ),
             )
             await db.commit()
 
         return RoleBinding(
-            role=role, priority=priority, service_id=service_id, model=model, created_at=now
+            role=role,
+            priority=priority,
+            service_id=service_id,
+            model=model,
+            created_at=now,
+            context_length=context_length,
+            embedding_dim=embedding_dim,
         )
 
     async def delete_role_binding(self, role: ModelType, priority: int) -> bool:
@@ -361,7 +410,10 @@ class LLMServiceStore:
 
         要求 order 必须包含且仅包含现有的全部绑定 (service_id, model 对), 否则 ValueError.
         整体在一个事务中原子完成.
+        EMBEDDING 角色单绑定, reorder 无意义, 直接拒绝.
         """
+        if role == ModelType.EMBEDDING:
+            raise ValueError("嵌入角色只允许一条绑定, reorder 无意义")
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
                 "SELECT service_id, model FROM role_bindings WHERE role = ?",
@@ -417,6 +469,8 @@ class LLMServiceStore:
                         base_url=base_url,
                         api_key=api_key,
                         model=b.model,
+                        context_length=b.context_length,
+                        embedding_dim=b.embedding_dim,
                     )
                 )
         return resolved

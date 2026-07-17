@@ -27,6 +27,12 @@ import type {
   RoleBindingItem,
   RoleBindingListResponse,
   RoleBindingAddBody,
+  ProbeDimensionBody,
+  ProbeDimensionResponse,
+  ReindexStartBody,
+  ReindexStatusResponse,
+  PruneStartBody,
+  PruneResponse,
 } from '@/types/api'
 
 // ============================================================================
@@ -329,6 +335,42 @@ export async function reorderModelBindings(
       body: JSON.stringify({ order }),
     },
   )
+}
+
+export async function probeEmbeddingDimension(
+  body: ProbeDimensionBody,
+): Promise<ProbeDimensionResponse> {
+  return request<ProbeDimensionResponse>(
+    `${API_BASE}/admin/model-bindings/probe-dimension`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+// ============================================================================
+// Admin API - Memory Reindex + Prune (v0.2.4)
+// ============================================================================
+
+export async function startMemoryReindex(
+  body: ReindexStartBody = {},
+): Promise<ReindexStatusResponse> {
+  return request<ReindexStatusResponse>(`${API_BASE}/admin/memory/reindex`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getMemoryReindexStatus(): Promise<ReindexStatusResponse> {
+  return request<ReindexStatusResponse>(`${API_BASE}/admin/memory/reindex/status`)
+}
+
+export async function pruneMemories(body: PruneStartBody = {}): Promise<PruneResponse> {
+  return request<PruneResponse>(`${API_BASE}/admin/memory/prune`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 // ============================================================================

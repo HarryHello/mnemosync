@@ -67,6 +67,7 @@ class RoleBinding:
 
     每个角色 (main/assist/embedding/rerank) 可以有多条候选, priority 越小优先级越高.
     Forwarder 按 priority 升序尝试, 遇上游错误 fallback 到下一条.
+    嵌入角色特殊: 只允许一条绑定 (换模型会破坏已存向量的语义空间).
     """
 
     role: ModelType
@@ -74,6 +75,8 @@ class RoleBinding:
     service_id: str
     model: str
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    context_length: int | None = None
+    embedding_dim: int | None = None
 
 
 @dataclass
@@ -86,3 +89,5 @@ class ResolvedCandidate:
     base_url: str
     api_key: str
     model: str
+    context_length: int | None = None
+    embedding_dim: int | None = None

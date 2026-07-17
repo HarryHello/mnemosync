@@ -65,6 +65,12 @@ class RoleBindingItem(BaseModel):
     service_id: str
     model: str
     created_at: str
+    context_length: int | None = Field(
+        default=None, description="最大上下文 (token). 可选, 仅用于面板展示"
+    )
+    embedding_dim: int | None = Field(
+        default=None, description="嵌入维度. 可选, 会传给上游 dimensions 参数"
+    )
 
 
 class RoleBindingListResponse(BaseModel):
@@ -80,12 +86,73 @@ class RoleBindingAddBody(BaseModel):
         ge=0,
         description="省略时排到末尾; 指定时后续条目自动让位",
     )
+    context_length: int | None = Field(
+        default=None,
+        ge=1,
+        description="可选; 最大上下文 (token), 仅面板展示",
+    )
+    embedding_dim: int | None = Field(
+        default=None,
+        ge=1,
+        description="可选; 嵌入维度. embedding 角色会传给上游 dimensions 参数",
+    )
 
 
 class RoleBindingReorderBody(BaseModel):
     """按新优先级从高到低排序的 (service_id, model) 列表, 必须与现有绑定一一对应."""
 
     order: list[tuple[str, str]] = Field(..., description="[[service_id, model], ...]")
+
+
+class ProbeDimensionBody(BaseModel):
+    """探测嵌入模型的真实输出维度 (不落库)."""
+
+    service_id: str
+    model: str
+    dimensions: int | None = Field(
+        default=None, ge=1, description="可变维模型的期望维度 (可选)"
+    )
+
+
+class ProbeDimensionResponse(BaseModel):
+    dimensions: int
+
+
+class ReindexStartBody(BaseModel):
+    """启动向量库重建."""
+
+    prune: bool = Field(default=False, description="是否同步清理过时/衰减的记忆")
+    priority_threshold: float = Field(
+        default=0.05, ge=0.0, le=1.0, description="prune=True 时的最低优先级阈值"
+    )
+
+
+class ReindexStatusResponse(BaseModel):
+    state: str = Field(..., description="idle | running | success | error")
+    total: int = 0
+    processed: int = 0
+    pruned: int = 0
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+
+
+class PruneStartBody(BaseModel):
+    priority_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
+    dry_run: bool = False
+
+
+class PruneBreakdown(BaseModel):
+    forgotten: int = 0
+    expired: int = 0
+    low_priority: int = 0
+
+
+class PruneResponse(BaseModel):
+    total_before: int
+    would_delete: int
+    deleted: int
+    breakdown: PruneBreakdown
 
 
 __all__ = [
@@ -99,4 +166,11 @@ __all__ = [
     "RoleBindingListResponse",
     "RoleBindingAddBody",
     "RoleBindingReorderBody",
+    "ProbeDimensionBody",
+    "ProbeDimensionResponse",
+    "ReindexStartBody",
+    "ReindexStatusResponse",
+    "PruneStartBody",
+    "PruneBreakdown",
+    "PruneResponse",
 ]

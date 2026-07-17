@@ -212,6 +212,8 @@ export interface RoleBindingItem {
   service_id: string
   model: string
   created_at: string
+  context_length: number | null
+  embedding_dim: number | null
 }
 
 export interface RoleBindingListResponse {
@@ -223,10 +225,59 @@ export interface RoleBindingAddBody {
   service_id: string
   model: string
   priority?: number | null
+  context_length?: number | null
+  embedding_dim?: number | null
 }
 
 export interface RoleBindingReorderBody {
   order: [string, string][]
+}
+
+// v0.2.4: 探测 / 重建 / 清理
+
+export interface ProbeDimensionBody {
+  service_id: string
+  model: string
+  dimensions?: number | null
+}
+
+export interface ProbeDimensionResponse {
+  dimensions: number
+}
+
+export interface ReindexStartBody {
+  prune?: boolean
+  priority_threshold?: number
+}
+
+export type ReindexState = 'idle' | 'running' | 'success' | 'error'
+
+export interface ReindexStatusResponse {
+  state: ReindexState
+  total: number
+  processed: number
+  pruned: number
+  started_at: string | null
+  finished_at: string | null
+  error: string | null
+}
+
+export interface PruneStartBody {
+  priority_threshold?: number
+  dry_run?: boolean
+}
+
+export interface PruneBreakdown {
+  forgotten: number
+  expired: number
+  low_priority: number
+}
+
+export interface PruneResponse {
+  total_before: number
+  would_delete: number
+  deleted: number
+  breakdown: PruneBreakdown
 }
 
 // ============================================================================

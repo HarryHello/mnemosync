@@ -13,7 +13,10 @@ from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
 
 if TYPE_CHECKING:
+    from src.core.memory.reindex import ReindexProgress
     from src.core.models.resolver import RoleResolver
+    from src.infra.forwarder.multi import MultiForwarder
+    from src.infra.vector_store import VectorStore
 
 
 def get_auth_store(request: Request) -> SqliteAuthStore:
@@ -38,3 +41,15 @@ def get_llm_service_store(request: Request) -> LLMServiceStore:
 
 def get_resolver(request: Request) -> "RoleResolver":
     return request.app.state.resolver
+
+
+def get_multi_forwarder(request: Request) -> "MultiForwarder":
+    return request.app.state.multi_forwarder
+
+
+def get_vector_store(request: Request) -> "VectorStore":
+    return request.app.state.vector_store
+
+
+def get_reindex_progress(request: Request) -> "ReindexProgress":
+    return request.app.state.reindex_progress

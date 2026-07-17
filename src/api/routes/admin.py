@@ -18,17 +18,27 @@ from src.api.deps import (
     get_http_log_store,
     get_llm_service_store,
     get_memory_store,
+    get_multi_forwarder,
+    get_reindex_progress,
     get_resolver,
+    get_vector_store,
 )
 from src.api.routes.auth import get_current_user
 from src.core.models.resolver import RoleResolver
 from src.api.schemas.admin import (
+    ProbeDimensionBody,
+    ProbeDimensionResponse,
     PromptDetail,
     PromptHistoryItem,
     PromptHistoryResponse,
     PromptSummary,
     PromptValidateResponse,
     PromptWriteBody,
+    PruneBreakdown as PruneBreakdownSchema,
+    PruneResponse,
+    PruneStartBody,
+    ReindexStartBody,
+    ReindexStatusResponse,
     RoleBindingAddBody,
     RoleBindingItem,
     RoleBindingListResponse,
@@ -639,6 +649,8 @@ def _binding_to_item(b) -> RoleBindingItem:
         service_id=b.service_id,
         model=b.model,
         created_at=b.created_at.isoformat(),
+        context_length=b.context_length,
+        embedding_dim=b.embedding_dim,
     )
 
 
@@ -659,7 +671,10 @@ async def add_model_binding(
     store: LLMServiceStore = Depends(get_llm_service_store),
     resolver: RoleResolver = Depends(get_resolver),
 ):
-    """追加一条角色绑定. priority 省略排到末尾, 指定时后续条目自动让位."""
+    """追加一条角色绑定. priority 省略排到末尾, 指定时后续条目自动让位.
+
+    嵌入角色只允许一条绑定, 重复添加返回 409 (需先删除现有绑定).
+    """
     role_enum = _parse_role(body.role)
     if not body.service_id.strip() or not body.model.strip():
         raise HTTPException(status_code=400, detail="service_id / model 不可为空")
@@ -669,9 +684,14 @@ async def add_model_binding(
             body.service_id.strip(),
             body.model.strip(),
             priority=body.priority,
+            context_length=body.context_length,
+            embedding_dim=body.embedding_dim,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        msg = str(e)
+        if "嵌入模型只允许一条绑定" in msg:
+            raise HTTPException(status_code=409, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
     resolver.invalidate(role_enum)
     return _binding_to_item(binding)
 
@@ -709,4 +729,121 @@ async def reorder_model_bindings(
         raise HTTPException(status_code=400, detail=str(e))
     resolver.invalidate(role_enum)
     return RoleBindingListResponse(items=[_binding_to_item(b) for b in bindings])
+
+
+@router.post("/model-bindings/probe-dimension", response_model=ProbeDimensionResponse)
+async def probe_embedding_dimension(
+    body: ProbeDimensionBody,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+):
+    """临时调用嵌入模型探测输出维度. 不落库, 仅用于面板 Add/Replace 对话框填值.
+
+    - 不校验绑定是否存在 (允许"先探测再绑定")
+    - service_id 必须已存在于 llm_services 表
+    - 用户可传 dimensions (DashScope v3 等可变维模型) 或不传 (走上游默认)
+    """
+    if not body.service_id.strip() or not body.model.strip():
+        raise HTTPException(status_code=400, detail="service_id / model 不可为空")
+    svc = await store.get_service(body.service_id.strip())
+    if svc is None:
+        raise HTTPException(status_code=404, detail=f"service '{body.service_id}' 不存在")
+    fwd = Forwarder(
+        ForwarderConfig(
+            base_url=svc.base_url,
+            api_key=svc.api_key,
+            default_model=body.model.strip(),
+        )
+    )
+    try:
+        vecs = await fwd.embed(
+            input="hi",
+            model=body.model.strip(),
+            dimensions=body.dimensions,
+        )
+    except UpstreamError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"上游探测失败 ({e.status_code}): {e}",
+        )
+    except UpstreamTimeout as e:
+        raise HTTPException(status_code=504, detail=f"上游探测超时: {e}")
+    finally:
+        await fwd.close()
+    if not vecs or not vecs[0]:
+        raise HTTPException(status_code=502, detail="上游返回空向量")
+    return ProbeDimensionResponse(dimensions=len(vecs[0]))
+
+
+# ============================================================================
+# Memory reindex + prune (v0.2.4)
+# ============================================================================
+
+
+@router.post("/memory/reindex", response_model=ReindexStatusResponse)
+async def start_memory_reindex(
+    body: ReindexStartBody,
+    memory_store: SqliteMemoryStore = Depends(get_memory_store),
+    vector_store=Depends(get_vector_store),
+    forwarder=Depends(get_multi_forwarder),
+    resolver: RoleResolver = Depends(get_resolver),
+    progress=Depends(get_reindex_progress),
+):
+    """启动向量库重建 (异步背景任务). 已在运行返回 409."""
+    from src.core.memory.reindex import Reindexer
+
+    if progress.is_running():
+        raise HTTPException(status_code=409, detail="reindex 已在运行中")
+
+    reindexer = Reindexer(memory_store, vector_store, forwarder, resolver, progress)
+
+    import asyncio as _asyncio
+
+    async def _run():
+        try:
+            await reindexer.run(
+                prune=body.prune,
+                priority_threshold=body.priority_threshold,
+            )
+        except Exception as e:
+            logger.error("reindex 背景任务失败: %s", e)
+
+    _asyncio.create_task(_run())
+    return ReindexStatusResponse(**progress.snapshot())
+
+
+@router.get("/memory/reindex/status", response_model=ReindexStatusResponse)
+async def get_memory_reindex_status(
+    progress=Depends(get_reindex_progress),
+):
+    return ReindexStatusResponse(**progress.snapshot())
+
+
+@router.post("/memory/prune", response_model=PruneResponse)
+async def prune_memories(
+    body: PruneStartBody,
+    memory_store: SqliteMemoryStore = Depends(get_memory_store),
+    vector_store=Depends(get_vector_store),
+    progress=Depends(get_reindex_progress),
+):
+    """按衰减规则清理记忆. 与 reindex 互斥 (running 时返 409).
+
+    PERMANENT 永不删; is_forgotten / expired / priority<threshold 命中删除.
+    dry_run=true 只返回统计。
+    """
+    from src.core.memory.reindex import Pruner
+
+    if progress.is_running():
+        raise HTTPException(status_code=409, detail="reindex 运行中, prune 暂不可执行")
+
+    pruner = Pruner(memory_store, vector_store)
+    result = await pruner.run(
+        priority_threshold=body.priority_threshold,
+        dry_run=body.dry_run,
+    )
+    return PruneResponse(
+        total_before=result.total_before,
+        would_delete=result.would_delete,
+        deleted=result.deleted,
+        breakdown=PruneBreakdownSchema(**result.breakdown.as_dict()),
+    )
 

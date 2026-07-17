@@ -42,15 +42,21 @@ logger = logging.getLogger(__name__)
 _LLM_SERVICE_DB_PATH = "data/llm_service.db"
 
 
+def _make_multi_forwarder_with_resolver() -> tuple[MultiForwarder, RoleResolver]:
+    """构建 MultiForwarder + resolver 对 (共享同一 store)."""
+    store = LLMServiceStore(_LLM_SERVICE_DB_PATH)
+    resolver = RoleResolver(store)
+    return MultiForwarder(resolver), resolver
+
+
 def _make_multi_forwarder() -> MultiForwarder:
     """构建独立的 MultiForwarder (每次节点执行创建一次).
 
     每次调用新建 store/resolver 实例, 靠 role_bindings 表读取最新绑定,
     与外部 CLI 调用/服务器调用共享同一 SQLite 文件.
     """
-    store = LLMServiceStore(_LLM_SERVICE_DB_PATH)
-    resolver = RoleResolver(store)
-    return MultiForwarder(resolver)
+    fwd, _ = _make_multi_forwarder_with_resolver()
+    return fwd
 
 
 async def parse_request_node(state: AgentState) -> dict[str, Any]:
@@ -186,7 +192,7 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
     """记忆分析 Agent: ReAct, 提取候选记忆 + 衰减评估."""
     settings = get_settings()
     source_user = state["source_user"]
-    forwarder = _make_multi_forwarder()
+    forwarder, resolver = _make_multi_forwarder_with_resolver()
     memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
     await memory_store.init_db()
 
@@ -236,7 +242,7 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         logger.debug("  ✅ 记忆分析完成: 新记忆 %d 条, 衰减评估 %d 条",
                      len(out.new_memories), len(out.decay_evaluations))
 
-        lifecycle = MemoryLifecycle(memory_store, vector_store, forwarder)
+        lifecycle = MemoryLifecycle(memory_store, vector_store, forwarder, resolver=resolver)
         for cand in out.new_memories:
             await lifecycle.store_candidate(cand, source_user=source_user)
         await lifecycle.apply_decay_evaluations(out.decay_evaluations)

@@ -311,6 +311,24 @@ class SqliteMemoryStore:
                 rows = await cursor.fetchall()
                 return [self._row_to_entry(r) for r in rows]
 
+    async def iter_all(self, batch_size: int = 200):
+        """按 created_at 升序分批产出所有记忆 (含遗忘). 用于 reindex/prune 遍历."""
+        offset = 0
+        while True:
+            async with self._conn() as db:
+                async with db.execute(
+                    "SELECT * FROM memory_entries ORDER BY created_at ASC LIMIT ? OFFSET ?",
+                    (batch_size, offset),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+            if not rows:
+                break
+            for r in rows:
+                yield self._row_to_entry(r)
+            if len(rows) < batch_size:
+                break
+            offset += batch_size
+
     # ============ Relationship CRUD ============
 
     async def get_relationship(self, persona_id: str, user_id: str) -> Relationship | None:

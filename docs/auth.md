@@ -228,3 +228,4 @@ A: 独立。API Key 只做鉴权; 代理思考当前硬编码 `False` ([forward.
 | v0.2.0 | 2026-07-12 | 初始认证系统 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 路由前缀 `/auth` (非 `/api/v1/auth`), CLI 顶层命令列表修正, 代理思考启用方式修正 |
 | v0.2.3 | 2026-07-17 | 面板端口前缀由 `/api/v1` 改为 `/panel`, 与 OpenAI 兼容层 `/v1` 完全隔离 |
+| v0.2.4 | 2026-07-17 | 新增 `/panel/admin/model-bindings/probe-dimension` + `/panel/admin/memory/reindex` + `/panel/admin/memory/reindex/status` + `/panel/admin/memory/prune`, 全部通过 admin router 的 `Depends(get_current_user)` 前置鉴权 |

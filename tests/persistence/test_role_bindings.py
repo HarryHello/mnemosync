@@ -103,15 +103,96 @@ async def test_service_deletion_cascades_bindings(store):
 # ─── resolve_role ────────────────────────────────────────
 
 async def test_resolve_role_returns_decrypted_candidates(store):
-    await store.add_role_binding(ModelType.EMBEDDING, "svc-a", "text-embed-v3")
-    await store.add_role_binding(ModelType.EMBEDDING, "svc-b", "text-embed-v2")
-    resolved = await store.resolve_role(ModelType.EMBEDDING)
+    await store.add_role_binding(ModelType.RERANK, "svc-a", "rerank-v3")
+    await store.add_role_binding(ModelType.RERANK, "svc-b", "rerank-v2")
+    resolved = await store.resolve_role(ModelType.RERANK)
     assert len(resolved) == 2
     assert resolved[0].service_id == "svc-a"
     assert resolved[0].api_key == "sk-aaa"
     assert resolved[0].base_url == "https://a.example/v1"
-    assert resolved[0].model == "text-embed-v3"
+    assert resolved[0].model == "rerank-v3"
     assert resolved[1].priority == 1
+
+
+async def test_embedding_role_is_single_binding(store):
+    """嵌入角色只允许一条绑定, 重复添加应报错."""
+    b = await store.add_role_binding(ModelType.EMBEDDING, "svc-a", "embed-v3")
+    assert b.priority == 0
+    with pytest.raises(ValueError, match="嵌入模型只允许一条绑定"):
+        await store.add_role_binding(ModelType.EMBEDDING, "svc-b", "embed-v2")
+    # 删除后可再添
+    await store.delete_role_binding(ModelType.EMBEDDING, 0)
+    b2 = await store.add_role_binding(ModelType.EMBEDDING, "svc-b", "embed-v2")
+    assert b2.priority == 0
+
+
+async def test_embedding_reorder_rejected(store):
+    await store.add_role_binding(ModelType.EMBEDDING, "svc-a", "embed-v3")
+    with pytest.raises(ValueError, match="嵌入角色只允许一条绑定"):
+        await store.reorder_role_bindings(
+            ModelType.EMBEDDING, [("svc-a", "embed-v3")]
+        )
+
+
+async def test_role_binding_metadata_persistence(store):
+    """context_length / embedding_dim 字段可存可读."""
+    await store.add_role_binding(
+        ModelType.MAIN, "svc-a", "qwen-max",
+        context_length=131072,
+    )
+    await store.add_role_binding(
+        ModelType.EMBEDDING, "svc-b", "embed-v3",
+        embedding_dim=1024,
+    )
+    main = await store.list_role_bindings(ModelType.MAIN)
+    assert main[0].context_length == 131072
+    assert main[0].embedding_dim is None
+    emb = await store.list_role_bindings(ModelType.EMBEDDING)
+    assert emb[0].embedding_dim == 1024
+    assert emb[0].context_length is None
+    # resolve 也带过来
+    resolved = await store.resolve_role(ModelType.EMBEDDING)
+    assert resolved[0].embedding_dim == 1024
+
+
+async def test_migration_adds_columns_to_legacy_table(tmp_path):
+    """幂等迁移: 手工建旧 5 列 schema + 插一行, init_db 后新列为 NULL."""
+    import aiosqlite
+
+    db_path = str(tmp_path / "legacy.db")
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT NOT NULL, "
+            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        )
+        await db.execute(
+            "CREATE TABLE llm_services (id TEXT PRIMARY KEY, base_url TEXT NOT NULL, "
+            "api_key_encrypted TEXT NOT NULL, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL)"
+        )
+        await db.execute(
+            "CREATE TABLE role_bindings ("
+            "role TEXT NOT NULL, priority INTEGER NOT NULL, service_id TEXT NOT NULL, "
+            "model TEXT NOT NULL, created_at TIMESTAMP NOT NULL, "
+            "PRIMARY KEY (role, priority))"
+        )
+        await db.commit()
+
+    s = LLMServiceStore(db_path)
+    await s.init_db()
+    # 手工插一条旧数据 (走底层, 不通过约束校验的 add_role_binding)
+    await s.save_service(LLMServiceProvider.create("svc-a", "https://a", "sk-a"))
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT INTO role_bindings (role, priority, service_id, model, created_at) "
+            "VALUES ('main', 0, 'svc-a', 'legacy-model', '2026-01-01T00:00:00+00:00')"
+        )
+        await db.commit()
+
+    listed = await s.list_role_bindings(ModelType.MAIN)
+    assert len(listed) == 1
+    assert listed[0].model == "legacy-model"
+    assert listed[0].context_length is None
+    assert listed[0].embedding_dim is None
 
 
 async def test_resolve_empty_role(store):

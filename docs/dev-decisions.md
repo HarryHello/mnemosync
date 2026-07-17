@@ -136,6 +136,54 @@ Agent 提示词此前是 `src/core/agents/prompts/*.py` 里的 Python 字符串�
 
 ---
 
+## 嵌入模型单绑定 + Reindex + Prune (v0.2.4)
+
+**日期**: 2026-07-17
+
+### 背景
+
+v0.2.3 把 `main / assist / embedding / rerank` 全部纳入 `role_bindings` 优先级列表, 上游出错自动 fallback 到下一位。这套模型对生成侧 (main/assist/rerank) 合理, 但对嵌入侧有一个根本错误:
+
+- 不同嵌入模型输出的向量维度不同; 即便维度相同 (2048 vs 2048), **语义空间也完全不同** — 换模型不能靠 fallback 蒙混, 已存向量会瞬间失去意义
+- ChromaDB collection 首次写入时锁定维度; 中途换模型要么维度不匹配直接 crash (较好), 要么维度巧合一致但检索质量默默劣化 (更糟)
+- v0.2.3 的 [`lifecycle.py`](../src/core/memory/lifecycle.py) 与 [`tools/vector_search.py`](../src/core/tools/vector_search.py) 里的 `forwarder.embed(x)` 会走 MultiForwarder 的多候选遍历 — 嵌入语境下这就是灾难
+
+同时用户提出两个衍生需求:
+
+1. **模型规格可见性**: `/models` 面板卡片只展示 `service_id/model`, 判断"这个 8B 上下文够不够"、"这个嵌入维度对不对"完全靠用户记忆。竞品 (AstrBot / One-API / LiteLLM) 都有 `context_length` / `dim` 字段。
+2. **大规模衰减清理**: 记忆到万级后, 已过期日程 + 已衰减到 FORGOTTEN 阈值以下的低价值记忆积累会拖慢重建。`MemoryEntry` 已有 `decay_rate` / `priority` / `expires_at` / `is_forgotten` / `memory_type`, 纯本地就能判定, 不需 LLM。
+
+### 决策
+
+1. **嵌入 = 单绑定**。add 第二条嵌入返回 409; reorder 对嵌入返回 400。Store 层 [`add_role_binding`](../src/infra/llm_service/store.py) 前置校验。
+2. **主/辅助/重排保持多候选** fallback。重排换模型只影响精排, 不动向量库。
+3. **ChromaDB collection 锁定 `(service_id, model, dim)` 元数据**。首次写入时 [`vector_store.lock_embedding()`](../src/infra/vector_store.py) 落到 collection.metadata; 之后每次写入前 assert 一致, 不一致抛 `VectorStoreLockError`。查询侧不校验 (读旁路)。
+4. **换嵌入模型必须走 reindex**。UI 用替换对话框弹二次确认 + 记忆数警告; 用户可选"替换并重建"或"仅替换 (稍后手动重建)"。
+5. **Reindex 端点异步**, `ReindexProgress` 是**进程内单例**, 崩溃就复位; 前端轮询 `GET /memory/reindex/status`。刻意不做持久化 — 进度值有意义的只是"当前跑没跑完", 重启就得重跑。
+6. **Reindex + Prune 同任务两模式**。reindex 遍历时可 opt-in 顺便清理; prune 也是独立端点, 面板/CLI 直触。逻辑同源: [`should_prune()`](../src/core/memory/reindex.py) 纯函数。
+7. **PERMANENT 记忆绝对不动**, 无 opt-out。想删单条走既有 `/memories/{id}` DELETE。理由: 用户明确声明"永久"就是永久, 唯一显式覆盖点是单条 API。
+8. **Reindex 期间拒写**: `progress.state == 'running'` 时 `MemoryLifecycle.store_candidate` 早退并 log 警告。避免边重建边写入导致语义混杂。单用户系统可接受, 多用户/在线迁移不在本轮范围。
+9. **元数据字段可选**。`context_length` 纯面板展示, 不消费; `embedding_dim` 会被 forwarder 消费, 作为 `dimensions=` 传给上游 (DashScope v3 等可变维模型的必要参数)。
+10. **维度探测按钮**: Add 对话框加"测试维度", POST `/model-bindings/probe-dimension` 临时 `embed("hi")` 一次读长度, **不落库**。用户可采纳也可手填。
+
+### 一并做的三件
+
+- **删除嵌入绑定** 走同一个 delete 路由, 但 UI 提示语强化: "删除后须重新添加嵌入模型才能写入新记忆, 且已存向量将无法与新模型对齐"
+- **清理 dry-run**: prune 端点接受 `dry_run=true`, 只返回 breakdown (forgotten/expired/low_priority 各多少) 不删。让用户看清楚阈值把什么类型带走了再点确认
+- **CLI 走 HTTP**: `memory reindex/prune` 子命令通过 panel HTTP 调用, 而不是在 CLI 进程里 in-process 跑。避免与运行中服务器争夺 Chroma 单例; 也让"CLI 是远程 SSH 客户端"的场景直接可用
+
+### 显式范围外
+
+- **在线迁移** (换模型期间不停写): 单用户系统接受"重建期间拒写"的简单方案。多用户需引入双写 / 影子索引
+- **PERMANENT 也可清理**: 不做例外, 单条走 API DELETE
+- **prune 备份 / 导出**: 未来若需要"先导出 JSONL 备份再删"再加
+- **静态 model spec 表** (LiteLLM `model_prices.json` 那种): 不引入, `context_length` 让用户手填
+- **rerank 需 reindex**: 不需要, 换重排模型只影响精排质量, 向量库不动
+- **进度持久化**: 只在内存; 进程崩溃后需重触发, 可接受
+- **CLI 独立进度显示**: `memory reindex` 阻塞直到完成, 简单打印百分比; 不做异步 poll
+
+---
+
 ## 待补充
 
 后续遇到的新决策会追加到本文档.

@@ -7,9 +7,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from src.core.memory.reindex import ReindexProgress
 from src.core.models.resolver import RoleResolver
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.store import LLMServiceStore
+from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.auth_store import SqliteAuthStore
 from src.persistence.http_log_store import HttpLogStore
@@ -57,6 +59,14 @@ async def app_lifespan(app: FastAPI):
     resolver = RoleResolver(llm_service_store)
     multi_forwarder = MultiForwarder(resolver)
 
+    # v0.2.4: 向量库 + reindex 进度单例. 向量库路径来自 settings.
+    from src.core.config import get_settings as _get_settings
+    vs_settings = _get_settings()
+    vector_store = VectorStore(
+        str(vs_settings.storage.chroma_dir_abs)
+    )
+    reindex_progress = ReindexProgress()
+
     app.state.auth_store = auth_store
     app.state.api_key_store = api_key_store
     app.state.memory_store = memory_store
@@ -64,7 +74,12 @@ async def app_lifespan(app: FastAPI):
     app.state.llm_service_store = llm_service_store
     app.state.resolver = resolver
     app.state.multi_forwarder = multi_forwarder
-    logger.info("Stores connected (auth / api_key / memory / http_log / llm_service); resolver + multi_forwarder ready")
+    app.state.vector_store = vector_store
+    app.state.reindex_progress = reindex_progress
+    logger.info(
+        "Stores connected (auth / api_key / memory / http_log / llm_service); "
+        "resolver + multi_forwarder + vector_store + reindex_progress ready"
+    )
 
     try:
         yield
