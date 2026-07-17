@@ -77,7 +77,9 @@ class MemoryRetriever:
         embedding 维度由所选模型决定, 无需外部配置.
         """
         # 1. embedding (role=EMBEDDING, 维度由绑定模型决定)
-        vectors = await self.forwarder.embed(query)
+        from src.infra.debug_context import use_agent
+        with use_agent("memory_retriever"):
+            vectors = await self.forwarder.embed(query)
         query_vector = vectors[0]
 
         # 2. ChromaDB 粗筛（取 top_k * 2 候选）

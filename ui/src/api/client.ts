@@ -33,6 +33,10 @@ import type {
   ReindexStatusResponse,
   PruneStartBody,
   PruneResponse,
+  DebugSessionKeyResponse,
+  DebugEventListResponse,
+  DebugEventDetailResponse,
+  DebugStatusResponse,
 } from '@/types/api'
 
 // ============================================================================
@@ -371,6 +375,63 @@ export async function pruneMemories(body: PruneStartBody = {}): Promise<PruneRes
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+// ============================================================================
+// Admin API - Debug Panel (v0.2.5)
+// ============================================================================
+
+export async function getDebugSessionKey(): Promise<DebugSessionKeyResponse> {
+  return request<DebugSessionKeyResponse>(`${API_BASE}/admin/debug/session-key`, {
+    method: 'POST',
+  })
+}
+
+export async function getDebugStatus(): Promise<DebugStatusResponse> {
+  return request<DebugStatusResponse>(`${API_BASE}/admin/debug/status`)
+}
+
+export async function listDebugEvents(limit = 200): Promise<DebugEventListResponse> {
+  return request<DebugEventListResponse>(`${API_BASE}/admin/debug/events?limit=${limit}`)
+}
+
+export async function getDebugEventDetail(eventId: string): Promise<DebugEventDetailResponse> {
+  return request<DebugEventDetailResponse>(
+    `${API_BASE}/admin/debug/events/${encodeURIComponent(eventId)}`,
+  )
+}
+
+export async function clearDebugEvents(): Promise<void> {
+  await request(`${API_BASE}/admin/debug/events`, { method: 'DELETE' })
+}
+
+/** Open SSE stream with bearer auth via fetch (EventSource 不支持自定义 header).
+ *  返回底层 Response, 调用方读取 response.body 逐行解析 SSE. */
+export async function openDebugStream(signal: AbortSignal): Promise<Response> {
+  const headers: Record<string, string> = { Accept: 'text/event-stream' }
+  const token = getToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const resp = await fetch(`${API_BASE}/admin/debug/events/stream`, {
+    method: 'GET',
+    headers,
+    signal,
+  })
+  if (!resp.ok || !resp.body) {
+    throw new Error(`SSE open failed: HTTP ${resp.status}`)
+  }
+  return resp
+}
+
+// ============================================================================
+// Models (OpenAI Compatible)
+// ============================================================================
+
+export async function listV1Models(apiKey: string): Promise<{ data: Array<{ id: string }> }> {
+  const resp = await fetch(`${CHAT_BASE}/models`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  return resp.json()
 }
 
 // ============================================================================

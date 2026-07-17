@@ -34,6 +34,7 @@ from src.core.memory.context import build_main_dialogue_messages
 from src.core.agents import run_proxy_thinking, run_prompt_cleaning
 from src.core.memory import format_relationship
 from src.core.models.resolver import NoCandidateForRoleError
+from src.infra.debug_context import use_agent
 from src.infra.forwarder import (
     UpstreamError,
     UpstreamTimeout,
@@ -400,17 +401,18 @@ async def _handle_stream(
         saw_native = False
         try:
             logger.debug("🚀 开始流式转发 (带记忆上下文)...")
-            async for chunk in multi_forwarder.chat_stream(
-                ModelType.MAIN,
-                messages=messages_with_memory,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                **passthrough,
-            ):
-                collected_chunks.append(chunk)
-                if not saw_native and chunk_has_native_reasoning(chunk):
-                    saw_native = True
-                yield chunk
+            with use_agent("main_dialogue_stream"):
+                async for chunk in multi_forwarder.chat_stream(
+                    ModelType.MAIN,
+                    messages=messages_with_memory,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    **passthrough,
+                ):
+                    collected_chunks.append(chunk)
+                    if not saw_native and chunk_has_native_reasoning(chunk):
+                        saw_native = True
+                    yield chunk
             logger.debug("✅ 流式转发完成, chunks: %d", len(collected_chunks))
         except UpstreamTimeout as e:
             logger.debug("⏰ 流式超时: %s", e)

@@ -18,6 +18,10 @@ from typing import Optional, Protocol
 from cryptography.fernet import Fernet, InvalidToken
 
 
+API_KEY_SOURCE_USER = "user"
+API_KEY_SOURCE_PANEL_DEBUG = "panel-debug"
+
+
 @dataclass
 class ApiKey:
     id: str
@@ -28,9 +32,10 @@ class ApiKey:
     last_used_at: datetime | None = None
     is_active: bool = True
     key_full: str | None = None  # 解密后的完整 key, 仅内存持有
+    source: str = API_KEY_SOURCE_USER  # 来源: user (手动) / panel-debug (调试面板自动生成)
 
     @staticmethod
-    def generate(note: str) -> "ApiKey":
+    def generate(note: str, source: str = API_KEY_SOURCE_USER) -> "ApiKey":
         raw = f"sk-{secrets.token_urlsafe(32)}"
         return ApiKey(
             id=secrets.token_hex(16),
@@ -38,6 +43,7 @@ class ApiKey:
             key_prefix=raw[:12],
             note=note,
             key_full=raw,
+            source=source,
         )
 
     def mark_used(self) -> None:
@@ -49,7 +55,7 @@ class ApiKeyStore(Protocol):
     async def save(self, api_key: ApiKey) -> None: ...
     async def get_by_id(self, key_id: str) -> ApiKey | None: ...
     async def get_by_key_hash(self, key_hash: str) -> ApiKey | None: ...
-    async def list_all(self) -> list[ApiKey]: ...
+    async def list_all(self, source: str | None = None) -> list[ApiKey]: ...
     async def delete(self, key_id: str) -> bool: ...
     async def update_last_used(self, key_id: str) -> None: ...
 
@@ -151,13 +157,15 @@ class SqliteApiKeyStore:
                 last_used_at TIMESTAMP,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 key_full TEXT,
-                key_encrypted TEXT
+                key_encrypted TEXT,
+                source TEXT NOT NULL DEFAULT 'user'
             )
         """)
         # 兼容早期库
         for ddl in (
             "ALTER TABLE api_keys ADD COLUMN key_full TEXT",
             "ALTER TABLE api_keys ADD COLUMN key_encrypted TEXT",
+            "ALTER TABLE api_keys ADD COLUMN source TEXT NOT NULL DEFAULT 'user'",
         ):
             try:
                 await db.execute(ddl)
@@ -165,6 +173,7 @@ class SqliteApiKeyStore:
                 pass
         await db.execute("CREATE INDEX IF NOT EXISTS idx_key_hash ON api_keys(key_hash)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_is_active ON api_keys(is_active)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_source ON api_keys(source)")
 
     async def _migrate_legacy_plaintext(self, db: aiosqlite.Connection) -> None:
         """把历史明文 key_full 加密写入 key_encrypted, 然后清空明文列."""
@@ -202,8 +211,8 @@ class SqliteApiKeyStore:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO api_keys
-                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full, key_encrypted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full, key_encrypted, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
                 """,
                 (
                     api_key.id,
@@ -214,6 +223,7 @@ class SqliteApiKeyStore:
                     api_key.last_used_at.isoformat() if api_key.last_used_at else None,
                     1 if api_key.is_active else 0,
                     encrypted,
+                    api_key.source or API_KEY_SOURCE_USER,
                 ),
             )
             await db.commit()
@@ -239,11 +249,26 @@ class SqliteApiKeyStore:
                     return None
                 return await self._row_to_api_key(db, row)
 
-    async def list_all(self) -> list[ApiKey]:
+    async def list_all(self, source: str | None = None) -> list[ApiKey]:
+        """列出 API Key. 传入 source 时按来源过滤 (面板视图应传 'user' 只看用户创建的)."""
         async with self._conn() as db:
-            async with db.execute("SELECT * FROM api_keys ORDER BY created_at DESC") as cursor:
-                rows = await cursor.fetchall()
+            if source is None:
+                async with db.execute("SELECT * FROM api_keys ORDER BY created_at DESC") as cursor:
+                    rows = await cursor.fetchall()
+            else:
+                async with db.execute(
+                    "SELECT * FROM api_keys WHERE source = ? ORDER BY created_at DESC",
+                    (source,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
             return [await self._row_to_api_key(db, r) for r in rows]
+
+    async def delete_by_source(self, source: str) -> int:
+        """按来源批量删除, 返回删除条数. 用于清理 panel-debug 孤儿 key."""
+        async with self._conn() as db:
+            cur = await db.execute("DELETE FROM api_keys WHERE source = ?", (source,))
+            await db.commit()
+            return cur.rowcount
 
     async def count_active(self) -> int:
         """活跃 API Key 数 (用于仪表盘聚合)."""
@@ -269,9 +294,10 @@ class SqliteApiKeyStore:
             await db.commit()
 
     async def _row_to_api_key(self, db: aiosqlite.Connection, row: tuple) -> ApiKey:
-        # 列顺序: id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full, key_encrypted
+        # 列顺序: id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full, key_encrypted, source
         legacy_plain = row[7] if len(row) > 7 else None
         encrypted = row[8] if len(row) > 8 else None
+        source = row[9] if len(row) > 9 and row[9] else API_KEY_SOURCE_USER
         key_full: str | None = None
         if encrypted:
             key_full = await self._decrypt(db, encrypted)
@@ -286,4 +312,5 @@ class SqliteApiKeyStore:
             last_used_at=datetime.fromisoformat(row[5]) if row[5] else None,
             is_active=bool(row[6]),
             key_full=key_full,
+            source=source,
         )

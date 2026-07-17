@@ -281,6 +281,60 @@ export interface PruneResponse {
 }
 
 // ============================================================================
+// Debug Chat (v0.2.5 面板调试)
+// ============================================================================
+
+export interface DebugSessionKeyResponse {
+  id: string
+  key: string
+  note: string
+  created_at: string
+}
+
+export type DebugDirection =
+  | 'inbound_request'
+  | 'inbound_response'
+  | 'upstream_request'
+  | 'upstream_response'
+  | 'upstream_request_final'
+  | 'upstream_response_final'
+
+export interface DebugEventSummary {
+  id: string
+  correlation_id: string
+  ts: number
+  direction: DebugDirection | string
+  method: string | null
+  url: string
+  port: number | null
+  agent: string | null
+  status: number | null
+  duration_ms: number | null
+  key_note: string | null
+  headers: Record<string, string> | null
+  body_preview: unknown
+  body_full_size: number
+  is_truncated: boolean
+}
+
+export interface DebugEventListResponse {
+  items: DebugEventSummary[]
+}
+
+export interface DebugEventDetailResponse {
+  summary: DebugEventSummary
+  body_full: unknown
+  stream_assembled: string | null
+  stream_chunks_count: number
+}
+
+export interface DebugStatusResponse {
+  subscriber_count: number
+  buffer_size: number
+  buffer_capacity: number
+}
+
+// ============================================================================
 // Chat (OpenAI Compatible)
 // ============================================================================
 

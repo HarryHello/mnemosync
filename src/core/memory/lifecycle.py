@@ -113,7 +113,9 @@ class MemoryLifecycle:
 
         # 生成 embedding 并入库
         try:
-            vecs = await self.forwarder.embed(entry.content)
+            from src.infra.debug_context import use_agent
+            with use_agent("memory_lifecycle"):
+                vecs = await self.forwarder.embed(entry.content)
         except Exception as e:
             logger.error("生成 embedding 失败, 记忆未入库: %s", e)
             return None

@@ -4,6 +4,8 @@
   * 从 `request.app.state.http_log_store` (由 lifespan 提供) 取共享的异步 store.
   * 记录路径**不写盘**: 只 `enqueue()` 一条 dict, 由后台 worker 批量 flush.
   * 中间件从此不再阻塞 asyncio 事件循环, 仪表盘、流式接口等对延迟敏感的路径不再受拖累.
+  * 若 app.state.debug_bus 存在且有活跃 SSE 订阅者, 顺带 emit inbound_request /
+    inbound_response 事件供调试面板可视化。
 """
 
 import json
@@ -15,6 +17,8 @@ from typing import Callable
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
+
+from src.infra.debug_context import new_correlation_id, set_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +73,16 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         if not request.url.path.startswith("/panel/") and not request.url.path.startswith("/v1/"):
             return await call_next(request)
 
+        # 每个入站请求生成 correlation_id 挂到 contextvar, forwarder 出去打上游时会读
+        cid = new_correlation_id()
+        set_correlation_id(cid)
+
+        # 调试面板只关心 OpenAI 兼容层 (/v1/*) — 面板自身的 /panel/* 请求 (拉调试事件
+        # / 面板路由 / SSE) 不进调试事件流, 否则会把面板自己的轮询也算进去
+        debug_bus = None
+        if request.url.path.startswith("/v1/"):
+            debug_bus = getattr(request.app.state, "debug_bus", None)
+
         start_time = time.time()
 
         # 读取请求体
@@ -99,6 +113,31 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                 body=request_body,
             )
 
+        # Debug bus: 入站请求事件. 先解析请求头拿 API key note (若能)
+        inbound_key_note: str | None = None
+        if debug_bus and debug_bus.should_emit():
+            auth = request.headers.get("Authorization", "")
+            if auth.startswith("Bearer "):
+                raw_key = auth[7:]
+                api_key_store = getattr(request.app.state, "api_key_store", None)
+                if api_key_store is not None:
+                    try:
+                        ak = await api_key_store.get_by_raw_key(raw_key)
+                        if ak is not None:
+                            inbound_key_note = ak.note
+                    except Exception:
+                        pass
+            debug_bus.emit(
+                direction="inbound_request",
+                correlation_id=cid,
+                url=str(request.url),
+                method=request.method,
+                port=request.url.port,
+                headers=dict(request.headers),
+                body=request_body,
+                key_note=inbound_key_note,
+            )
+
         response = await call_next(request)
         duration_ms = (time.time() - start_time) * 1000
 
@@ -111,6 +150,18 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                     "RESPONSE",
                     str(request.url),
                     status=response.status_code,
+                    body=response_body,
+                )
+            if debug_bus and debug_bus.should_emit():
+                debug_bus.emit(
+                    direction="inbound_response",
+                    correlation_id=cid,
+                    url=str(request.url),
+                    method=request.method,
+                    port=request.url.port,
+                    status=response.status_code,
+                    duration_ms=duration_ms,
+                    key_note=inbound_key_note,
                     body=response_body,
                 )
             if store is None:

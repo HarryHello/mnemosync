@@ -58,6 +58,11 @@ const MainRoutes: RouteRecordRaw = {
       component: () => import('@/views/ModelsPage.vue'),
     },
     {
+      path: 'debug-chat',
+      name: 'debug-chat',
+      component: () => import('@/views/DebugChatPage.vue'),
+    },
+    {
       path: 'settings',
       name: 'settings',
       component: () => import('@/views/SettingsPage.vue'),

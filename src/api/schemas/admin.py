@@ -155,6 +155,52 @@ class PruneResponse(BaseModel):
     breakdown: PruneBreakdown
 
 
+class DebugSessionKeyResponse(BaseModel):
+    """调试面板自动生成/复用的 API Key."""
+
+    id: str
+    key: str = Field(..., description="完整 API Key, 前端保存后调用 /v1 时携带")
+    note: str
+    created_at: str
+
+
+class DebugEventSummary(BaseModel):
+    """调试事件摘要 (面板列表用)."""
+
+    id: str
+    correlation_id: str
+    ts: float
+    direction: str
+    method: str | None = None
+    url: str
+    port: int | None = None
+    agent: str | None = None
+    status: int | None = None
+    duration_ms: float | None = None
+    key_note: str | None = None
+    headers: dict | None = None
+    body_preview: dict | list | str | None = None
+    body_full_size: int = 0
+    is_truncated: bool = False
+
+
+class DebugEventListResponse(BaseModel):
+    items: list[DebugEventSummary]
+
+
+class DebugEventDetailResponse(BaseModel):
+    summary: DebugEventSummary
+    body_full: dict | list | str | None = None
+    stream_assembled: str | None = None
+    stream_chunks_count: int = 0
+
+
+class DebugStatusResponse(BaseModel):
+    subscriber_count: int
+    buffer_size: int
+    buffer_capacity: int
+
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
@@ -173,4 +219,9 @@ __all__ = [
     "PruneStartBody",
     "PruneBreakdown",
     "PruneResponse",
+    "DebugSessionKeyResponse",
+    "DebugEventSummary",
+    "DebugEventListResponse",
+    "DebugEventDetailResponse",
+    "DebugStatusResponse",
 ]

@@ -3,7 +3,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.api.deps import get_api_key_store
-from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
+from src.persistence.api_key_store import (
+    API_KEY_SOURCE_USER,
+    ApiKey,
+    SqliteApiKeyStore,
+)
 
 from ..schemas.api_key import (
     ApiKeyCreateRequest,
@@ -49,8 +53,8 @@ async def create_api_key(
 async def list_api_keys(
     store: SqliteApiKeyStore = Depends(get_api_key_store),
 ) -> ApiKeyListResponse:
-    """列出所有 API Key."""
-    api_keys = await store.list_all()
+    """列出所有 API Key. 只返回用户手动创建的 (source='user'), 调试面板自动生成的不暴露."""
+    api_keys = await store.list_all(source=API_KEY_SOURCE_USER)
     items = [
         ApiKeyInfo(
             id=ak.id,
@@ -79,7 +83,7 @@ async def revoke_api_key(
 ) -> None:
     """撤销 API Key."""
     api_key = await store.get_by_id(key_id)
-    if not api_key:
+    if not api_key or api_key.source != API_KEY_SOURCE_USER:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"API Key '{key_id}' not found",
@@ -100,7 +104,7 @@ async def revoke_api_key_by_request(
 ) -> None:
     """通过请求体撤销 API Key."""
     api_key = await store.get_by_id(request.key_id)
-    if not api_key:
+    if not api_key or api_key.source != API_KEY_SOURCE_USER:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"API Key '{request.key_id}' not found",

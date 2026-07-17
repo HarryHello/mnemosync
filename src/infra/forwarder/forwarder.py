@@ -12,12 +12,34 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
+from urllib.parse import urlparse
 
 import httpx
 
 from .connection_pool import ConnectionPool
+from .debug_hook import get_debug_bus
+from src.infra.debug_context import get_agent_name, get_correlation_id
+
+
+def _emit_debug(direction: str, url: str, **fields) -> str | None:
+    bus = get_debug_bus()
+    if bus is None or not bus.should_emit():
+        return None
+    cid = get_correlation_id() or "no-cid"
+    agent = get_agent_name()
+    parsed = urlparse(url)
+    port = parsed.port
+    return bus.emit(
+        direction=direction,
+        correlation_id=cid,
+        url=url,
+        port=port,
+        agent=agent,
+        **fields,
+    )
 
 
 def _print_upstream(direction: str, base_url: str, data: Any, status: int = None):
@@ -138,32 +160,59 @@ class Forwarder:
         payload.update(kwargs)
 
         client = await self._get_client()
-        
+        chat_url = f"{self.config.base_url}/chat/completions"
+
         # Debug: 打印上游请求
         if os.getenv("MNEMOSYNC_DEBUG") == "1":
             _print_upstream("REQUEST", self.config.base_url, payload)
-        
+        _emit_debug("upstream_request", chat_url, method="POST", body=payload)
+
+        started = time.time()
         try:
             resp = await client.post(
-                f"{self.config.base_url}/chat/completions",
+                chat_url,
                 json=payload,
                 headers=self._headers(),
             )
             resp.raise_for_status()
             result = resp.json()
-            
+
             # Debug: 打印上游响应
             if os.getenv("MNEMOSYNC_DEBUG") == "1":
                 _print_upstream("RESPONSE", self.config.base_url, result, status=resp.status_code)
-            
+            _emit_debug(
+                "upstream_response",
+                chat_url,
+                method="POST",
+                status=resp.status_code,
+                duration_ms=(time.time() - started) * 1000,
+                body=result,
+            )
+
             return result
         except httpx.HTTPStatusError as e:
             if os.getenv("MNEMOSYNC_DEBUG") == "1":
                 _print_upstream("ERROR", self.config.base_url, {"error": e.response.text}, status=e.response.status_code)
+            _emit_debug(
+                "upstream_response",
+                chat_url,
+                method="POST",
+                status=e.response.status_code,
+                duration_ms=(time.time() - started) * 1000,
+                body={"error": e.response.text},
+            )
             raise UpstreamError(e.response.status_code, e.response.text) from e
         except httpx.TimeoutException as e:
             if os.getenv("MNEMOSYNC_DEBUG") == "1":
                 _print_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
+            _emit_debug(
+                "upstream_response",
+                chat_url,
+                method="POST",
+                status=None,
+                duration_ms=(time.time() - started) * 1000,
+                body={"error": f"timeout: {e}"},
+            )
             raise UpstreamTimeout(f"chat timeout after {self.config.timeout}s") from e
 
     async def chat_stream(
@@ -192,30 +241,68 @@ class Forwarder:
         payload.update(kwargs)
 
         client = await self._get_client()
-        
+        stream_url = f"{self.config.base_url}/chat/completions"
+
         # Debug: 打印上游请求
         if os.getenv("MNEMOSYNC_DEBUG") == "1":
             _print_upstream("REQUEST (STREAM)", self.config.base_url, payload)
-        
+        event_id = _emit_debug(
+            "upstream_request", stream_url, method="POST", body=payload
+        )
+
+        bus = get_debug_bus()
+        started = time.time()
+        collected_text_parts: list[str] = []
         try:
             async with client.stream(
                 "POST",
-                f"{self.config.base_url}/chat/completions",
+                stream_url,
                 json=payload,
                 headers=self._headers(),
             ) as resp:
                 resp.raise_for_status()
                 async for chunk in resp.aiter_bytes():
+                    if event_id and bus is not None and bus.should_emit():
+                        bus.append_stream_chunk(event_id, chunk)
+                        # 也顺手累计 assembled 文本
+                        try:
+                            collected_text_parts.append(
+                                chunk.decode("utf-8", errors="ignore")
+                            )
+                        except Exception:
+                            pass
                     yield chunk
+                if event_id and bus is not None:
+                    assembled = parse_sse_stream([c.encode("utf-8") for c in collected_text_parts]) if collected_text_parts else ""
+                    bus.finalize_stream(
+                        event_id,
+                        assembled=assembled,
+                        status=resp.status_code,
+                        duration_ms=(time.time() - started) * 1000,
+                    )
         except httpx.HTTPStatusError as e:
             if os.getenv("MNEMOSYNC_DEBUG") == "1":
                 body = await e.response.aread()
                 _print_upstream("ERROR", self.config.base_url, {"error": body.decode()}, status=e.response.status_code)
             body = await e.response.aread()
+            if event_id and bus is not None:
+                bus.finalize_stream(
+                    event_id,
+                    assembled=body.decode("utf-8", errors="replace"),
+                    status=e.response.status_code,
+                    duration_ms=(time.time() - started) * 1000,
+                )
             raise UpstreamError(e.response.status_code, body.decode()) from e
         except httpx.TimeoutException as e:
             if os.getenv("MNEMOSYNC_DEBUG") == "1":
                 _print_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
+            if event_id and bus is not None:
+                bus.finalize_stream(
+                    event_id,
+                    assembled=f"timeout: {e}",
+                    status=None,
+                    duration_ms=(time.time() - started) * 1000,
+                )
             raise UpstreamTimeout(f"chat_stream timeout after {self.config.timeout}s") from e
 
     # ============ 嵌入 ============
@@ -232,9 +319,12 @@ class Forwarder:
             payload["dimensions"] = dimensions
 
         client = await self._get_client()
+        embed_url = f"{self.config.base_url}/embeddings"
+        _emit_debug("upstream_request", embed_url, method="POST", body=payload)
+        started = time.time()
         try:
             resp = await client.post(
-                f"{self.config.base_url}/embeddings",
+                embed_url,
                 json=payload,
                 headers=self._headers(),
             )
@@ -242,10 +332,35 @@ class Forwarder:
             data = resp.json()
             # OpenAI 兼容: data[].embedding, 按 index 排序
             items = sorted(data["data"], key=lambda x: x.get("index", 0))
-            return [item["embedding"] for item in items]
+            vectors = [item["embedding"] for item in items]
+            _emit_debug(
+                "upstream_response",
+                embed_url,
+                method="POST",
+                status=resp.status_code,
+                duration_ms=(time.time() - started) * 1000,
+                body={"vectors_count": len(vectors), "dim": len(vectors[0]) if vectors else 0},
+            )
+            return vectors
         except httpx.HTTPStatusError as e:
+            _emit_debug(
+                "upstream_response",
+                embed_url,
+                method="POST",
+                status=e.response.status_code,
+                duration_ms=(time.time() - started) * 1000,
+                body={"error": e.response.text},
+            )
             raise UpstreamError(e.response.status_code, e.response.text) from e
         except httpx.TimeoutException as e:
+            _emit_debug(
+                "upstream_response",
+                embed_url,
+                method="POST",
+                status=None,
+                duration_ms=(time.time() - started) * 1000,
+                body={"error": f"timeout: {e}"},
+            )
             raise UpstreamTimeout("embed timeout") from e
 
     # ============ 重排序 ============

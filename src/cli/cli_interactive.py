@@ -269,8 +269,8 @@ Memory Maintenance (v0.2.4, via panel HTTP):
                 print(f"❌ Failed to change credentials: {e}\n")
 
     async def cmd_ls_keys(self):
-        """列出 API Keys."""
-        keys = await self.api_key_db.list_all()
+        """列出 API Keys (只展示用户手动创建的, 调试面板自动 key 不显示)."""
+        keys = await self.api_key_db.list_all(source="user")
 
         if not keys:
             print("No API keys found.")

@@ -21,6 +21,7 @@ const items: MenuItem[] = [
   { path: '/memories', title: '记忆管理', icon: 'Cpu' },
   { path: '/maintenance', title: '记忆维护', icon: 'Tools' },
   { path: '/relationships', title: '关系状态', icon: 'Connection' },
+  { path: '/debug-chat', title: '调试聊天', icon: 'ChatDotRound' },
   { path: '/settings', title: '设置', icon: 'Setting' },
 ]
 

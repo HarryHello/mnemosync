@@ -9,10 +9,15 @@ from fastapi import FastAPI
 
 from src.core.memory.reindex import ReindexProgress
 from src.core.models.resolver import RoleResolver
+from src.infra.debug_bus import DebugEventBus
+from src.infra.forwarder.debug_hook import set_debug_bus
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.store import LLMServiceStore
 from src.infra.vector_store import VectorStore
-from src.persistence.api_key_store import SqliteApiKeyStore
+from src.persistence.api_key_store import (
+    API_KEY_SOURCE_PANEL_DEBUG,
+    SqliteApiKeyStore,
+)
 from src.persistence.auth_store import SqliteAuthStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
@@ -67,6 +72,25 @@ async def app_lifespan(app: FastAPI):
     )
     reindex_progress = ReindexProgress()
 
+    # 调试面板事件总线. 订阅数掉到 0 且 grace 到期时清理 panel-debug key.
+    debug_bus = DebugEventBus(capacity=500, grace_seconds=30.0)
+
+    async def _cleanup_debug_keys() -> None:
+        n = await api_key_store.delete_by_source(API_KEY_SOURCE_PANEL_DEBUG)
+        if n > 0:
+            logger.info("已清理 %d 个 panel-debug API Key (调试面板断开 > 30s)", n)
+
+    debug_bus.set_grace_callback(_cleanup_debug_keys)
+    set_debug_bus(debug_bus)
+
+    # 启动时也清一次孤儿 panel-debug key (上次进程崩溃残留)
+    try:
+        orphan = await api_key_store.delete_by_source(API_KEY_SOURCE_PANEL_DEBUG)
+        if orphan > 0:
+            logger.info("启动清理: 删除 %d 个孤儿 panel-debug API Key", orphan)
+    except Exception as e:
+        logger.warning("启动清理 panel-debug key 失败: %s", e)
+
     app.state.auth_store = auth_store
     app.state.api_key_store = api_key_store
     app.state.memory_store = memory_store
@@ -76,18 +100,25 @@ async def app_lifespan(app: FastAPI):
     app.state.multi_forwarder = multi_forwarder
     app.state.vector_store = vector_store
     app.state.reindex_progress = reindex_progress
+    app.state.debug_bus = debug_bus
     logger.info(
         "Stores connected (auth / api_key / memory / http_log / llm_service); "
-        "resolver + multi_forwarder + vector_store + reindex_progress ready"
+        "resolver + multi_forwarder + vector_store + reindex_progress + debug_bus ready"
     )
 
     try:
         yield
     finally:
+        set_debug_bus(None)
         try:
             await multi_forwarder.close()
         except Exception as e:
             logger.warning("Error closing multi_forwarder: %s", e)
+        # 关闭时也清一次 panel-debug key
+        try:
+            await api_key_store.delete_by_source(API_KEY_SOURCE_PANEL_DEBUG)
+        except Exception as e:
+            logger.warning("Error cleaning panel-debug keys on shutdown: %s", e)
         for store in (http_log_store, memory_store, api_key_store, auth_store):
             try:
                 await store.close()

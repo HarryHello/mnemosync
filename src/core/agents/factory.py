@@ -24,6 +24,7 @@ from src.core.agents.prompts import (
     load_prompt_cleaning_system,
 )
 from src.core.memory.models import CandidateMemory, DecayEvaluation, DecayState, MemoryType
+from src.infra.debug_context import use_agent
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
 
@@ -132,9 +133,10 @@ async def run_main_dialogue(
         (content, usage) — content 为回复文本, usage 为上游原样返回的 token 计数字典
         (可能为 None, 例如上游未返回 usage 段).
     """
-    resp = await forwarder.chat(
-        ModelType.MAIN, messages=messages, temperature=temperature,
-    )
+    with use_agent("main_dialogue"):
+        resp = await forwarder.chat(
+            ModelType.MAIN, messages=messages, temperature=temperature,
+        )
     content = resp["choices"][0]["message"]["content"] or ""
     usage = resp.get("usage")
     return content, usage
@@ -163,12 +165,13 @@ async def run_memory_analysis(
         source_user=source_user, conversation=conversation,
         decay_targets_section=decay_section,
     )
-    result = await run_react_loop(
-        forwarder=forwarder, role=ModelType.ASSIST,
-        system_prompt="你是记忆分析 Agent。按指令调用工具后输出 JSON。",
-        user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
-        temperature=0.2,
-    )
+    with use_agent("memory_analysis"):
+        result = await run_react_loop(
+            forwarder=forwarder, role=ModelType.ASSIST,
+            system_prompt="你是记忆分析 Agent。按指令调用工具后输出 JSON。",
+            user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
+            temperature=0.2,
+        )
     if not result.succeeded:
         logger.warning("记忆分析 ReAct 失败: %s", result.error)
         return MemoryAnalysisOutput(new_memories=[], decay_evaluations=[], raw_output="", steps=result.steps)
@@ -204,12 +207,13 @@ async def run_relationship_analysis(
         current_relationship=current_relationship, conversation=conversation,
     )
     try:
-        result = await run_react_loop(
-            forwarder=forwarder, role=ModelType.ASSIST,
-            system_prompt="你是关系分析 Agent。调用 emotion_analyzer 后输出 JSON。",
-            user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
-            temperature=0.2,
-        )
+        with use_agent("relationship_analysis"):
+            result = await run_react_loop(
+                forwarder=forwarder, role=ModelType.ASSIST,
+                system_prompt="你是关系分析 Agent。调用 emotion_analyzer 后输出 JSON。",
+                user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
+                temperature=0.2,
+            )
         if not result.succeeded:
             logger.warning("关系分析失败: %s", result.error)
             return RelationshipAnalysisOutput(intimacy_delta=0.0, trust_delta=0.0, new_relationship_type=None, notes="", reasoning=result.error or "", raw_output="")
@@ -261,15 +265,16 @@ async def run_prompt_cleaning(
     logger.debug("🧹 [prompt_cleaning] 开始, 输入长度: %d", len(system_message))
 
     try:
-        result = await run_react_loop(
-            forwarder=forwarder,
-            role=ModelType.ASSIST,
-            system_prompt=load_prompt_cleaning_system(),
-            user_prompt=user_prompt,
-            tools=tools,
-            max_iterations=max_iterations,
-            temperature=0.2,
-        )
+        with use_agent("prompt_cleaning"):
+            result = await run_react_loop(
+                forwarder=forwarder,
+                role=ModelType.ASSIST,
+                system_prompt=load_prompt_cleaning_system(),
+                user_prompt=user_prompt,
+                tools=tools,
+                max_iterations=max_iterations,
+                temperature=0.2,
+            )
         if not result.succeeded:
             logger.warning("提示词清洗 ReAct 失败: %s, 降级为全部丢弃", result.error)
             return PromptCleaningOutput(
@@ -311,16 +316,18 @@ async def run_proxy_thinking(
         user_message=user_message,
     )
     if tools:
-        result = await run_react_loop(
-            forwarder=forwarder, role=ModelType.ASSIST,
-            system_prompt="你是代理思考助手。可调用工具检索记忆，然后输出分析。",
-            user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
-            temperature=0.3,
-        )
+        with use_agent("proxy_thinking"):
+            result = await run_react_loop(
+                forwarder=forwarder, role=ModelType.ASSIST,
+                system_prompt="你是代理思考助手。可调用工具检索记忆，然后输出分析。",
+                user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
+                temperature=0.3,
+            )
         return result.output
-    return await run_simple_completion(
-        forwarder=forwarder, role=ModelType.ASSIST,
-        system_prompt="你是代理思考助手。输出供主 AI 参考的推理分析。",
-        user_prompt=user_prompt, temperature=0.3,
-        extra_body={"enable_thinking": False},
-    )
+    with use_agent("proxy_thinking"):
+        return await run_simple_completion(
+            forwarder=forwarder, role=ModelType.ASSIST,
+            system_prompt="你是代理思考助手。输出供主 AI 参考的推理分析。",
+            user_prompt=user_prompt, temperature=0.3,
+            extra_body={"enable_thinking": False},
+        )

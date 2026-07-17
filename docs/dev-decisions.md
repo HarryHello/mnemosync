@@ -184,6 +184,50 @@ v0.2.3 把 `main / assist / embedding / rerank` 全部纳入 `role_bindings` 优
 
 ---
 
+## 调试面板 + HTTP hop 观测 (v0.2.5)
+
+**状态**: ✅ 已落地 (v0.2.5)
+
+### 背景
+
+前后端联调时排查"客户端 → Mnemosync → 上游"这条链路的问题, 只能翻 `data/http_logs.db` + 上游服务商控制台交叉比对; 特别是流式请求 (`stream=true`) 想看 upstream 到底吐了什么内容非常麻烦。需要一个可视化面板, 把每一跳的请求 / 响应 / body / 流帧全部拍在一个界面上, 按 correlation_id 分组。
+
+### 设计约束
+
+- **不落盘**: 调试信息包含明文 body 与解密后的 API Key note, 是调试临时状态; 全部走内存 ring buffer (500 条), 崩溃即丢。生产上如需持久证据仍走 `http_logs.db`。
+- **零成本兜底**: 面板未打开时 emit 必须近似 no-op, 不给主链路加延迟。方案: 惰性 gate — 订阅数为 0 时 `emit()` 立刻返回, 完全跳过 body 塑形。
+- **本机自动 API Key**: 面板要能真的调 `/v1/chat/completions`, 需要一个 Bearer 凭据; 用户不该被要求手动"为面板申请一个 key"。方案: 面板挂载时 `POST /panel/admin/debug/session-key` 自动生成或复用一个 `source='panel-debug'` 的 key。
+- **不污染用户 key 视图**: `api_keys` 表加 `source` 列 (`user` / `panel-debug`); `/panel/api-keys` GET / DELETE 只认 `source=user`。panel-debug key 只能通过面板生命周期自动清理, 不能被人手撤。
+- **面板关闭要能感知**: 用户直接关标签页无法保证前端 hook 触发。改为服务器端观察 SSE 订阅数 — 从 1 掉到 0 后启动 30 秒 grace timer, 超时 → 删除所有 `source=panel-debug` 的 key。startup / shutdown 时也各清一次孤儿。
+- **路由切换不断线**: 前端 SSE 订阅放在 Pinia store 单例, 由 `DebugChatPage.vue` 挂载时 `activate()`, 卸载时 `deactivate()`。用户在面板内跳转其他管理页会中断订阅, 但 30s grace 缓冲期内回到面板即恢复, 不会误清 key。
+
+### 关键模块
+
+| 位置 | 作用 |
+|------|------|
+| [`src/persistence/api_key_store.py`](../src/persistence/api_key_store.py) `source` 列 | 区分用户创建 vs 面板自动; `list_all(source=...)` + `delete_by_source(source)` |
+| [`src/infra/debug_bus.py`](../src/infra/debug_bus.py) `DebugEventBus` | 500 条 ring buffer + `asyncio.Queue` 每订阅者 + 惰性 emit gate + grace-timer 清理回调 |
+| [`src/infra/debug_context.py`](../src/infra/debug_context.py) `use_agent(name)` + correlation_id | `ContextVar` 沿 async 调用链传递, 让每个 upstream hop 都能打上"来自哪个 agent"标签 |
+| [`src/infra/forwarder/debug_hook.py`](../src/infra/forwarder/debug_hook.py) `set_debug_bus` | 模块级单例注入, 打破 forwarder 依赖 FastAPI `app.state` 造成的循环 |
+| [`src/api/middleware.py`](../src/api/middleware.py) | 每个 inbound 请求打 correlation_id + 查 API Key note; emit `inbound_request` / `inbound_response` |
+| [`src/api/routes/admin_debug.py`](../src/api/routes/admin_debug.py) | REST + SSE 端点 |
+
+### Agent 标签点
+
+- `run_main_dialogue` / `run_memory_analysis` / `run_relationship_analysis` / `run_prompt_cleaning` / `run_proxy_thinking` 各在 [`factory.py`](../src/core/agents/factory.py) 用 `with use_agent(...)` 包住
+- 流式主对话在 [`forward.py`](../src/api/routes/forward.py) 用 `use_agent("main_dialogue_stream")`
+- 向量检索 [`vector_search.py`](../src/tools/vector_search.py) 用 `use_agent("memory_retriever")`
+- 记忆入库 [`lifecycle.py`](../src/core/memory/lifecycle.py) 用 `use_agent("memory_lifecycle")`
+
+### 显式范围外
+
+- **持久化调试事件**: 不做; 有需要走 http_logs
+- **面板级过滤 / 搜索**: 前端只做 correlation_id 分组 + 展开; 全文过滤未来再加
+- **beforeunload 触发式清理**: 曾考虑, 但 tab 强关时不可靠; 改用 SSE 订阅数 + grace 的服务端观察
+- **跨进程共享**: bus 是当前进程单例, 崩溃后丢弃; mnemosync 单用户单机, 可接受
+
+---
+
 ## 待补充
 
 后续遇到的新决策会追加到本文档.
