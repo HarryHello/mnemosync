@@ -32,7 +32,9 @@ function levelText(v: number): string {
 
 function fmtDate(s: string | null): string {
   if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('zh-CN', { hour12: false })
 }
 
 async function refresh() {
@@ -84,6 +86,16 @@ onMounted(refresh)
       v-if="errMsg"
       :title="'加载失败: ' + errMsg"
       type="error"
+      :closable="false"
+      show-icon
+      class="mb"
+    />
+
+    <el-alert
+      v-if="rel && !rel.updated_at"
+      title="关系尚未建立"
+      description="新装或刚重置后, 此用户还没有与人格交互过。下次对话时会自动创建关系记录。"
+      type="info"
       :closable="false"
       show-icon
       class="mb"

@@ -338,10 +338,22 @@ async def get_relationship(
     user_id: str = "default",
     store: SqliteMemoryStore = Depends(get_memory_store),
 ):
-    """获取关系状态."""
+    """获取关系状态.
+
+    关系尚未建立 (新装 / 人格重置后 / 与新 user_id 首次交互) 时返回默认 stranger/0/0,
+    不落库 — 后续对话时 `lifecycle.update_relationship` 会自然创建真实行。
+    """
     rel = await store.get_relationship("default", user_id)
     if not rel:
-        raise HTTPException(status_code=404, detail="Relationship not found")
+        return RelationshipResponse(
+            persona_id="default",
+            user_id=user_id,
+            intimacy=0.0,
+            trust=0.0,
+            relationship_type="stranger",
+            notes=None,
+            updated_at="",
+        )
 
     return RelationshipResponse(
         persona_id=rel.persona_id,
