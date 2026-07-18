@@ -221,6 +221,26 @@ class ConversationClearResponse(BaseModel):
     deleted: int
 
 
+class PersonaResetBody(BaseModel):
+    """人格状态重置请求. dry_run=True 只统计不执行."""
+
+    dry_run: bool = False
+
+
+class PersonaResetResponse(BaseModel):
+    """一次 persona/reset 的执行结果.
+
+    非 dry_run 时任一步失败, 其他步骤已完成的 delete 不回滚, 错误累计到 errors.
+    """
+
+    dry_run: bool
+    deleted_memories: int
+    deleted_relationships: int
+    deleted_conversation_turns: int
+    vector_reset: bool
+    errors: list[str] = Field(default_factory=list)
+
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
@@ -247,4 +267,6 @@ __all__ = [
     "ConversationTurnItem",
     "ConversationTurnListResponse",
     "ConversationClearResponse",
+    "PersonaResetBody",
+    "PersonaResetResponse",
 ]

@@ -4,9 +4,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getMemoryReindexStatus,
   pruneMemories,
+  resetPersona,
   startMemoryReindex,
 } from '@/api/client'
 import type {
+  PersonaResetResponse,
   PruneResponse,
   ReindexStatusResponse,
 } from '@/types/api'
@@ -35,6 +37,11 @@ const pruneForm = reactive({
 const prunePreview = ref<PruneResponse | null>(null)
 const previewLoading = ref(false)
 const pruneRunning = ref(false)
+
+// Persona reset (v0.2.7) —— 完全重置到"新装"语义
+const resetPreview = ref<PersonaResetResponse | null>(null)
+const resetPreviewLoading = ref(false)
+const resetRunning = ref(false)
 
 const progressPct = computed(() => {
   if (!status.value.total) return 0
@@ -130,6 +137,59 @@ async function onRunPrune() {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   } finally {
     pruneRunning.value = false
+  }
+}
+
+async function onPreviewReset() {
+  resetPreviewLoading.value = true
+  try {
+    resetPreview.value = await resetPersona({ dry_run: true })
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    resetPreviewLoading.value = false
+  }
+}
+
+async function onRunReset() {
+  const preview = resetPreview.value
+  if (!preview) {
+    ElMessage.info('先点『预览』看看会清什么')
+    return
+  }
+  const total =
+    preview.deleted_memories +
+    preview.deleted_relationships +
+    preview.deleted_conversation_turns
+  try {
+    await ElMessageBox.confirm(
+      `将清空长期记忆 ${preview.deleted_memories} 条 (含 PERMANENT), 关系 ${preview.deleted_relationships} 条, 短期对话 ${preview.deleted_conversation_turns} 条, 以及向量库。\n\nAPI Key / 服务商 / 提示词 / 模型绑定不会被动。删除后不可恢复。`,
+      '确认重置人格状态',
+      {
+        type: 'error',
+        confirmButtonText: '重置',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+  resetRunning.value = true
+  try {
+    const res = await resetPersona({ dry_run: false })
+    resetPreview.value = res
+    if (res.errors.length > 0) {
+      ElMessage.warning(
+        `部分失败: ${res.errors.join('; ')}. 已删 memories=${res.deleted_memories}, relationships=${res.deleted_relationships}, turns=${res.deleted_conversation_turns}`,
+      )
+    } else {
+      ElMessage.success(`已重置: 共 ${total} 条状态数据 + 向量库`)
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    resetRunning.value = false
   }
 }
 
@@ -315,6 +375,63 @@ watch(
     >
       Reindex 进行中: 新记忆写入会被临时拒绝, 检索也可能报锁定错误。等完成后再操作。
     </el-alert>
+
+    <el-card shadow="hover" class="section danger-section" style="margin-top: 16px">
+      <template #header>
+        <div class="sec-head">
+          <span class="sec-title">重置人格状态 (Persona Reset)</span>
+          <el-tag type="danger" size="small">危险</el-tag>
+        </div>
+      </template>
+
+      <p class="reset-desc">
+        清空所有长期记忆 (含 PERMANENT) / 关系 (亲密度 · 信任度) / 短期对话流水 / 向量库,
+        回到"新装"语义。<b>不会</b>动 API Key / 服务商 / 提示词 / 模型绑定 / 管理员账户。
+        删除后不可恢复; 与 Reindex 互斥 (进行中会 409)。
+      </p>
+
+      <el-form label-width="120px" size="default">
+        <el-form-item>
+          <el-button
+            :loading="resetPreviewLoading"
+            :disabled="isRunning || resetRunning"
+            @click="onPreviewReset"
+          >
+            预览 (dry-run)
+          </el-button>
+          <el-button
+            type="danger"
+            :loading="resetRunning"
+            :disabled="isRunning || !resetPreview"
+            @click="onRunReset"
+          >
+            执行重置
+          </el-button>
+        </el-form-item>
+      </el-form>
+
+      <el-divider v-if="resetPreview" />
+
+      <el-descriptions v-if="resetPreview" :column="1" size="small" border>
+        <el-descriptions-item label="将清 长期记忆">
+          {{ resetPreview.deleted_memories }} 条 (含 PERMANENT)
+        </el-descriptions-item>
+        <el-descriptions-item label="将清 关系">
+          {{ resetPreview.deleted_relationships }} 条
+        </el-descriptions-item>
+        <el-descriptions-item label="将清 短期对话">
+          {{ resetPreview.deleted_conversation_turns }} 条
+        </el-descriptions-item>
+        <el-descriptions-item label="向量库">
+          {{ resetPreview.vector_reset ? '已重建 collection' : '未触发 (dry-run)' }}
+        </el-descriptions-item>
+        <el-descriptions-item v-if="resetPreview.errors.length > 0" label="错误">
+          <div v-for="err in resetPreview.errors" :key="err" class="err">
+            {{ err }}
+          </div>
+        </el-descriptions-item>
+      </el-descriptions>
+    </el-card>
   </div>
 </template>
 
@@ -363,5 +480,16 @@ watch(
   border-radius: $radius-sm;
   background: var(--el-fill-color);
   color: var(--el-text-color-secondary);
+}
+
+.danger-section {
+  border: 1px solid var(--el-color-danger-light-7);
+}
+
+.reset-desc {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  margin: 0 0 $space-3 0;
+  line-height: 1.6;
 }
 </style>

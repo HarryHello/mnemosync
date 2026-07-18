@@ -1,6 +1,6 @@
 # 命令行环境 | CLI
 
-> **系统版本**: v0.2.6
+> **系统版本**: v0.2.7
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
 > **最后更新**: 2026-07-18
@@ -142,6 +142,7 @@ Shell 内命令 (真实分发见 [cli_interactive.py:633](../../src/cli/cli_inte
 |------|------|
 | `memory reindex [--prune] [--threshold F]` | 重建全量向量 (换嵌入模型后必跑). `--prune` 顺便清理低价值记忆 (阈值默认 0.05, 走同一 `should_prune` 规则). 阻塞轮询到完成 |
 | `memory prune [--threshold F] [--dry-run]` | 纯本地规则清理 (forgotten / expired / low_priority; permanent 不动). `--dry-run` 只返回统计, 不删 |
+| `persona reset [--dry-run] [--yes]` (v0.2.7) | 回到"新装"状态: 清空所有长期记忆 (含 PERMANENT) / 关系 / 短期对话 / 向量库。保留服务商与 API Key。非 `--dry-run` 时先跑一次 dry-run 展示计数, 再要求输入 `yes` 二次确认; `--yes` 跳过交互确认 (脚本用) |
 
 清理规则细节见 [memory-system.md](memory-system.md) 与 [dev-decisions.md 嵌入模型单绑定 + Reindex + Prune](../dev-decisions.md)。
 
@@ -276,3 +277,4 @@ mnemosync prompt reset memory_analysis
 | v0.2.1 | 2026-07-16 | 新增 `prompt` 子命令 (list/show/set/reset/validate), 支持 --file/stdin/--edit |
 | v0.2.3 | 2026-07-17 | 模型命令改为 `model {ls,add,rm,reorder,test}` (role_bindings 表, 热更新); 移除 `set-main-model` / `set-assist-model` / `set-embedding-model` / `set-rerank-model` (旧路径通过 config_writer 已废弃) |
 | v0.2.4 | 2026-07-17 | `model add` 新增 `--context N` / `--dim N`; 新增 `memory reindex [--prune]` 与 `memory prune [--dry-run]` (走面板 HTTP, 自动换 JWT) |
+| v0.2.7 | 2026-07-18 | 新增 `persona reset [--dry-run] [--yes]`: 走 `POST /panel/admin/persona/reset`, 交互式二次确认, 与 `memory reindex` 互斥 |

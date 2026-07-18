@@ -1,6 +1,6 @@
 # 认证 API 文档
 
-> **系统版本**: v0.2.6
+> **系统版本**: v0.2.7
 > **文档状态**: 与代码同步
 > **最后更新**: 2026-07-18
 
@@ -233,3 +233,4 @@ A: 独立。API Key 只做鉴权; 代理思考是否启用由 [`src/api/reasonin
 | v0.2.4 | 2026-07-17 | 新增 `/panel/admin/model-bindings/probe-dimension` + `/panel/admin/memory/reindex` + `/panel/admin/memory/reindex/status` + `/panel/admin/memory/prune`, 全部通过 admin router 的 `Depends(get_current_user)` 前置鉴权 |
 | v0.2.5 | 2026-07-18 | 新增调试面板路由 `/panel/admin/debug/*` (session-key / status / events / events/{id} / events/stream (SSE) / DELETE events), 均前置鉴权; `api_keys` 表新增 `source` 列 (`user` / `panel-debug`), `/panel/api-keys` 只列出 `source=user`, 调试面板自动生成的 key 不可通过用户 API 撤销 |
 | v0.2.6 | 2026-07-18 | 与代码对齐: 代理思考启用方式修正 (`reasoning_control.should_use_proxy_thinking` 4 条规则); 数据库表新增 `data/conversation.db` (跨前端短期记忆) 与 `data/http_logs.db` (v0.2.5 调试面板日志) |
+| v0.2.7 | 2026-07-18 | 新增 `POST /panel/admin/persona/reset`: 原子清空 memory_entries (含 PERMANENT) / relationships / conversation_turns / Chroma collection; 与 reindex 互斥; 通过 admin router 前置 `Depends(get_current_user)` 自动鉴权 |

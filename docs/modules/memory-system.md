@@ -1,6 +1,6 @@
 # 记忆系统设计 | Memory System Design
 
-> **文档版本**: v0.2.6
+> **文档版本**: v0.2.7
 > **创建时间**: 2026-03-29
 > **最后更新**: 2026-07-18
 > **状态**: 与代码同步
@@ -610,6 +610,30 @@ CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
 
 ---
 
+## 9bis. 维护端点 (Maintenance Endpoints)
+
+三个层级的清理动作, 语义严格分层, 不要混用:
+
+| 端点 | 清什么 | 保留什么 | 何时用 |
+|------|--------|---------|-------|
+| `POST /panel/admin/memory/prune` | forgotten / expired / `priority < threshold` 的 NORMAL 记忆 | **PERMANENT 全部保留**; 关系 / 短期 / 向量库不动 | 日常瘦身, 只清衰减掉的普通记忆 |
+| `POST /panel/admin/memory/reindex` (`prune=true` 可选) | 重建 Chroma collection (换嵌入模型时); prune=true 时顺带按上一列规则清理 | 同上, PERMANENT 一律保留 | 更换嵌入模型 / 修复向量库损坏 |
+| `POST /panel/admin/persona/reset` (**v0.2.7**) | **memory_entries 全部** (含 PERMANENT) + **relationships 全部** (亲密度 / 信任度) + **conversation_turns 全部** + Chroma collection | API Key / 服务商 / 模型绑定 / 提示词覆盖 / 管理员 / http_logs / config.local.toml | 想让 Mnemosync 回到"新装"的人格状态 (数据脏了 / 换测试场景 / 想重头开始一段关系) |
+
+### Persona Reset 语义要点
+
+1. **PERMANENT 一并清空** — 这是与 prune 的核心区别。用户明示"重置到新装", 昵称 / 生日 / 关键事实一起清
+2. **不主动写回默认 relationship 行** — 下次对话时 `lifecycle.update_relationship` 会自动 `Relationship.create(...)` 补一行 stranger/0/0, 无需服务器多写一次 IO
+3. **顺序**: Chroma → memory_entries → relationships → conversation_turns。Chroma 先清保证残余状态里不会有"指向不存在记忆"的向量
+4. **每步独立 try/except**: 部分失败不回滚, 结果里 `errors: list[str]` 汇总; 面板会 toast 警告并显示已清计数
+5. **与 reindex 互斥**: `progress.state == RUNNING` 时返回 409
+6. **`dry_run=True`** 只统计不删, 用于面板"预览 → 确认"两次调用
+7. **API Key / 服务商 / 提示词一律不动** — 属于运维配置层, 不是"人格状态"。真想全清就 `rm -rf data/` + `mnemosync init`
+
+面板入口: `/maintenance` 页底部"重置人格状态"卡片; CLI: `persona reset [--dry-run] [--yes]`。
+
+---
+
 ## 10. 版本历史 (Version History)
 
 | 版本 | 日期 | 变更说明 |
@@ -619,6 +643,7 @@ CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
 | v0.2.1 | 2026-07-16 | §5.1 上下文框架文本从硬编码迁到 `main_dialogue_frame.md` 提示词模板, 支持用户覆盖 |
 | v0.2.4 | 2026-07-17 | 嵌入角色单绑定 + ChromaDB collection 锁定 `(service_id, model, dim)`; 新增 Reindex + Prune 端点; MemoryEntry 新增 `related_memories` 与 `memory_type` 字段消费路径 |
 | v0.2.6 | 2026-07-18 | 短期记忆从 LangGraph checkpoint 迁到服务端 `conversation_turns` 流水; 双时间+模型窗装填; 忽略客户端历史; source_frontend 元数据; 面板可查看/重置 |
+| v0.2.7 | 2026-07-18 | 新增 `POST /panel/admin/persona/reset`: 原子清空 memory_entries (含 PERMANENT) / relationships / conversation_turns / Chroma collection, 保留服务商与 API Key。面板 + CLI 二次确认后触发 |
 
 ---
 

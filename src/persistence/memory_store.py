@@ -364,6 +364,28 @@ class SqliteMemoryStore:
             )
             await db.commit()
 
+    # ============ 批量清理 (人格状态重置) ============
+
+    async def delete_all_memories(self) -> int:
+        """清空所有记忆 (含 PERMANENT). 用于人格状态重置."""
+        async with self._conn() as db:
+            cur = await db.execute("DELETE FROM memory_entries")
+            await db.commit()
+            return cur.rowcount or 0
+
+    async def delete_all_relationships(self) -> int:
+        """清空所有关系状态. 用于人格状态重置."""
+        async with self._conn() as db:
+            cur = await db.execute("DELETE FROM relationships")
+            await db.commit()
+            return cur.rowcount or 0
+
+    async def count_relationships(self) -> int:
+        async with self._conn() as db:
+            async with db.execute("SELECT COUNT(*) FROM relationships") as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
+
     # ============ 工具方法 ============
 
     def _row_to_entry(self, row: tuple) -> MemoryEntry:

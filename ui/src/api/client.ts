@@ -33,6 +33,8 @@ import type {
   ReindexStatusResponse,
   PruneStartBody,
   PruneResponse,
+  PersonaResetBody,
+  PersonaResetResponse,
   DebugSessionKeyResponse,
   DebugEventListResponse,
   DebugEventDetailResponse,
@@ -372,6 +374,19 @@ export async function getMemoryReindexStatus(): Promise<ReindexStatusResponse> {
 
 export async function pruneMemories(body: PruneStartBody = {}): Promise<PruneResponse> {
   return request<PruneResponse>(`${API_BASE}/admin/memory/prune`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+// ============================================================================
+// Admin API - Persona State Reset (v0.2.7)
+// ============================================================================
+
+export async function resetPersona(
+  body: PersonaResetBody = {},
+): Promise<PersonaResetResponse> {
+  return request<PersonaResetResponse>(`${API_BASE}/admin/persona/reset`, {
     method: 'POST',
     body: JSON.stringify(body),
   })

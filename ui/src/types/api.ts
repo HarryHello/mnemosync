@@ -281,6 +281,23 @@ export interface PruneResponse {
 }
 
 // ============================================================================
+// Persona State Reset (v0.2.7)
+// ============================================================================
+
+export interface PersonaResetBody {
+  dry_run?: boolean
+}
+
+export interface PersonaResetResponse {
+  dry_run: boolean
+  deleted_memories: number
+  deleted_relationships: number
+  deleted_conversation_turns: number
+  vector_reset: boolean
+  errors: string[]
+}
+
+// ============================================================================
 // Debug Chat (v0.2.5 面板调试)
 // ============================================================================
 

@@ -30,6 +30,8 @@ from src.api.schemas.admin import (
     ConversationClearResponse,
     ConversationTurnItem,
     ConversationTurnListResponse,
+    PersonaResetBody,
+    PersonaResetResponse,
     ProbeDimensionBody,
     ProbeDimensionResponse,
     PromptDetail,
@@ -906,4 +908,100 @@ async def clear_conversation_turns(
     else:
         deleted = await store.delete_all()
     return ConversationClearResponse(deleted=deleted)
+
+
+# ============================================================================
+# 人格状态重置 (v0.2.7) —— 回到"新装"语义
+# ============================================================================
+
+
+@router.post("/persona/reset", response_model=PersonaResetResponse)
+async def reset_persona(
+    body: PersonaResetBody,
+    memory_store: SqliteMemoryStore = Depends(get_memory_store),
+    vector_store=Depends(get_vector_store),
+    conversation_store: SqliteConversationStore = Depends(get_conversation_store),
+    progress=Depends(get_reindex_progress),
+):
+    """把人格状态回退到"新装"级别: 清空长期记忆 (含 PERMANENT) / 关系 / 短期流水 / 向量库.
+
+    与 prune 的差异:
+      * prune 保 PERMANENT, 只按衰减规则清 NORMAL; 此端点**不保 PERMANENT**
+      * prune 不动 relationships / conversation_turns; 此端点一并清空
+      * 向量库通过 reset_collection() 整个 drop 重建 (下次写入自动重锁 embedding metadata)
+
+    保留:
+      * api_keys / auth / llm_service (含 role_bindings) / prompts 覆盖层 / http_logs
+      * config.local.toml 里的 [persona] 定义 (是"人格描述", 不是"人格状态")
+
+    与 reindex 互斥: running 时返 409.
+
+    dry_run=True 只统计不执行. 非 dry_run 任一步失败其他步骤已完成的不回滚,
+    错误累计到 errors 便于面板呈现部分失败.
+    """
+    if progress.is_running():
+        raise HTTPException(
+            status_code=409, detail="reindex 运行中, persona reset 暂不可执行"
+        )
+
+    mem_count = await memory_store.count_all()
+    rel_count = await memory_store.count_relationships()
+    turn_count = await conversation_store.count()
+
+    if body.dry_run:
+        return PersonaResetResponse(
+            dry_run=True,
+            deleted_memories=mem_count,
+            deleted_relationships=rel_count,
+            deleted_conversation_turns=turn_count,
+            vector_reset=False,
+        )
+
+    errors: list[str] = []
+    vector_reset = False
+    deleted_memories = 0
+    deleted_relationships = 0
+    deleted_turns = 0
+
+    # 1. 先清 Chroma (若失败中止, 尚未破坏 SQLite)
+    try:
+        vector_store.reset_collection()
+        vector_reset = True
+    except Exception as e:
+        logger.exception("persona reset: vector reset 失败")
+        errors.append(f"vector_reset: {e}")
+
+    # 2. memory_entries (含 PERMANENT)
+    try:
+        deleted_memories = await memory_store.delete_all_memories()
+    except Exception as e:
+        logger.exception("persona reset: memory_entries 清空失败")
+        errors.append(f"memory_entries: {e}")
+
+    # 3. relationships
+    try:
+        deleted_relationships = await memory_store.delete_all_relationships()
+    except Exception as e:
+        logger.exception("persona reset: relationships 清空失败")
+        errors.append(f"relationships: {e}")
+
+    # 4. conversation_turns (短期记忆流水)
+    try:
+        deleted_turns = await conversation_store.delete_all()
+    except Exception as e:
+        logger.exception("persona reset: conversation_turns 清空失败")
+        errors.append(f"conversation_turns: {e}")
+
+    logger.info(
+        "persona reset 完成: memories=%d relationships=%d turns=%d vector=%s errors=%d",
+        deleted_memories, deleted_relationships, deleted_turns, vector_reset, len(errors),
+    )
+    return PersonaResetResponse(
+        dry_run=False,
+        deleted_memories=deleted_memories,
+        deleted_relationships=deleted_relationships,
+        deleted_conversation_turns=deleted_turns,
+        vector_reset=vector_reset,
+        errors=errors,
+    )
 
