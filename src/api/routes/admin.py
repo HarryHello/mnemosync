@@ -8,6 +8,7 @@
 import json
 import logging
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -206,9 +207,13 @@ def _memory_to_response(m) -> MemoryResponse:
 
 
 def _build_health() -> HealthResponse:
+    try:
+        pkg_version = _pkg_version("mnemosync")
+    except PackageNotFoundError:
+        pkg_version = "0.0.0+unknown"
     return HealthResponse(
         status="ok",
-        version="0.2.0",
+        version=pkg_version,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
