@@ -30,6 +30,8 @@ class StorageConfig:
     auth_db_path: str = "data/auth.db"
     chroma_dir: str = "data/chroma"
     prompts_override_dir: str = "data/prompts"
+    conversation_db_path: str = "data/conversation.db"
+    short_term_days: int = 7
 
     @property
     def memory_db_abs(self) -> Path:
@@ -50,6 +52,10 @@ class StorageConfig:
     @property
     def prompts_override_dir_abs(self) -> Path:
         return PROJECT_ROOT / self.prompts_override_dir
+
+    @property
+    def conversation_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.conversation_db_path
 
 
 @dataclass

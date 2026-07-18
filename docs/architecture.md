@@ -164,9 +164,20 @@ Client ──► /v1/chat/completions (stream=true)
 
 ## 5. 记忆机制
 
-### 5.1 短期记忆
+### 5.1 短期记忆 (跨前端连续对话)
 
-LangGraph 内置 checkpoint (`MemorySaver`) 按 `thread_id` 维护会话内的 state 快照。生命周期: 会话期间。
+Mnemosync 的核心不变量: **多个前端 = 同一个用户**。AstrBot / AIRI / Web 面板 / 直接调 SDK 的脚本, 服务端把它们的对话汇聚成一条连续流, 装填时无视客户端携带的历史。
+
+- **存储**: `conversation_turns` 表 (id, role, content, ts, token_count, source_frontend), 单库 `data/conversation.db`, 无 thread/user 分区
+- **写入**: 主对话流结束时, `_handle_stream` / `_handle_non_stream` 各 append 一条 user turn + 一条 assistant turn; `source_frontend` 取 `api_key.note` (服务器侧派生, 不信任客户端)
+- **装填 (双窗口)**:
+  - 时间窗: `settings.storage.short_term_days` (默认 7d) 硬边界
+  - 模型窗: 用 `ResolvedCandidate.context_length` 算预算 `= ctx - system - new_user - reserve_output`, 从最老那端往新裁剪
+  - 应答保留区: 客户端 `max_tokens` 优先; 否则 `min(4096, ctx/4)` 下限 512
+- **清理**: `lifespan` 起后台任务, 每 24h 删掉窗外记录
+- **面板重置**: `DELETE /panel/admin/conversation-turns` 全清或按 `since` 部分清理; 前端 UI 的"清空对话"仅影响客户端展示, 不会抹掉服务器的连续记忆
+
+设计动因见 [dev-decisions.md](dev-decisions.md) 决策 6。LangGraph 的 `MemorySaver` checkpoint 仍存在但已退化为"单请求内节点间共享 state", 不再承担跨请求短期记忆职责。
 
 ### 5.2 长期记忆
 
@@ -246,10 +257,10 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 ## 10. 约束
 
 - 不训练模型
-- 不存储完整对话原文, 仅存必要记忆条目
 - 不绕过上游能力限制
 - 不保证记忆 100% 永久保留 (受衰减策略与永久记忆限额约束)
-- 当前单人格
+- 当前单人格单用户 (v0.2.x); 跨前端会话在服务端合并为同一条流
+- **不能修改客户端行为**: 中间件功能不得依赖任何客户端配合 (自定义 header、UI 语义、清空按钮语义等)
 
 ---
 
@@ -262,3 +273,4 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 | v0.2.1 | 2026-07-15 | 与代码对齐: 修正拓扑 (5 节点, 无 vector_index)、AgentState 字段、目录结构 |
 | v0.2.1 | 2026-07-16 | 明确服务器优先人格设计原则: 人格由服务器端权威定义, 不从客户端请求提取; 新增人格自我演化远期规划 |
 | v0.2.1 | 2026-07-16 | 新增"提示词可自定义"核心决策; 提示词从 Python 常量迁到 defaults + 覆盖两层文件系统; admin 路由统一鉴权 |
+| v0.2.6 | 2026-07-18 | 短期记忆重定义: 服务器维护跨前端 `conversation_turns` 流, 时间窗 (默认 7d) + 模型窗双窗装填, 忽略客户端携带的历史 |

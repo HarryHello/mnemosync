@@ -8,6 +8,7 @@
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -30,9 +31,16 @@ from src.api.reasoning_control import (
 )
 from src.core.config import get_settings
 from src.core.graph import build_graph
-from src.core.memory.context import build_main_dialogue_messages
-from src.core.agents import run_proxy_thinking, run_prompt_cleaning
 from src.core.memory import format_relationship
+from src.core.memory.context import (
+    build_main_dialogue_messages,
+    render_main_dialogue_system,
+)
+from src.core.memory.short_term import (
+    build_short_term_history,
+    token_count_for_storage,
+)
+from src.core.agents import run_proxy_thinking, run_prompt_cleaning
 from src.core.models.resolver import NoCandidateForRoleError
 from src.infra.debug_context import use_agent
 from src.infra.forwarder import (
@@ -46,7 +54,8 @@ from src.infra.forwarder.multi import (
 )
 from src.infra.llm_service.models import ModelType
 from src.infra.vector_store import VectorStore
-from src.persistence.api_key_store import SqliteApiKeyStore
+from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
+from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.tools import MemoryRetriever, make_sentence_classifier_tool
 
@@ -77,14 +86,40 @@ def _get_multi_forwarder(http_request: Request) -> MultiForwarder:
     return http_request.app.state.multi_forwarder
 
 
-async def _resolve_main_model(http_request: Request) -> str:
-    """解析 MAIN 角色最高优先级候选的模型名 (供 usage/response.model/推理判定使用)."""
+def _get_conversation_store(http_request: Request) -> SqliteConversationStore:
+    """从 app.state 取共享 SqliteConversationStore (由 lifespan 建立)."""
+    return http_request.app.state.conversation_store
+
+
+async def _resolve_main_candidate(http_request: Request):
+    """解析 MAIN 角色首选候选. 返回 ResolvedCandidate 或 None (无候选)."""
     resolver = http_request.app.state.resolver
     try:
-        top = await resolver.first(ModelType.MAIN)
-        return top.model
+        return await resolver.first(ModelType.MAIN)
     except NoCandidateForRoleError:
-        return "mnemosync-any"
+        return None
+
+
+async def _resolve_main_model(http_request: Request) -> str:
+    """解析 MAIN 角色首选候选的模型名 (供 usage/response.model/推理判定使用)."""
+    cand = await _resolve_main_candidate(http_request)
+    return cand.model if cand else "mnemosync-any"
+
+
+async def _resolve_source_frontend(request: Request, api_key_id: str | None) -> str | None:
+    """从 API Key note 派生 source_frontend 元数据.
+
+    v0.2.6: 用于回写 conversation_turns.source_frontend, 仅调试/追溯用,
+    不作为查询条件. 服务器 side 派生, 不依赖客户端。
+    """
+    if api_key_id is None:
+        return None
+    store = getattr(request.app.state, "api_key_store", None) or _get_api_key_store()
+    try:
+        ak: ApiKey | None = await store.get_by_id(api_key_id)
+    except Exception:
+        return None
+    return ak.note if ak else None
 
 
 async def _verify_api_key(request: Request) -> str | None:
@@ -162,6 +197,13 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
             detail=f"Invalid model '{request.model}'. Use 'mnemosync-any' or omit the field."
         )
 
+    # 服务器侧派生 source_frontend (来自 API Key 的 note, 仅元数据).
+    # 客户端不需要传任何 header, 不需要修改客户端 (见 no-client-modifications)
+    api_key_id = await _verify_api_key(http_request)
+    source_frontend = await _resolve_source_frontend(http_request, api_key_id)
+    if source_frontend:
+        logger.debug("  🔖 source_frontend: %s", source_frontend)
+
     # 构建初始 state
     messages_dict = [msg.model_dump(exclude_none=True) for msg in request.messages]
     logger.debug("  构建 state 完成, 消息数: %d", len(messages_dict))
@@ -222,6 +264,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "proxy_thinking_enabled": use_proxy,
         "stream_mode": bool(request.stream),
         "main_model": main_model,
+        "source_frontend": source_frontend,
     }
     if prompt_cleaning_result:
         initial_state["prompt_cleaning_result"] = prompt_cleaning_result
@@ -237,7 +280,58 @@ async def _handle_non_stream(
     initial_state: dict[str, Any],
     request: ChatCompletionRequest,
 ) -> JSONResponse:
-    """非流式: 运行完整图, 返回结果."""
+    """非流式: 运行完整图, 返回结果.
+
+    与流式一致地做跨前端对话流水装填 (v0.2.6): 客户端 history 不再直接进
+    state.messages, 而是替换为服务器侧流水裁剪结果 + 本轮新用户消息.
+    图内节点 (`main_dialogue_node`) 会读装填后的 messages 拼 system。
+    """
+    settings = get_settings()
+    conversation_store = _get_conversation_store(http_request)
+    source_user = initial_state.get("source_user", "default")
+    source_frontend = initial_state.get("source_frontend")
+
+    main_candidate = await _resolve_main_candidate(http_request)
+    main_ctx_length = main_candidate.context_length if main_candidate else None
+
+    # 提取本轮新用户消息
+    client_messages = initial_state.get("messages", [])
+    new_user_content = ""
+    for m in reversed(client_messages):
+        if m.get("role") == "user":
+            new_user_content = m.get("content", "")
+            break
+
+    # 简化: 非流式的 system 内容无法在装填前精确算 (需要 perms + retrieved),
+    # 这些又是 graph 内节点做的. 保守估算: 用 persona + 一个"典型 system 长度"
+    # 上限占位 (perms 15 条 * ~200 char + 检索 5 条 * ~200 char ~ 4k chars ~ 2k tok).
+    # 主要目标是限制 history 总量在 ctx 内, 稍微保守可接受。
+    settings_persona = initial_state.get("persona") or settings.persona.prompt
+    system_estimate = settings_persona + "\n\n" + ("_" * 4000)
+
+    built = await build_short_term_history(
+        store=conversation_store,
+        now=datetime.now(timezone.utc),
+        window_days=settings.storage.short_term_days,
+        context_length=main_ctx_length,
+        system_text=system_estimate,
+        new_user_text=new_user_content,
+        max_tokens_hint=request.max_tokens,
+    )
+    logger.debug(
+        "  🧵 短期对话装填 (non-stream): %d/%d 条 (预算 %d tok)",
+        built.kept, built.total_candidates, built.budget,
+    )
+
+    # 用装填后的 history + 本轮新消息替换 state.messages; extracted_new 只放本轮
+    combined = list(built.conversation_history)
+    if new_user_content:
+        combined.append({"role": "user", "content": new_user_content})
+    initial_state["messages"] = combined
+    initial_state["extracted_new"] = (
+        [{"role": "user", "content": new_user_content}] if new_user_content else []
+    )
+
     graph = _get_compiled_graph()
 
     logger.debug("🚀 开始执行图 (非流式)...")
@@ -254,6 +348,25 @@ async def _handle_non_stream(
     upstream_usage = final_state.get("upstream_usage") or {}
     response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     main_model = initial_state.get("main_model") or await _resolve_main_model(http_request)
+
+    # 回写跨前端流水
+    try:
+        if new_user_content:
+            await conversation_store.append(
+                role="user",
+                content=new_user_content,
+                token_count=token_count_for_storage(new_user_content),
+                source_frontend=source_frontend,
+            )
+        if response_text:
+            await conversation_store.append(
+                role="assistant",
+                content=response_text,
+                token_count=token_count_for_storage(response_text),
+                source_frontend=source_frontend,
+            )
+    except Exception as e:
+        logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
 
     usage_info = UsageInfo(
         prompt_tokens=int(upstream_usage.get("prompt_tokens", 0)),
@@ -297,8 +410,12 @@ async def _handle_stream(
     """
     settings = get_settings()
     source_user = initial_state.get("source_user", "default")
-    main_model = initial_state.get("main_model") or await _resolve_main_model(http_request)
+    source_frontend = initial_state.get("source_frontend")
+    main_candidate = await _resolve_main_candidate(http_request)
+    main_model = main_candidate.model if main_candidate else "mnemosync-any"
+    main_ctx_length = main_candidate.context_length if main_candidate else None
     multi_forwarder = _get_multi_forwarder(http_request)
+    conversation_store = _get_conversation_store(http_request)
 
     logger.debug("🧠 加载记忆上下文...")
     memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
@@ -310,18 +427,20 @@ async def _handle_stream(
     )
     logger.debug("  📚 永久记忆: %d 条", len(perms))
 
-    conversation_history = initial_state.get("messages", [])
-    query = ""
-    for m in reversed(conversation_history):
+    # 客户端 history 视为"不可信": 服务器有自己的跨前端流水. 只从本轮请求
+    # 中取"最后一条 user 消息"作为新输入; 其余客户端消息忽略。
+    client_messages = initial_state.get("messages", [])
+    new_user_content = ""
+    for m in reversed(client_messages):
         if m.get("role") == "user":
-            query = m.get("content", "")
+            new_user_content = m.get("content", "")
             break
 
     retrieved_entries: list = []
-    if query:
+    if new_user_content:
         retriever = MemoryRetriever(multi_forwarder, vector_store, memory_store)
         results = await retriever.search(
-            query, top_k=settings.memory.retrieval_top_k,
+            new_user_content, top_k=settings.memory.retrieval_top_k,
             source_user=source_user,
         )
         for r in results:
@@ -340,13 +459,12 @@ async def _handle_stream(
         logger.debug("🤔 [代理推理] 开始 (ASSIST role)")
         try:
             perms_text = "\n".join(f"- {e.content}" for e in perms) or "（无）"
-            user_msg_for_thinking = query
             reasoning_text = await run_proxy_thinking(
                 forwarder=multi_forwarder,
                 user_name=source_user,
                 relationship=format_relationship(rel) if rel else "新用户",
                 memories=perms_text,
-                user_message=user_msg_for_thinking,
+                user_message=new_user_content,
                 tools=None,
             )
             logger.debug("  ✅ 代理推理完成, 长度: %d", len(reasoning_text) if reasoning_text else 0)
@@ -354,12 +472,37 @@ async def _handle_stream(
             logger.warning("代理推理失败, 退化为普通转发: %s", e)
             reasoning_text = None
 
-    # 5. 构建带记忆 + 推理注入的 prompt
+    # 5. 装填: 服务器侧跨前端对话流水 → 双窗口裁剪 → 拼装 messages
     persona = initial_state.get("persona") or settings.persona.prompt
     persona_name = initial_state.get("persona_name") or settings.persona.name
-    messages_dict = initial_state["messages"]
 
-    conversation_history = [m for m in messages_dict if m.get("role") != "system"]
+    system_text = render_main_dialogue_system(
+        persona_prompt=persona,
+        persona_name=persona_name,
+        user_name=source_user,
+        permanent_memories=perms,
+        retrieved_memories=retrieved_entries,
+        relationship=rel,
+        proxy_thinking_result=reasoning_text,
+    )
+    built = await build_short_term_history(
+        store=conversation_store,
+        now=datetime.now(timezone.utc),
+        window_days=settings.storage.short_term_days,
+        context_length=main_ctx_length,
+        system_text=system_text,
+        new_user_text=new_user_content,
+        max_tokens_hint=request.max_tokens,
+    )
+    logger.debug(
+        "  🧵 短期对话装填: %d/%d 条 (预算 %d tok, 已用 %d, 因预算丢弃 %d)",
+        built.kept, built.total_candidates, built.budget, built.used, built.dropped_by_budget,
+    )
+
+    # 拼装最终 messages: system + trimmed 跨前端历史 + 本轮新用户
+    conversation_history = list(built.conversation_history)
+    if new_user_content:
+        conversation_history.append({"role": "user", "content": new_user_content})
 
     messages_with_memory = build_main_dialogue_messages(
         persona_prompt=persona,
@@ -433,6 +576,28 @@ async def _handle_stream(
 
         if saw_native:
             mark_native_reasoning(main_model)
+
+        # 组装 assistant 回复文本 (从 SSE chunks 反解)
+        assistant_text = parse_sse_stream(collected_chunks) or ""
+
+        # 回写跨前端流水: 先 user 再 assistant, 保序 (append 用 UTC now)
+        try:
+            if new_user_content:
+                await conversation_store.append(
+                    role="user",
+                    content=new_user_content,
+                    token_count=token_count_for_storage(new_user_content),
+                    source_frontend=source_frontend,
+                )
+            if assistant_text:
+                await conversation_store.append(
+                    role="assistant",
+                    content=assistant_text,
+                    token_count=token_count_for_storage(assistant_text),
+                    source_frontend=source_frontend,
+                )
+        except Exception as e:
+            logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
 
         logger.debug("🔄 触发后台记忆图...")
         initial_state["proxy_thinking_enabled"] = False

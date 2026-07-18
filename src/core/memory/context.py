@@ -65,6 +65,28 @@ def _proxy_thinking_section(proxy_thinking_result: str | None) -> str:
     )
 
 
+def render_main_dialogue_system(
+    persona_prompt: str,
+    persona_name: str,
+    user_name: str,
+    permanent_memories: list[MemoryEntry],
+    retrieved_memories: list[MemoryEntry],
+    relationship: Relationship | None,
+    proxy_thinking_result: str | None = None,
+) -> str:
+    """渲染主对话 system 段. 独立出来以便在装填时先算 token 预算 (见 short_term)."""
+    frame = get_prompt_store().load("main_dialogue_frame")
+    return (
+        frame.replace("__PERSONA_NAME__", persona_name)
+        .replace("__PERSONA_PROMPT__", persona_prompt)
+        .replace("__USER_NAME__", user_name)
+        .replace("__RELATIONSHIP__", format_relationship(relationship))
+        .replace("__PERMANENT_MEMORIES__", format_permanent_memories(permanent_memories))
+        .replace("__RETRIEVED_MEMORIES__", format_retrieved_memories(retrieved_memories))
+        .replace("__PROXY_THINKING_SECTION__", _proxy_thinking_section(proxy_thinking_result))
+    )
+
+
 def build_main_dialogue_messages(
     persona_prompt: str,
     persona_name: str,
@@ -84,21 +106,20 @@ def build_main_dialogue_messages(
         permanent_memories: 永久记忆列表
         retrieved_memories: 语义检索到的相关记忆
         relationship: 用户关系状态
-        conversation_history: 当前对话历史（来自 checkpoint, OpenAI 格式）
+        conversation_history: 当前对话历史 (跨前端流水, 已在 short_term 裁剪)
         proxy_thinking_result: 代理思考结果（可选）
 
     Returns:
         OpenAI 格式的 messages 列表
     """
-    frame = get_prompt_store().load("main_dialogue_frame")
-    system_content = (
-        frame.replace("__PERSONA_NAME__", persona_name)
-        .replace("__PERSONA_PROMPT__", persona_prompt)
-        .replace("__USER_NAME__", user_name)
-        .replace("__RELATIONSHIP__", format_relationship(relationship))
-        .replace("__PERMANENT_MEMORIES__", format_permanent_memories(permanent_memories))
-        .replace("__RETRIEVED_MEMORIES__", format_retrieved_memories(retrieved_memories))
-        .replace("__PROXY_THINKING_SECTION__", _proxy_thinking_section(proxy_thinking_result))
+    system_content = render_main_dialogue_system(
+        persona_prompt=persona_prompt,
+        persona_name=persona_name,
+        user_name=user_name,
+        permanent_memories=permanent_memories,
+        retrieved_memories=retrieved_memories,
+        relationship=relationship,
+        proxy_thinking_result=proxy_thinking_result,
     )
 
     messages: list[dict[str, Any]] = [

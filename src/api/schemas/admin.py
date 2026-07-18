@@ -201,6 +201,26 @@ class DebugStatusResponse(BaseModel):
     buffer_capacity: int
 
 
+class ConversationTurnItem(BaseModel):
+    """跨前端对话流水的一条记录."""
+
+    id: int
+    role: str  # user | assistant
+    content: str
+    ts: str  # ISO datetime
+    token_count: int
+    source_frontend: str | None = None
+
+
+class ConversationTurnListResponse(BaseModel):
+    total: int
+    items: list[ConversationTurnItem]
+
+
+class ConversationClearResponse(BaseModel):
+    deleted: int
+
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
@@ -224,4 +244,7 @@ __all__ = [
     "DebugEventListResponse",
     "DebugEventDetailResponse",
     "DebugStatusResponse",
+    "ConversationTurnItem",
+    "ConversationTurnListResponse",
+    "ConversationClearResponse",
 ]

@@ -9,6 +9,7 @@ from fastapi import Request
 from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.auth_store import SqliteAuthStore
+from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
 
@@ -53,3 +54,7 @@ def get_vector_store(request: Request) -> "VectorStore":
 
 def get_reindex_progress(request: Request) -> "ReindexProgress":
     return request.app.state.reindex_progress
+
+
+def get_conversation_store(request: Request) -> SqliteConversationStore:
+    return request.app.state.conversation_store

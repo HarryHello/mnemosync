@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from src.api.deps import (
     get_api_key_store,
+    get_conversation_store,
     get_http_log_store,
     get_llm_service_store,
     get_memory_store,
@@ -26,6 +27,9 @@ from src.api.deps import (
 from src.api.routes.auth import get_current_user
 from src.core.models.resolver import RoleResolver
 from src.api.schemas.admin import (
+    ConversationClearResponse,
+    ConversationTurnItem,
+    ConversationTurnListResponse,
     ProbeDimensionBody,
     ProbeDimensionResponse,
     PromptDetail,
@@ -54,6 +58,7 @@ from src.infra.llm_service.models import (
 )
 from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.api_key_store import SqliteApiKeyStore
+from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
 
@@ -846,4 +851,59 @@ async def prune_memories(
         deleted=result.deleted,
         breakdown=PruneBreakdownSchema(**result.breakdown.as_dict()),
     )
+
+
+# ============================================================================
+# 跨前端对话流水 (v0.2.6 短期记忆)
+# ============================================================================
+
+
+@router.get("/conversation-turns", response_model=ConversationTurnListResponse)
+async def list_conversation_turns(
+    limit: int = Query(100, ge=1, le=1000),
+    store: SqliteConversationStore = Depends(get_conversation_store),
+):
+    """列出最近 N 条对话轮次 (跨前端统一流水). 按 ts 降序。
+
+    面板 "短期记忆" 视图用. 服务器把所有前端的对话汇聚到这里, 装填时
+    按时间窗 + 模型窗双窗口从这里裁剪.
+    """
+    turns = await store.list_recent(limit=limit)
+    total = await store.count()
+    items = [
+        ConversationTurnItem(
+            id=t.id or 0,
+            role=t.role,
+            content=t.content,
+            ts=t.ts.isoformat(),
+            token_count=t.token_count,
+            source_frontend=t.source_frontend,
+        )
+        for t in turns
+    ]
+    return ConversationTurnListResponse(total=total, items=items)
+
+
+@router.delete("/conversation-turns", response_model=ConversationClearResponse)
+async def clear_conversation_turns(
+    since_iso: str | None = Query(None, alias="since", description="ISO 时间, 只清早于该时间的记录 (省略则全清)"),
+    store: SqliteConversationStore = Depends(get_conversation_store),
+):
+    """清空跨前端对话流水.
+
+    * 不带 since → 全清 ("重置连续记忆")
+    * 带 since → 只清 ts < since (面板 "只留最近 3 天")
+
+    注意: 这不是"客户端 UI 清空对话" — 那种只是前端自己的显示状态, 服务器
+    仍保有连续记忆. 只有面板操作或本端点才能真正把服务器的流水抹掉。
+    """
+    if since_iso:
+        try:
+            cutoff = datetime.fromisoformat(since_iso)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"invalid since: {since_iso!r}")
+        deleted = await store.delete_before(cutoff)
+    else:
+        deleted = await store.delete_all()
+    return ConversationClearResponse(deleted=deleted)
 

@@ -228,6 +228,36 @@ v0.2.3 把 `main / assist / embedding / rerank` 全部纳入 `role_bindings` 优
 
 ---
 
+## 跨前端短期记忆 (v0.2.6)
+
+### 背景
+
+v0.2.5 之前, 每次 `/v1/chat/completions` 用的都是**客户端传来的** `messages`; 换 AstrBot → AIRI, 上下文立刻断; 前端点"清空对话"后模型也一并失忆。这与 Mnemosync 的核心承诺 — **跨前端统一人格记忆** — 直接矛盾。
+
+问题的根源不是"客户端没传对", 而是"不能依赖客户端传对": 有的客户端每轮只传当前一句 (AstrBot 群聊场景), 有的每轮传完整历史, 有的用户主动清空。**中间件不能修改客户端行为**, 只能自己维护真相。
+
+### 决策
+
+1. **服务器持有真相**: 新增 append-only `conversation_turns` 表 (id, role, content, ts, token_count, source_frontend)。所有前端写入同一 bucket, 无 thread/user 分区 — 单人格单用户定位 (见 `mnemosync-single-persona-scope`) 下"多前端 = 同一用户", 分区就违背语义。
+2. **忽略客户端历史**: `forward.py` 只从 `messages` 里挑**最后一条 user**, 服务器 history 全部来自 `conversation_turns`。客户端的 system 消息仍走 `prompt_cleaning`, 但不再影响上下文长度。
+3. **双窗口装填**:
+   - 时间窗 `settings.storage.short_term_days` (默认 7d) 硬边界
+   - 模型窗用 `ResolvedCandidate.context_length` 算预算 `= ctx - system - new_user - reserve_output`, 从最老那端裁剪
+   - reserve_output 优先客户端 `max_tokens`; 否则 `min(4096, ctx/4)` 下限 512
+4. **Token 估算走保守启发式** `len(text) // 2 + 8`。不接入真实 tokenizer — 换模型时 tokenizer 形变太大, 中间件维护成本高; 用估算 + 保留区兜底就够避免上游 4001。
+5. **source_frontend = api_key.note** (服务器派生, 非客户端 header)。仅作观测, 不参与查询条件。
+6. **后台清理**: `lifespan` 起 24h loop, `delete_before(now - N 天)`。
+7. **面板重置端点**: `GET/DELETE /panel/admin/conversation-turns`; 空 `since` 全清, 带 `since` 只清早于该时间的。前端 UI 的清空按钮不动服务器 — 服务器的连续记忆只有面板能抹。
+
+### 显式范围外
+
+- **thread/user 分区**: 单人格单用户阶段不做; 未来上多用户时按 `source_user` 分表
+- **真实 tokenizer**: 不引入 tiktoken 等; 估算 + 保留区已够用
+- **回滚客户端 UI 语义**: 用户在客户端"清空对话"依然会让客户端自己丢历史, Mnemosync 不管
+- **assistant turn 精确 token 计数**: 用同一 estimate 口径; 上游返回的 `usage.completion_tokens` 更准但读起来要跨流处理, 收益不值
+
+---
+
 ## 待补充
 
 后续遇到的新决策会追加到本文档.
