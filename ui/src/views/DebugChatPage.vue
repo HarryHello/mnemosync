@@ -303,14 +303,7 @@ function formatTs(ts: number): string {
           模拟真实客户端调 Mnemosync <code>/v1/chat/completions</code>; 打开"调试模式"实时观察每一跳 HTTP (客户端 ↔ Mnemosync ↔ 上游), 按 correlation_id 分组
         </p>
       </div>
-      <div class="page-head-actions">
-        <el-tag v-if="debugMode && debugStore.connected" type="success" size="small">SSE 已订阅</el-tag>
-        <el-tag v-else-if="debugMode" type="warning" size="small">SSE 连接中…</el-tag>
-        <el-tag v-if="debugStore.sessionKey" size="small">
-          key: {{ debugStore.sessionKey.key.slice(0, 12) }}…
-        </el-tag>
-        <el-switch v-model="debugMode" active-text="调试模式" inline-prompt />
-      </div>
+
     </div>
 
     <div class="params-bar">
@@ -367,6 +360,18 @@ function formatTs(ts: number): string {
             <el-button size="small" @click="clearConversation">清空对话</el-button>
             <el-button type="primary" size="small" :loading="sending" @click="send">发送</el-button>
           </div>
+        </div>
+      </div>
+
+      <div class="page-head-actions">
+        <el-tag v-if="debugMode && debugStore.connected" type="success" size="small">SSE 已订阅</el-tag>
+        <el-tag v-else-if="debugMode" type="warning" size="small">SSE 连接中…</el-tag>
+        <el-tag v-if="debugStore.sessionKey" size="small">
+          key: {{ debugStore.sessionKey.key.slice(0, 12) }}…
+        </el-tag>
+        <div class="switch-container">
+          <span class="switch-label">调试模式</span>
+          <el-switch v-model="debugMode" inline-prompt />
         </div>
       </div>
 
@@ -472,6 +477,17 @@ function formatTs(ts: number): string {
   align-items: center;
   gap: $space-2;
   flex-wrap: wrap;
+
+  .switch-container {
+    display: flex;
+    align-items: center;
+    gap: $space-1;
+    margin-left: auto;
+    .switch-label {
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+    }
+  }
 }
 
 .params-bar {
