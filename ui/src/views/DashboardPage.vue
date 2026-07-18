@@ -54,7 +54,7 @@ onMounted(refresh)
   <div class="page-container">
     <div class="hero">
       <div>
-        <h2 class="hello">你好, {{ username }} 👋</h2>
+        <h2 class="hello">你好, {{ username }}</h2>
         <p class="page-subtitle">
           Mnemosync 管理面板
           <span v-if="health"> · v{{ health.version }}</span>
