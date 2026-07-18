@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { healthCheck } from '@/api/client'
 
 interface MenuItem {
   path: string
@@ -10,6 +11,17 @@ interface MenuItem {
 
 const route = useRoute()
 const router = useRouter()
+
+const version = ref<string | null>(null)
+
+onMounted(async () => {
+  try {
+    const h = await healthCheck()
+    version.value = h.version
+  } catch {
+    version.value = null
+  }
+})
 
 const items: MenuItem[] = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer' },
@@ -62,7 +74,7 @@ function navigate(path: string) {
     </el-menu>
 
     <div class="footer">
-      <span>v0.2.2</span>
+      <span v-if="version">v{{ version }}</span>
     </div>
   </aside>
 </template>
