@@ -69,7 +69,16 @@ class RoleBindingItem(BaseModel):
         default=None, description="最大上下文 (token). 可选, 仅用于面板展示"
     )
     embedding_dim: int | None = Field(
-        default=None, description="嵌入维度. 可选, 会传给上游 dimensions 参数"
+        default=None,
+        description="嵌入维度. 用作向量库维度锁; 是否透传上游由 send_dimensions 决定",
+    )
+    send_dimensions: bool = Field(
+        default=False,
+        description=(
+            "v0.2.8: 是否把 embedding_dim 作为 `dimensions` 参数透传给上游. "
+            "仅可变维模型 (text-embedding-3-*, text-embedding-v3/v4, qwen3-embedding-*) "
+            "需要开启; 固定维模型 (bge-*, bce-*, jina-*, mistral, gemini) 开启会被上游拒绝"
+        ),
     )
 
 
@@ -94,7 +103,14 @@ class RoleBindingAddBody(BaseModel):
     embedding_dim: int | None = Field(
         default=None,
         ge=1,
-        description="可选; 嵌入维度. embedding 角色会传给上游 dimensions 参数",
+        description="可选; 嵌入维度. 用作向量库维度锁, 独立于是否透传上游",
+    )
+    send_dimensions: bool = Field(
+        default=False,
+        description=(
+            "是否透传 dimensions 给上游. 默认 False (兼容 bge/bce/jina/mistral/gemini); "
+            "仅在可变维模型且希望指定输出维度时置 True"
+        ),
     )
 
 

@@ -51,6 +51,7 @@ const addForm = reactive({
   priority: null as number | null,
   context_length: null as number | null,
   embedding_dim: null as number | null,
+  send_dimensions: false,
 })
 const addSubmitting = ref(false)
 const dimProbing = ref(false)
@@ -102,6 +103,7 @@ function resetAddForm(role: UpstreamModelType) {
   addForm.priority = null
   addForm.context_length = null
   addForm.embedding_dim = null
+  addForm.send_dimensions = false
   availableModels.value = []
 }
 
@@ -199,6 +201,7 @@ async function onAdd() {
       priority: addForm.priority,
       context_length: addForm.context_length,
       embedding_dim: addForm.embedding_dim,
+      send_dimensions: addForm.send_dimensions,
     })
     ElMessage.success(replaceMode.value ? '已替换' : '已添加')
     addDialog.value = false
@@ -371,6 +374,13 @@ onMounted(() => {
                 <span class="meta-chip">
                   dim {{ embeddingCard()!.embedding_dim ?? '—' }}
                 </span>
+                <span
+                  v-if="embeddingCard()!.send_dimensions"
+                  class="meta-chip meta-chip-warn"
+                  title="dimensions 会被透传给上游 (可变维模型才需要)"
+                >
+                  send-dim
+                </span>
               </div>
             </div>
             <el-button
@@ -537,8 +547,19 @@ onMounted(() => {
             </el-button>
           </div>
           <div class="hint">
-            会传给上游 <code>dimensions</code> 参数; DashScope v3 等可变维模型必填。
-            点「探测」会向上游发送一次 "hi" 请求, 读取真实输出维度。
+            用作向量库维度锁 (VectorStore 会据此校验后续写入). 点「探测」会向上游发送一次 "hi" 请求读取真实输出维度。
+          </div>
+        </el-form-item>
+        <el-form-item v-if="isEmbeddingForm" label="透传 dimensions">
+          <el-checkbox v-model="addForm.send_dimensions" :disabled="!addForm.embedding_dim">
+            把维度作为 <code>dimensions</code> 参数发给上游
+          </el-checkbox>
+          <div class="hint">
+            <strong>默认不开</strong>. 仅可变维模型需要开启:
+            <code>text-embedding-3-*</code> / <code>text-embedding-v3/v4</code> /
+            <code>qwen3-embedding-*</code>.
+            固定维模型 (<code>bge-*</code> / <code>bce-*</code> / <code>jina-*</code> /
+            Mistral / Gemini) 开启会被上游拒绝 (400 "parameter is invalid").
           </div>
         </el-form-item>
       </el-form>
@@ -703,6 +724,11 @@ onMounted(() => {
   border-radius: $radius-sm;
   background: var(--el-fill-color);
   color: var(--el-text-color-secondary);
+}
+
+.meta-chip-warn {
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning);
 }
 
 .cand-actions {

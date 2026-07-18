@@ -142,10 +142,12 @@ LLM Service Commands:
 
 Model Binding Commands (role_bindings table, hot-reloaded):
   model ls [role]                       List bindings (optionally filter by role)
-  model add <role> <srv_id> <model> [--priority N] [--context N] [--dim N]
+  model add <role> <srv_id> <model> [--priority N] [--context N] [--dim N] [--send-dim]
                                         Append (or insert at N) a candidate for a role.
                                         --context: 上下文窗口 (token, 面板展示用)
-                                        --dim: 嵌入维度 (传给上游 dimensions 参数)
+                                        --dim: 嵌入维度 (向量库维度锁)
+                                        --send-dim: 把 --dim 作为 dimensions 参数
+                                                    透传给上游 (仅可变维模型需要)
   model rm <role> <priority>            Remove a candidate at priority
   model reorder <role> <srv_id:model,...>
                                         Reorder candidates for a role
@@ -489,19 +491,20 @@ Persona State (v0.2.7, via panel HTTP):
             scope = f"role '{role}'" if role else "any role"
             print(f"No bindings for {scope}.\n")
             return
-        print(f"{'role':<10} {'prio':<5} {'service-id':<20} {'model':<30} {'ctx':<8} {'dim':<6}")
-        print("-" * 80)
+        print(f"{'role':<10} {'prio':<5} {'service-id':<20} {'model':<30} {'ctx':<8} {'dim':<6} {'send-dim':<8}")
+        print("-" * 92)
         for b in bindings:
             ctx = str(b.context_length) if b.context_length else "-"
             dim = str(b.embedding_dim) if b.embedding_dim else "-"
+            sd = "yes" if b.send_dimensions else "no"
             print(
                 f"{b.role.value:<10} {b.priority:<5} {b.service_id:<20} "
-                f"{b.model:<30} {ctx:<8} {dim:<6}"
+                f"{b.model:<30} {ctx:<8} {dim:<6} {sd:<8}"
             )
         print()
 
     async def cmd_model_add(self, argv: list[str]):
-        """model add <role> <service_id> <model> [--priority N] [--context N] [--dim N]."""
+        """model add <role> <service_id> <model> [--priority N] [--context N] [--dim N] [--send-dim]."""
         import argparse as _argparse
 
         parser = _argparse.ArgumentParser(prog="model add", add_help=False)
@@ -512,13 +515,17 @@ Persona State (v0.2.7, via panel HTTP):
         parser.add_argument("--context", type=int, default=None,
                             help="上下文窗口 (token) - 仅面板展示")
         parser.add_argument("--dim", type=int, default=None,
-                            help="嵌入维度 - 会传给上游 dimensions 参数")
+                            help="嵌入维度 - 用作向量库维度锁 (是否透传上游由 --send-dim 控制)")
+        parser.add_argument("--send-dim", dest="send_dim", action="store_true",
+                            help="把 --dim 作为 dimensions 参数透传给上游 (仅 text-embedding-3-*, "
+                                 "text-embedding-v3/v4, qwen3-embedding-* 等可变维模型需要; "
+                                 "bge/bce/jina/mistral/gemini 等固定维模型开启会 400)")
         try:
             a = parser.parse_args(argv)
         except SystemExit:
             print(
                 "❌ Usage: model add <role> <service_id> <model> "
-                "[--priority N] [--context N] [--dim N]\n"
+                "[--priority N] [--context N] [--dim N] [--send-dim]\n"
             )
             return
 
@@ -528,18 +535,23 @@ Persona State (v0.2.7, via panel HTTP):
         if await self.llm_service_store.get_service(a.service_id) is None:
             print(f"❌ Service '{a.service_id}' not found.\n")
             return
+        if a.send_dim and a.dim is None:
+            print("❌ --send-dim 需要配合 --dim N 使用\n")
+            return
         try:
             binding = await self.llm_service_store.add_role_binding(
                 role_enum, a.service_id, a.model,
                 priority=a.priority,
                 context_length=a.context,
                 embedding_dim=a.dim,
+                send_dimensions=a.send_dim,
             )
             ctx = f" ctx={binding.context_length}" if binding.context_length else ""
             dim = f" dim={binding.embedding_dim}" if binding.embedding_dim else ""
+            sd = " send-dim=yes" if binding.send_dimensions else ""
             print(
                 f"✅ Added [{binding.role.value}] priority={binding.priority} "
-                f"service={binding.service_id} model={binding.model}{ctx}{dim}\n"
+                f"service={binding.service_id} model={binding.model}{ctx}{dim}{sd}\n"
             )
         except ValueError as e:
             print(f"❌ {e}\n")

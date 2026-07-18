@@ -155,6 +155,30 @@ async def test_role_binding_metadata_persistence(store):
     assert resolved[0].embedding_dim == 1024
 
 
+async def test_send_dimensions_defaults_false(store):
+    """v0.2.8: send_dimensions 未指定时默认 False, 不透传上游."""
+    await store.add_role_binding(
+        ModelType.EMBEDDING, "svc-a", "bge-m3", embedding_dim=1024
+    )
+    listed = await store.list_role_bindings(ModelType.EMBEDDING)
+    assert listed[0].send_dimensions is False
+    resolved = await store.resolve_role(ModelType.EMBEDDING)
+    assert resolved[0].send_dimensions is False
+    assert resolved[0].embedding_dim == 1024
+
+
+async def test_send_dimensions_persistence_true(store):
+    """显式 send_dimensions=True 持久化 + resolve 带过来."""
+    await store.add_role_binding(
+        ModelType.EMBEDDING, "svc-a", "text-embedding-v3",
+        embedding_dim=1024, send_dimensions=True,
+    )
+    listed = await store.list_role_bindings(ModelType.EMBEDDING)
+    assert listed[0].send_dimensions is True
+    resolved = await store.resolve_role(ModelType.EMBEDDING)
+    assert resolved[0].send_dimensions is True
+
+
 async def test_migration_adds_columns_to_legacy_table(tmp_path):
     """幂等迁移: 手工建旧 5 列 schema + 插一行, init_db 后新列为 NULL."""
     import aiosqlite
@@ -193,6 +217,7 @@ async def test_migration_adds_columns_to_legacy_table(tmp_path):
     assert listed[0].model == "legacy-model"
     assert listed[0].context_length is None
     assert listed[0].embedding_dim is None
+    assert listed[0].send_dimensions is False
 
 
 async def test_resolve_empty_role(store):

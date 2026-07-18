@@ -77,6 +77,11 @@ class RoleBinding:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     context_length: int | None = None
     embedding_dim: int | None = None
+    # v0.2.8: 是否把 embedding_dim 作为 `dimensions` 参数透传给上游.
+    # 仅对可变维模型 (text-embedding-3-*, text-embedding-v3/v4, qwen3-embedding-*, ...)
+    # 有意义; 固定维模型 (bge-*, bce-*, jina-*, mistral, gemini, ...) 上游会拒绝该参数.
+    # 默认 False = 只作为向量库维度锁定的 metadata, 不透传上游.
+    send_dimensions: bool = False
 
 
 @dataclass
@@ -91,3 +96,4 @@ class ResolvedCandidate:
     model: str
     context_length: int | None = None
     embedding_dim: int | None = None
+    send_dimensions: bool = False

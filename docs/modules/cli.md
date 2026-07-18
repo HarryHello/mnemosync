@@ -125,8 +125,8 @@ Shell 内命令 (真实分发见 [cli_interactive.py:633](../../src/cli/cli_inte
 
 | 命令 | 说明 |
 |------|------|
-| `model ls [role]` | 列出所有角色绑定 (含 priority / ctx / dim), 可按角色过滤 |
-| `model add <role> <srv_id> <model> [--priority N] [--context N] [--dim N]` | 追加候选; `--context` 面板展示; `--dim` 传给上游 `dimensions` 参数 (v0.2.4) |
+| `model ls [role]` | 列出所有角色绑定 (含 priority / ctx / dim / send-dim), 可按角色过滤 |
+| `model add <role> <srv_id> <model> [--priority N] [--context N] [--dim N] [--send-dim]` | 追加候选; `--context` 面板展示; `--dim` 锁向量库维度 (v0.2.4); `--send-dim` 才把维度作为 `dimensions` 参数发给上游 (v0.2.8, 仅可变维模型需要, 详见 [llm-service.md §2.6](llm-service.md#26-send_dimensions-透传开关-v028)) |
 | `model rm <role> <priority>` | 删除某个优先级候选 |
 | `model reorder <role> <srv:model,srv:model,...>` | 重新排序候选 (embedding 角色被拒绝, 单绑定无意义) |
 | `model test <role>` | 探活: 用该角色的首位候选发一次最小请求 |
@@ -278,3 +278,4 @@ mnemosync prompt reset memory_analysis
 | v0.2.3 | 2026-07-17 | 模型命令改为 `model {ls,add,rm,reorder,test}` (role_bindings 表, 热更新); 移除 `set-main-model` / `set-assist-model` / `set-embedding-model` / `set-rerank-model` (旧路径通过 config_writer 已废弃) |
 | v0.2.4 | 2026-07-17 | `model add` 新增 `--context N` / `--dim N`; 新增 `memory reindex [--prune]` 与 `memory prune [--dry-run]` (走面板 HTTP, 自动换 JWT) |
 | v0.2.7 | 2026-07-18 | 新增 `persona reset [--dry-run] [--yes]`: 走 `POST /panel/admin/persona/reset`, 交互式二次确认, 与 `memory reindex` 互斥 |
+| v0.2.8 | 2026-07-18 | `model add` 新增 `--send-dim`: 拆分向量库维度锁与上游 `dimensions` 参数, 默认不透传 (兼容 bge/bce/jina 等固定维模型) |

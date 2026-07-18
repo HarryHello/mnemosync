@@ -112,6 +112,7 @@ class LLMServiceStore:
                     created_at TIMESTAMP NOT NULL,
                     context_length INTEGER,
                     embedding_dim INTEGER,
+                    send_dimensions INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (role, priority),
                     FOREIGN KEY (service_id) REFERENCES llm_services(id) ON DELETE CASCADE
                 )
@@ -123,9 +124,12 @@ class LLMServiceStore:
             await db.commit()
 
     async def _ensure_role_binding_columns(self, db) -> None:
-        """v0.2.4 迁移: 为 role_bindings 表补 context_length / embedding_dim 两列.
+        """迁移: 幂等地为 role_bindings 表补新列.
 
-        SQLite ALTER TABLE ADD COLUMN 是 O(1) 元数据更新, 幂等.
+        SQLite ALTER TABLE ADD COLUMN 是 O(1) 元数据更新.
+
+        v0.2.4: context_length / embedding_dim
+        v0.2.8: send_dimensions (是否透传 embedding_dim 给上游)
         """
         async with db.execute("PRAGMA table_info(role_bindings)") as cur:
             cols = {r[1] for r in await cur.fetchall()}
@@ -134,6 +138,11 @@ class LLMServiceStore:
                 await db.execute(
                     f"ALTER TABLE role_bindings ADD COLUMN {col} INTEGER"
                 )
+        if "send_dimensions" not in cols:
+            await db.execute(
+                "ALTER TABLE role_bindings ADD COLUMN send_dimensions "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
 
     # ============ 服务商 CRUD ============
 
@@ -273,14 +282,14 @@ class LLMServiceStore:
             if role is None:
                 query = (
                     "SELECT role, priority, service_id, model, created_at, "
-                    "context_length, embedding_dim "
+                    "context_length, embedding_dim, send_dimensions "
                     "FROM role_bindings ORDER BY role, priority"
                 )
                 params: tuple = ()
             else:
                 query = (
                     "SELECT role, priority, service_id, model, created_at, "
-                    "context_length, embedding_dim "
+                    "context_length, embedding_dim, send_dimensions "
                     "FROM role_bindings WHERE role = ? ORDER BY priority"
                 )
                 params = (role.value,)
@@ -295,6 +304,7 @@ class LLMServiceStore:
                 created_at=self._parse_dt(r[4]),
                 context_length=r[5],
                 embedding_dim=r[6],
+                send_dimensions=bool(r[7]),
             )
             for r in rows
         ]
@@ -307,6 +317,7 @@ class LLMServiceStore:
         priority: Optional[int] = None,
         context_length: Optional[int] = None,
         embedding_dim: Optional[int] = None,
+        send_dimensions: bool = False,
     ) -> RoleBinding:
         """追加一条角色绑定. priority 省略时排到列表末尾.
 
@@ -361,8 +372,9 @@ class LLMServiceStore:
             now = datetime.now(timezone.utc)
             await db.execute(
                 "INSERT INTO role_bindings "
-                "(role, priority, service_id, model, created_at, context_length, embedding_dim) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(role, priority, service_id, model, created_at, "
+                "context_length, embedding_dim, send_dimensions) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     role.value,
                     priority,
@@ -371,6 +383,7 @@ class LLMServiceStore:
                     now.isoformat(),
                     context_length,
                     embedding_dim,
+                    1 if send_dimensions else 0,
                 ),
             )
             await db.commit()
@@ -383,6 +396,7 @@ class LLMServiceStore:
             created_at=now,
             context_length=context_length,
             embedding_dim=embedding_dim,
+            send_dimensions=send_dimensions,
         )
 
     async def delete_role_binding(self, role: ModelType, priority: int) -> bool:
@@ -471,6 +485,7 @@ class LLMServiceStore:
                         model=b.model,
                         context_length=b.context_length,
                         embedding_dim=b.embedding_dim,
+                        send_dimensions=b.send_dimensions,
                     )
                 )
         return resolved

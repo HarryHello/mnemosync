@@ -670,6 +670,7 @@ def _binding_to_item(b) -> RoleBindingItem:
         created_at=b.created_at.isoformat(),
         context_length=b.context_length,
         embedding_dim=b.embedding_dim,
+        send_dimensions=b.send_dimensions,
     )
 
 
@@ -705,6 +706,7 @@ async def add_model_binding(
             priority=body.priority,
             context_length=body.context_length,
             embedding_dim=body.embedding_dim,
+            send_dimensions=body.send_dimensions,
         )
     except ValueError as e:
         msg = str(e)

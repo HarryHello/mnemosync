@@ -214,6 +214,7 @@ export interface RoleBindingItem {
   created_at: string
   context_length: number | null
   embedding_dim: number | null
+  send_dimensions: boolean
 }
 
 export interface RoleBindingListResponse {
@@ -227,6 +228,7 @@ export interface RoleBindingAddBody {
   priority?: number | null
   context_length?: number | null
   embedding_dim?: number | null
+  send_dimensions?: boolean
 }
 
 export interface RoleBindingReorderBody {

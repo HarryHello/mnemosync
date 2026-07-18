@@ -270,13 +270,41 @@ async def test_embed_no_fallback_on_error(tmp_path):
             await multi.embed("hello")
 
 
-async def test_embed_passes_embedding_dim_from_binding(tmp_path):
-    """绑定带 embedding_dim 时, 未显式传 dimensions 参数则用元数据."""
+async def test_embed_does_not_send_dimensions_by_default(tmp_path):
+    """绑定即使带 embedding_dim, 只要 send_dimensions=False (默认) 就不透传上游.
+
+    v0.2.8 变更: 兼容 bge/bce/jina/mistral/gemini 等固定维模型.
+    """
     store = LLMServiceStore(str(tmp_path / "e.db"))
     await store.init_db()
     await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
     await store.add_role_binding(
-        ModelType.EMBEDDING, "a", "embed-v3", embedding_dim=1024
+        ModelType.EMBEDDING, "a", "bge-m3", embedding_dim=1024
+    )
+    multi = MultiForwarder(RoleResolver(store))
+
+    captured: dict = {}
+
+    async def side_effect(*, model, dimensions=None, **_):
+        captured["dimensions"] = dimensions
+        return [[0.0] * 1024]
+
+    with patch.object(Forwarder, "embed", new=AsyncMock(side_effect=side_effect)):
+        await multi.embed("hi")
+    assert captured["dimensions"] is None
+
+
+async def test_embed_sends_dimensions_when_flag_true(tmp_path):
+    """send_dimensions=True 时把 embedding_dim 作为 dimensions 透传上游.
+
+    这是可变维模型 (text-embedding-3-*, qwen3-embedding-*, DashScope v3/v4) 的用法.
+    """
+    store = LLMServiceStore(str(tmp_path / "e.db"))
+    await store.init_db()
+    await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
+    await store.add_role_binding(
+        ModelType.EMBEDDING, "a", "text-embedding-v3",
+        embedding_dim=1024, send_dimensions=True,
     )
     multi = MultiForwarder(RoleResolver(store))
 
@@ -289,6 +317,31 @@ async def test_embed_passes_embedding_dim_from_binding(tmp_path):
     with patch.object(Forwarder, "embed", new=AsyncMock(side_effect=side_effect)):
         await multi.embed("hi")
     assert captured["dimensions"] == 1024
+
+
+async def test_embed_explicit_dimensions_overrides_binding(tmp_path):
+    """调用方显式传 dimensions 时无条件透传, 无视 send_dimensions.
+
+    probe-dimension 端点在探测阶段依赖这条路径.
+    """
+    store = LLMServiceStore(str(tmp_path / "e.db"))
+    await store.init_db()
+    await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
+    await store.add_role_binding(
+        ModelType.EMBEDDING, "a", "bge-m3",
+        embedding_dim=1024, send_dimensions=False,
+    )
+    multi = MultiForwarder(RoleResolver(store))
+
+    captured: dict = {}
+
+    async def side_effect(*, model, dimensions=None, **_):
+        captured["dimensions"] = dimensions
+        return [[0.0] * 512]
+
+    with patch.object(Forwarder, "embed", new=AsyncMock(side_effect=side_effect)):
+        await multi.embed("hi", dimensions=512)
+    assert captured["dimensions"] == 512
 
 
 async def test_rerank_falls_back(tmp_path):

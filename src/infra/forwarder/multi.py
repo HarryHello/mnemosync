@@ -196,13 +196,26 @@ class MultiForwarder:
     ) -> list[list[float]]:
         """嵌入调用. 嵌入语义空间不兼容不同模型, 不做 fallback: 只用第一条候选.
 
-        若绑定携带 `embedding_dim` 元数据, 且调用方未显式传 dimensions, 则透传给上游
-        (DashScope v3 等可变维模型需要).
+        `dimensions` 参数**只在必要时透传**上游:
+          * 调用方显式传入 `dimensions` → 无条件透传 (由调用方负责判断合法性,
+            例如 probe-dimension 端点在探测阶段)
+          * 未显式传入且绑定 `send_dimensions=True` → 用 `c.embedding_dim` 透传
+            (可变维模型: text-embedding-3-*, text-embedding-v3/v4, qwen3-embedding-*)
+          * 其余情况 → 不发 `dimensions` (兼容 bge/bce/jina/mistral/gemini 等
+            固定维模型, 它们对 `dimensions` 参数会返 400)
+
+        `embedding_dim` 本身依然用于向量库维度锁定 (VectorStore.assert_embedding_matches),
+        与是否透传上游正交.
         """
         cands = await self._candidates(role, candidates)
         c = cands[0]
         fwd = self._get_forwarder(c)
-        effective_dim = dimensions if dimensions is not None else c.embedding_dim
+        if dimensions is not None:
+            effective_dim: int | None = dimensions
+        elif c.send_dimensions:
+            effective_dim = c.embedding_dim
+        else:
+            effective_dim = None
         return await fwd.embed(input=input, model=c.model, dimensions=effective_dim)
 
     # ============ 重排序 ============

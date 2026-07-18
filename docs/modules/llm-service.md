@@ -62,7 +62,8 @@ class RoleBinding:
     model: str
     created_at: datetime
     context_length: int | None = None   # v0.2.4: 面板展示
-    embedding_dim: int | None = None    # v0.2.4: 传给上游 dimensions=
+    embedding_dim: int | None = None    # v0.2.4: 向量库维度锁
+    send_dimensions: bool = False       # v0.2.8: 是否把 embedding_dim 作为 dimensions 参数发上游
 ```
 
 PRIMARY KEY `(role, priority)`。同角色多条 = 优先级列表; 上游失败时 MultiForwarder 按 priority 顺序 fallback (**嵌入角色除外**, 见 §2.5)。
@@ -82,6 +83,7 @@ class ResolvedCandidate:
     model: str
     context_length: int | None = None
     embedding_dim: int | None = None
+    send_dimensions: bool = False       # v0.2.8
 ```
 
 `context_length` 会被 `build_short_term_history` 用作双窗装填的模型窗预算 (v0.2.6, 见 [memory-system.md §1.4](memory-system.md#14-短期记忆-v026--跨前端对话流水))。
@@ -91,6 +93,38 @@ class ResolvedCandidate:
 `add_role_binding(role=EMBEDDING, ...)` 前先 `SELECT COUNT(*) FROM role_bindings WHERE role='embedding'`, 已有绑定则 `raise ValueError("嵌入模型只允许一条绑定, 请先删除现有绑定")`。`reorder_role_bindings(EMBEDDING)` 直接 raise (单绑定无排序意义)。
 
 理由: 不同嵌入模型输出的向量空间语义不同, 换模型会让已存向量瞬间失效; ChromaDB collection 首次写入时锁定 `(service_id, model, dim)`, 之后每次写入前 assert 一致。想换模型必须走 Reindex。见 [dev-decisions.md 嵌入模型单绑定 + Reindex + Prune](../dev-decisions.md)。
+
+### 2.6 `send_dimensions` 透传开关 (v0.2.8)
+
+`embedding_dim` 有两条独立职责, v0.2.8 把它们拆开:
+
+| 职责 | 落点 | 开关 |
+|------|------|------|
+| **向量库维度锁** | Chroma collection metadata (`service_id / model / dim`), Reindex assert | 存了就锁, 无开关 |
+| **透传 `dimensions` 参数给上游** | HTTP body `{"dimensions": N}` | `send_dimensions=True` 才发 |
+
+为什么要拆: 只有可变维模型接受 `dimensions` 参数 (OpenAI Matryoshka Representation Learning), 常见白名单:
+
+- OpenAI: `text-embedding-3-small`, `text-embedding-3-large`
+- DashScope: `text-embedding-v3`, `text-embedding-v4`, `qwen3-embedding-*`
+
+其他一律固定维 (bge / bce / jina / mistral / gemini / text-embedding-ada-002 等), 显式传 `dimensions` 会被拒 (SiliconFlow: `20015 The parameter is invalid`; OpenAI: 400 unsupported)。
+
+`MultiForwarder.embed` 的门控 (见 [src/infra/forwarder/multi.py](../../src/infra/forwarder/multi.py) `embed`):
+
+```python
+if dimensions is not None:            # 显式传参无条件透传 (probe-dimension 走这里)
+    effective_dim = dimensions
+elif c.send_dimensions:                # 绑定显式开启
+    effective_dim = c.embedding_dim
+else:                                  # 默认关: 不透传, 兼容固定维模型
+    effective_dim = None
+return await fwd.embed(..., dimensions=effective_dim)
+```
+
+CLI `model add embedding <svc> <model> --dim N` 默认 **不透传**; 显式加 `--send-dim` 才透传。面板 `ModelsPage` 添加嵌入模型的表单里有对应勾选框, 仅在填了维度时可勾。
+
+参考: Cherry Studio 同样问题的 [PR #8086](https://github.com/CherryHQ/cherry-studio/pull/8086) 引入 `isAutoDimensions` 布尔, 是等价方案 (布尔取反关系)。
 
 ---
 
@@ -121,8 +155,9 @@ CREATE TABLE role_bindings (
     service_id TEXT NOT NULL,
     model TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL,
-    context_length INTEGER,       -- v0.2.4
-    embedding_dim INTEGER,        -- v0.2.4
+    context_length INTEGER,                            -- v0.2.4
+    embedding_dim INTEGER,                             -- v0.2.4 (向量库维度锁)
+    send_dimensions INTEGER NOT NULL DEFAULT 0,        -- v0.2.8 (是否透传给上游)
     PRIMARY KEY (role, priority),
     FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
 );
@@ -150,7 +185,8 @@ class LLMServiceStore:
     async def delete_service(service_id) -> bool
 
     async def add_role_binding(role, service_id, model, *,
-                                context_length=None, embedding_dim=None) -> RoleBinding
+                                context_length=None, embedding_dim=None,
+                                send_dimensions=False) -> RoleBinding
     async def list_role_bindings(role: ModelType | None = None) -> list[RoleBinding]
     async def delete_role_binding(role, priority) -> bool
     async def reorder_role_bindings(role, priority_order: list[int]) -> None
@@ -179,7 +215,7 @@ class LLMServiceStore:
 | `show-service <id>` | 查看服务商详情 |
 | `rm-service <id>` | 删除服务商 + 级联删除 role_bindings |
 | `ls-models <id>` | 通过 Forwarder 拉取服务商 `/models` 端点 |
-| `set-model <role> <service_id> <model> [--context N] [--dim N]` | 追加角色绑定 (embedding 只允许一条) |
+| `set-model <role> <service_id> <model> [--context N] [--dim N] [--send-dim]` | 追加角色绑定 (embedding 只允许一条; `--send-dim` 才透传 `dimensions` 上游) |
 | `rm-model <role> <priority>` | 删除某个绑定 |
 | `set-embedding-model <service_id> <model> --dim N` | 快捷设置嵌入 (替换现有) |
 | `test-model <id> <model>` | 探活 |
@@ -250,3 +286,4 @@ src/core/models/
 | v0.2.1 | 2026-07-15 | 与代码对齐: 模块路径 `src/infra/llm_service/`, 方法名 `save_service` / `delete_service`, 与 config.local.toml 的关系说明 |
 | v0.2.3 | 2026-07-17 | 引入 `role_bindings` 表 + `ModelType.EMBEDDING/RERANK`; `[chat]/[embedding]/[rerank]` 段废弃; `RoleResolver` 组装 `ResolvedCandidate` |
 | v0.2.4 | 2026-07-17 | 嵌入角色单绑定约束; `context_length` / `embedding_dim` 元数据字段; Reindex + Prune 触发点 |
+| v0.2.8 | 2026-07-18 | `send_dimensions` 透传开关: 拆分向量库锁与上游 `dimensions` 参数, 默认不透传 (兼容 bge/bce/jina/mistral/gemini 等固定维模型) |
