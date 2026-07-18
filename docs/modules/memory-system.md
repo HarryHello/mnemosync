@@ -1,9 +1,11 @@
 # 记忆系统设计 | Memory System Design
 
-> **文档版本**: v0.2.1
+> **文档版本**: v0.2.6
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-16
-> **状态**: 设计中
+> **最后更新**: 2026-07-18
+> **状态**: 与代码同步
+
+**结构**: 短期记忆 (v0.2.6, 跨前端对话流水双窗装填) + 长期记忆 (向量库 + SQLite + 衰减模型)。两者独立存储、独立生命周期, 在装填时汇合成同一份主对话 messages。
 
 ---
 
@@ -49,15 +51,105 @@ Mnemosync 的记忆系统是整个项目的核心，负责实现**跨平台人�
 | **永久记忆需要限额** | 避免上下文混乱，保证核心信息不丢失 |
 | **Agent 驱动决策** | 记忆分析、衰减评估由 Agent 智能执行，非固定公式（v0.2 新增） |
 
-### 1.3 v0.1.0 → v0.2.0 核心变化
+### 1.3 v0.1.0 → v0.2.6 核心变化
 
-| 维度 | v0.1.0（确定性管道） | v0.2.0（Agent 驱动） |
-|------|---------------------|---------------------|
-| **记忆提取** | 消息提取 + 哈希去重 | 记忆分析 Agent (ReAct) |
-| **记忆分类** | 固定规则（名字→永久，偏好→普通） | Agent 语义判断 |
-| **衰减计算** | 固定公式 `0.5^(天数/半衰期)` | 衰减 Agent CoT 多维评估 + 公式兜底 |
-| **记忆检索** | SQL LIKE / 关键词匹配 | embedding 语义检索 + reranker 精排 |
-| **短期记忆** | 无 | LangGraph checkpoint |
+| 维度 | v0.1.0（确定性管道） | v0.2.0（Agent 驱动） | v0.2.6 (跨前端整合) |
+|------|---------------------|---------------------|---------------------|
+| **记忆提取** | 消息提取 + 哈希去重 | 记忆分析 Agent (ReAct) | 后台图路径不变 |
+| **记忆分类** | 固定规则 | Agent 语义判断 | 不变 |
+| **衰减计算** | 固定公式 | Agent CoT 多维 + 公式兜底 | 不变 |
+| **记忆检索** | SQL LIKE | embedding + reranker | 不变 (v0.2.4 嵌入模型单绑定 + Reindex) |
+| **短期记忆** | 无 | LangGraph checkpoint (thread_id 分区) | **服务端 `conversation_turns` 流水 + 双窗装填, 忽略客户端历史** |
+
+---
+
+## 1.4 短期记忆 (v0.2.6) — 跨前端对话流水
+
+Mnemosync 的核心承诺是 **"多个前端 = 同一个用户 = 同一份记忆"**。v0.2.5 之前, 每次 `/v1/chat/completions` 用的都是**客户端传来**的 `messages`; 换前端立刻断, 客户端清空对话服务器也一并失忆。v0.2.6 把短期记忆的真相源从"客户端历史"迁到"服务端 append-only 流水":
+
+### 存储
+
+单表 `conversation_turns` (库: `data/conversation.db`, 独立于 memory.db 避免 WAL 争用):
+
+```sql
+CREATE TABLE conversation_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL,             -- user | assistant
+    content TEXT NOT NULL,
+    ts TIMESTAMP NOT NULL,
+    token_count INTEGER NOT NULL,   -- 估算 (len//2 + 8)
+    source_frontend TEXT            -- 派生自 api_key.note, 仅观测
+);
+CREATE INDEX idx_conversation_turns_ts ON conversation_turns(ts DESC);
+```
+
+所有前端写入同一 bucket, **无 thread/user 分区** — 单人格单用户定位 (`source_user='default'` 硬编码) 下, 分区就违背语义。
+
+### 写入 (forward.py)
+
+流式与非流式路径都在主对话完成后写两条:
+
+```python
+# _handle_stream 尾部
+await conversation_store.append("user", new_user_content,
+                                 token_count=token_count_for_storage(new_user_content),
+                                 source_frontend=source_frontend)
+await conversation_store.append("assistant", collected_response_text,
+                                 token_count=token_count_for_storage(collected_response_text),
+                                 source_frontend=source_frontend)
+```
+
+- `new_user_content` = 客户端 messages 里**最后一条 user** 的文本 (前面的历史全部忽略)
+- `source_frontend` = `api_key.note` (服务器派生, 不信任客户端 header)
+
+### 装填 (build_short_term_history)
+
+```python
+BuiltContext = await build_short_term_history(
+    store=conversation_store,
+    now=now,
+    window_days=settings.storage.short_term_days,  # 7
+    context_length=main_candidate.context_length,   # 从 role_bindings 元数据
+    system_text=rendered_system,                    # 已 render 完的 system
+    new_user_text=new_user_content,
+    max_tokens_hint=request.max_tokens,
+)
+```
+
+**双窗**:
+1. **时间窗** (硬边界): 只取 `ts >= now - short_term_days`, 老于此的不进候选
+2. **模型窗** (软预算): `budget = ctx - est(system) - est(new_user) - reserve_output`
+   - `reserve_output` = 客户端 `max_tokens`; 缺省 `min(4096, ctx/4)` 下限 512
+   - 从最老那端往新累加 token, 累计不超预算 → 保留末端 (最近) 的对话
+
+### Token 估算
+
+`estimate_tokens(text) = len(text) // 2 + 8`。混合中英启发式 + 8 tokens 结构 overhead。不接入真实 tokenizer:
+- 换模型时 tokenizer 形变太大, 中间件维护成本高
+- 有保留区兜底, 估算偏差不会触发 4001
+- `token_count` 落库口径与装填时估算完全一致
+
+### 清理
+
+`lifespan` 启动时起后台任务 (`_conversation_prune_loop`):
+- 启动即跑一次 `delete_before(now - short_term_days)`
+- 之后每 24h 跑一次
+- 应用 shutdown 时被 cancel
+
+### 面板重置
+
+- `GET /panel/admin/conversation-turns?limit=N` — 按 ts 降序列出最近 N 条 (面板"短期记忆"页面用)
+- `DELETE /panel/admin/conversation-turns` — 全清
+- `DELETE /panel/admin/conversation-turns?since=<iso>` — 只清早于 cutoff 的
+
+**注意**: 客户端 UI 的"清空对话"按钮只影响客户端自己的显示状态, 不会调这两个端点; 服务器的连续记忆只有面板 (或直接调 admin API) 才能真正抹掉。这是设计, 见 [dev-decisions.md 跨前端短期记忆](../dev-decisions.md)。
+
+### 与长期记忆的分工
+
+- **短期记忆**: 上下文连续性; 逐字逐句; 会被时间窗淘汰
+- **长期记忆**: 事实性记忆点 (人格核心 / 偏好 / 事件); 被记忆分析 Agent 抽取; 走衰减模型; 靠语义检索召回
+
+同一句话可能同时进短期流水 (原文) 与长期记忆 (抽取后的关键事实), 各自独立生命周期。
 
 ---
 
@@ -271,36 +363,37 @@ reranker 精排后:
 
 ---
 
-## 5. 上下文合并 (Context Merging)
+## 5. 上下文合并 (Context Merging) — v0.2.6
 
-### 5.1 合并策略（v0.2 更新）
+### 5.1 合并策略
 
-发送给上游模型的上下文由主对话 Agent 拼装：
+发送给上游模型的上下文由 `forward.py` 装填, 不再由主对话 Agent 内部拼装:
 
 ```
 ┌─────────────────────────────────────────┐
 │  [0] system: 人格提示词                   │
-│              + 永久记忆（最多 7 条）       │
-│              + 检索到的相关记忆（最多 5 条）│
+│              + 永久记忆（最多 permanent_load_top 条）│
+│              + 语义检索到的相关记忆         │
 │              + 关系状态摘要               │
-│  [1+] user/assistant: 当前对话历史        │
-│       （来自 LangGraph checkpoint 短期记忆）│
+│              (由 render_main_dialogue_system 生成) │
+│  [1..N] user/assistant: 短期对话流水        │
+│         (由 build_short_term_history 双窗裁剪)  │
+│  [N+1] user: 本轮新消息                    │
+│         (来自客户端 messages 最后一条 user)  │
 └─────────────────────────────────────────┘
 ```
 
-**上下文框架可自定义**: 从 v0.2.1 (2026-07-16) 起, 上述框架文本 (行为准则、section 标题、记忆容器格式) 从 Python 硬编码迁到 `main_dialogue_frame` 提示词模板 ([defaults/main_dialogue_frame.md](../../src/core/agents/prompts/defaults/main_dialogue_frame.md)), 允许通过 `data/prompts/main_dialogue_frame.md` 覆盖。占位符包含 `__PERSONA_NAME__`, `__PERSONA_PROMPT__`, `__USER_NAME__`, `__RELATIONSHIP__`, `__PERMANENT_MEMORIES__`, `__RETRIEVED_MEMORIES__`, `__PROXY_THINKING_SECTION__`。见 [agents.md §7](agents.md#7-自定义-agent-提示词)。
+**上下文框架可自定义**: 从 v0.2.1 起, system 框架文本 (行为准则、section 标题、记忆容器格式) 从 Python 硬编码迁到 `main_dialogue_frame` 提示词模板 ([defaults/main_dialogue_frame.md](../../src/core/agents/prompts/defaults/main_dialogue_frame.md)), 允许通过 `data/prompts/main_dialogue_frame.md` 覆盖。占位符包含 `__PERSONA_NAME__`, `__PERSONA_PROMPT__`, `__USER_NAME__`, `__RELATIONSHIP__`, `__PERMANENT_MEMORIES__`, `__RETRIEVED_MEMORIES__`, `__PROXY_THINKING_SECTION__`。见 [agents.md §7](agents.md#7-自定义-agent-提示词)。
 
-### 5.2 加载优先级
+### 5.2 装填顺序
 
-1. **永久记忆** — 始终加载，最多 7 条，按 importance 排序
-2. **语义检索记忆** — 以当前消息为 query，embedding → reranker，最多 5 条
-3. **短期记忆** — LangGraph checkpoint 中的对话历史（同一 thread_id）
+1. **`render_main_dialogue_system(...)`** → 拼装 system 内容, 返回 str
+2. **`build_short_term_history(...)`** → 用双窗算法从 `conversation_turns` 裁剪对话历史 (输入包含已 render 的 system, 用于精确计算 budget)
+3. **`build_main_dialogue_messages(system, history, new_user)`** → 组装成 OpenAI messages 列表
 
 ### 5.3 上下文配额
 
-- 永久记忆：最多 50%（保证核心信息）
-- 语义检索记忆：最多 30%
-- 当前对话：至少 20%（保证对话连贯性）
+模型窗预算 `budget = ctx - est(system) - est(new_user) - reserve_output` 分给 history。永久记忆与语义检索结果占用的是 system 那份 (`render_main_dialogue_system` 内部裁剪); short_term 占的是 history 那份。两者共同受 ctx 上限约束, 但没有严格的百分比配额 — v0.2.6 起改为**先算 system 与 new_user 的实际长度, 剩下的给 history**。
 
 ---
 
@@ -386,9 +479,13 @@ reranker 精排后:
 ```
 ┌─────────────────────────────────────┐
 │         ChromaDB（向量层）           │
-│  - embedding vector (768 维)        │
-│  - 关键元数据（content, source_user, │
-│    importance, memory_type, tags）   │
+│  - embedding vector (维度由所选模型决定, │
+│    如 DashScope text-embedding-v3 可配 │
+│    512/768/1024/1536/2048)            │
+│  - collection metadata 锁定             │
+│    (service_id, model, dim) (v0.2.4)   │
+│  - 关键元数据（content, source_user,   │
+│    importance, memory_type, tags）    │
 │  - 用途：语义相似度检索（粗筛）       │
 └──────────────┬──────────────────────┘
                │ 通过 memory_id 关联
@@ -504,12 +601,12 @@ CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
 
 | 模块 | 关系说明 |
 |------|----------|
-| **主对话 Agent** | 调用向量检索 Agent 加载记忆，拼装上下文 |
-| **记忆分析 Agent** | 创建新记忆，设定 memory_type/importance/decay_rate |
-| **记忆分析 Agent** | 评估现有记忆，更新 priority/is_forgotten |
-| **向量检索 Agent** | 执行 embedding 检索 + ChromaDB 存储 |
-| **关系分析 Agent** | 更新关系状态，影响记忆的 visibility 决策 |
-| **消息提取** | 提供新内容供记忆分析 Agent 处理 |
+| **forward.py** | 装填上下文: 调 `render_main_dialogue_system` + `build_short_term_history`, 组装成 messages 转发上游; 主对话完成后写 `conversation_turns` (v0.2.6) |
+| **主对话 Agent (装填后被上游模型执行)** | 直接消费装填好的 messages, 通过工具调用 `vector_search` 加载额外记忆 (可选) |
+| **记忆分析 Agent** | 后台图节点; 从 user turn 抽取事实性记忆, 设定 memory_type/importance/decay_rate; 也评估现有记忆更新 priority/is_forgotten |
+| **MemoryRetriever (工具)** | `vector_search.py`; embedding → Chroma 粗筛 → rerank 精排; 供 Agent 或 forward 装填时调用 |
+| **关系分析 Agent** | 后台图节点; 更新关系状态, 影响装填时的 system 内容 |
+| **短期记忆 (conversation_turns)** | 由 `SqliteConversationStore` 承载, 独立于 memory.db |
 
 ---
 
@@ -520,6 +617,8 @@ CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
 | v0.1.0 | 2026-03-24 | 初始设计（三级记忆模型 + 哈希去重） |
 | v0.2.0 | 2026-07-11 | 重构：Agent 驱动决策替代固定公式；双类型系统升级为 Agent 判断；embedding 语义检索替代哈希去重；新增双层衰减（公式兜底 + Agent 覆盖）；ChromaDB + SQLite 双层存储；LangGraph checkpoint 作为短期记忆 |
 | v0.2.1 | 2026-07-16 | §5.1 上下文框架文本从硬编码迁到 `main_dialogue_frame.md` 提示词模板, 支持用户覆盖 |
+| v0.2.4 | 2026-07-17 | 嵌入角色单绑定 + ChromaDB collection 锁定 `(service_id, model, dim)`; 新增 Reindex + Prune 端点; MemoryEntry 新增 `related_memories` 与 `memory_type` 字段消费路径 |
+| v0.2.6 | 2026-07-18 | 短期记忆从 LangGraph checkpoint 迁到服务端 `conversation_turns` 流水; 双时间+模型窗装填; 忽略客户端历史; source_frontend 元数据; 面板可查看/重置 |
 
 ---
 

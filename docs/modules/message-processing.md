@@ -1,9 +1,9 @@
 # 消息处理流程 | Message Processing Flow
 
-> **系统版本**: v0.2.1
+> **系统版本**: v0.2.6
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-18
 > **作者**: HarryHelloo
 
 ---
@@ -31,7 +31,9 @@ Client ──► POST /v1/chat/completions
               │
               ▼
        [forward.py]
-       API Key 验证 → source_user → 加载服务器 persona → initial_state
+       _verify_api_key → _resolve_source_frontend (from api_key.note)
+       resolve main/embedding/rerank candidates (role_bindings)
+       load persona (server-first) → prompt_cleaning on client system
               │
        ┌──────┴──────┐
        ▼             ▼
@@ -40,18 +42,24 @@ Client ──► POST /v1/chat/completions
        │             1. 加载永久记忆 (SQLite)
        │             2. 语义检索 (Chroma + rerank)
        │             3. 加载关系状态
-       │             4. build_main_dialogue_messages()
-       │             5. Forwarder.chat_stream → SSE 透传给客户端
-       │             6. 流结束: create_task(_run_memory_graph)
+       │             4. render_main_dialogue_system(...) → system_text
+       │             5. build_short_term_history(...)  ← v0.2.6 双窗
+       │                (读 conversation_turns, 时间窗+模型窗裁剪)
+       │             6. build_main_dialogue_messages(system, history, new_user)
+       │             7. Forwarder.chat_stream → SSE 透传给客户端
+       │             8. 流结束:
+       │                - conversation_store.append(user, new_user_content, ...)
+       │                - conversation_store.append(assistant, collected_text, ...)
+       │                - create_task(_run_memory_graph)
        │                          │
-       └──────────────► 记忆图 (含所有 5 个节点):
-                          parse_request → main_dialogue →
+       └──────────────► 后台图 (关系分析 + 记忆分析):
+                          extract user turn → 
                           (relationship_analysis ∥ memory_analysis) → END
 ```
 
 **关键差异**:
-- 非流式: `graph.ainvoke(initial_state)` 跑完整个图, 阶段 2 的记忆加载/拼装在 `main_dialogue_node` 内部完成
-- 流式: 阶段 2 的记忆加载与流式转发在 `forward.py._handle_stream` 内直接完成 (不走图), 然后把 collected_chunks 一起塞进 state 交给后台图完成阶段 3
+- 非流式: `graph.ainvoke(initial_state)` 跑完整个图, 记忆加载/装填在 `main_dialogue_node` 内部完成
+- 流式: 记忆加载 + 短期记忆装填 + 流式转发直接内联在 `forward.py._handle_stream`; 主对话完成后同步写 `conversation_turns` 两条 (user + assistant), 再把 collected_chunks 交给后台图跑关系/记忆分析
 
 ---
 
@@ -60,23 +68,30 @@ Client ──► POST /v1/chat/completions
 **位置**: [forward.py `create_chat_completion`](../../src/api/routes/forward.py)
 
 ```
-1. API Key 验证: Authorization: Bearer sk-<key>
-   → SqliteApiKeyStore.get_by_raw_key → api_key_id
-2. 模型白名单: request.model == "mnemosync-any" 或为空, 否则 400
-3. 消息序列化: request.messages → messages_dict
-4. 提取 source_user (request.user 或 "default")
-5. 加载服务器人格 (⚠️ 服务器优先, 不从客户端 system 消息提取)
-   → 人格存储于服务器端 (当前阶段为 config 或硬编码,
-      未来迁移至 personas 表 + Admin API)
-6. 构建 initial_state:
+1. API Key 验证 (_verify_api_key): Authorization: Bearer sk-<key>
+   → SqliteApiKeyStore.get_by_raw_key → api_key record
+2. source_frontend 派生 (_resolve_source_frontend):
+   = api_key.note (服务器派生, 不信任客户端 header)
+3. 模型解析: RoleResolver
+   → main_candidate / assist_candidate / embedding_candidate / rerank_candidate
+   → 每个 ResolvedCandidate 携带 base_url / api_key / model / context_length / embedding_dim
+4. 消息序列化: request.messages → messages_dict
+   ⚠️ 只取最后一条 user 消息作为 new_user_content, 客户端携带的历史全部忽略 (v0.2.6)
+5. 加载服务器人格 (settings.persona) — 服务器权威
+6. 客户端 system 消息走 prompt_cleaning Agent 剥离人格描述, 保留功能性指令
+7. 构建 initial_state:
    {
-     messages, source_user, persona, persona_name,
+     new_user_content, source_user="default", source_frontend,
+     persona, persona_name,
+     main_candidate, embedding_candidate, rerank_candidate,
      proxy_thinking_enabled: 由 reasoning_control 决策,
      stream_mode: bool
    }
 ```
 
-**⚠️ 服务器拥有 (server-first) 人格设计**: Mnemosync 的人格由服务器端权威定义, 不作为客户端请求的一部分。客户端 system 消息中的内容**当前被丢弃** (不从中提取 persona); 未来计划用辅助模型分析客户端 system 消息, 剥离出功能性指令 (tool 约束/response_format 等) 保留, 人格描述部分丢弃。详见 [architecture.md](../architecture.md) §2。
+**⚠️ 服务器优先 (server-first) 人格**: Mnemosync 的人格由服务器 `[persona]` 段权威定义。客户端 system 消息不被信任为人格定义, 而是走 `prompt_cleaning` Agent (由 `sentence_classifier` 逐句分类) 剥离角色扮演描述、保留功能约束 (工具约束/格式要求/response_format 等)。详见 [architecture.md](../architecture.md) §2 与 [dev-decisions.md](../dev-decisions.md) v0.2.1。
+
+**⚠️ 忽略客户端历史 (v0.2.6)**: 每次请求只有**最后一条 user 消息**参与本轮生成; 上下文的历史部分完全由服务端 `conversation_turns` 提供。原因: 不能依赖客户端传对——AstrBot 群聊场景每轮只传当前一句, 有的客户端每轮传完整历史, 用户还可能"清空对话"。见 [dev-decisions.md 跨前端短期记忆](../dev-decisions.md)。
 
 **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的 `should_use_proxy_thinking()` 判定, 4 条规则 (tools → 原生识别 → 前台点名推理 → 默认开关)。详见 [agents.md](agents.md) §4。
 
@@ -94,24 +109,41 @@ Client ──► POST /v1/chat/completions
 1. 加载永久记忆
    memory_store.list_permanent(source_user, limit=permanent_load_top)
 2. 语义检索
-   query = 最新 user 消息
+   query = new_user_content
    MemoryRetriever(forwarder, vector_store, memory_store).search(
      query, top_k=retrieval_top_k, source_user=...
    )
    内部: embedding API → Chroma cosine 粗筛 → rerank API → top_k
 3. 更新访问时间: memory_store.mark_accessed(id)
 4. 加载关系状态: memory_store.get_relationship("default", source_user)
-5. 拼装上下文
-   build_main_dialogue_messages(
-     persona_prompt, persona_name, user_name,
+5. 装填 system 内容
+   system_text = render_main_dialogue_system(
+     persona_name, persona_prompt, user_name,
      permanent_memories, retrieved_memories, relationship,
-     conversation_history,
+     proxy_thinking_result,
    )
-6. 流式转发
-   async for chunk in forwarder.chat_stream(messages_with_memory, ...):
+6. 装填短期记忆 (v0.2.6)
+   built = await build_short_term_history(
+     store=conversation_store,
+     now=now,
+     window_days=settings.storage.short_term_days,
+     context_length=main_candidate.context_length,
+     system_text=system_text,
+     new_user_text=new_user_content,
+     max_tokens_hint=request.max_tokens,
+   )
+   → built.history: list[dict[role, content]]
+7. 组装 messages
+   messages = build_main_dialogue_messages(system_text, built.history, new_user_content)
+8. 流式转发
+   async for chunk in forwarder.chat_stream(messages, ..., candidate=main_candidate):
      collected_chunks.append(chunk)
      yield chunk                # 零缓冲透传
-7. 流结束
+9. 流结束
+   await conversation_store.append("user", new_user_content,
+                                    token_count=..., source_frontend=source_frontend)
+   await conversation_store.append("assistant", collected_response_text,
+                                    token_count=..., source_frontend=source_frontend)
    asyncio.create_task(_run_memory_graph(initial_state, collected_chunks))
 ```
 
@@ -218,3 +250,4 @@ relationship_analysis   memory_analysis (ReAct)
 | v0.1.0 | 2026-03-29 | 10 步线性管道 |
 | v0.2.0 | 2026-07-12 | LangGraph 多 Agent 编排, ChromaDB, 代理思考 |
 | v0.2.1 | 2026-07-16 | 纠正人格来源: 从"提取客户端 system 消息"改为"服务器加载人格" (server-first); 修正代理推理启用方式描述 |
+| v0.2.6 | 2026-07-18 | 数据流补充服务端 `conversation_turns` 装填与回写; 客户端历史被忽略, 仅取最后一条 user; source_frontend 从 api_key.note 派生; ResolvedCandidate 传 context_length 给双窗算法 |

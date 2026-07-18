@@ -1,9 +1,9 @@
 # 部署指南 | Deployment
 
-> **系统版本**: v0.2.1
+> **系统版本**: v0.2.6
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-18
 > **作者**: HarryHelloo
 
 ---
@@ -16,7 +16,9 @@ Mnemosync 只读 `config.local.toml`, 缺失即启动失败。首次部署:
 
 ```bash
 cp config.example.toml config.local.toml
-# 编辑 [chat] / [embedding] / [rerank] 段, 填入真实服务商凭证
+# 编辑 [persona] / [runtime] / [storage] 等段; 模型绑定 (main/assist/embedding/rerank)
+# 由 role_bindings 表管理, 通过 CLI (`mnemosync login` → `ad-service` + `set-model`) 或
+# 面板 `/panel/admin/model-bindings` 配置, 不再写在 TOML 里 (v0.2.3 起)
 ```
 
 配置字段清单见 [configuration.md](configuration.md)。
@@ -32,11 +34,11 @@ Mnemosync/
 ├── install.sh
 ├── pyproject.toml / uv.lock
 ├── src/
-│   ├── api/                # FastAPI 路由 + 中间件
+│   ├── api/                # FastAPI 路由 + 中间件 + reasoning_control + admin_debug
 │   ├── cli/                # 顶层命令 + 交互式 shell + ask
-│   ├── core/               # config / graph / memory / agents
-│   ├── infra/              # forwarder / llm_service / vector_store
-│   ├── persistence/        # SQLite stores (memory / auth / api_key)
+│   ├── core/               # config / graph / memory / agents / models / prompts
+│   ├── infra/              # forwarder + MultiForwarder / llm_service / vector_store / debug_bus
+│   ├── persistence/        # SQLite stores (memory / auth / api_key / conversation / http_log)
 │   ├── tools/              # make_*_tool 工厂
 │   └── main.py
 ├── ui/                     # 管理面前端
@@ -45,7 +47,16 @@ Mnemosync/
 └── docs/
 ```
 
-`data/` 是**唯一需要持久化**的目录, 包含 `memory.db`, `auth.db`, `api_keys.db`, `llm_service.db`, `chroma/`。
+`data/` 是**唯一需要持久化**的目录, 包含:
+- `memory.db` — 长期记忆元数据 (SQLite)
+- `auth.db` — 管理员账号 + 会话 Token
+- `api_keys.db` — 前端 API Key (含 v0.2.5 `source` 列)
+- `llm_service.db` — 服务商 + `role_bindings` (v0.2.3)
+- `conversation.db` — v0.2.6 跨前端短期记忆 (`conversation_turns` 流水)
+- `http_logs.db` — v0.2.5 调试面板 HTTP 日志
+- `chroma/` — ChromaDB 向量库 (含 v0.2.4 embedding lock metadata)
+- `prompts/` — v0.2.1 用户提示词覆盖层 (可选; 无覆盖时读默认层)
+- `prompts/.history/` — 提示词覆盖备份 (每个 name 保留最近 10 份)
 
 ---
 
@@ -74,7 +85,7 @@ docker compose exec mnemosync uv run mnemosync init --docker
 docker compose exec mnemosync uv run mnemosync login --docker
 ```
 
-在 shell 内使用 `generate-key`, `ad-service`, `set-main-model` 等, 详见 [cli.md](modules/cli.md)。
+在 shell 内使用 `generate-key`, `ad-service`, `set-model <role> <service_id> <model>` 等, 详见 [cli.md](modules/cli.md)。
 
 ### 2.4 停止
 
@@ -261,10 +272,10 @@ chmod 755 data/
 
 **上游 API 排查**: 用 `mnemosync serve --debug` 或 `mnemosync ask --debug "..."` 打印所有请求/响应 JSON。
 
-**记忆检索为空**: 
-1. 是否配置 `[embedding]`?
-2. 切换嵌入模型后是否清空 `data/chroma/` 并重建? 详见 [configuration.md](configuration.md) §7
-3. `[rerank]` 端点是否 `/compatible-api/v1` (DashScope)?
+**记忆检索为空**:
+1. 是否配置了嵌入角色绑定? `mnemosync login` → `set-model embedding <service_id> <model> --dim N` (v0.2.3+)
+2. 切换嵌入模型: 走 `POST /panel/admin/memory/reindex` 或 CLI `memory reindex --prune` (v0.2.4); Chroma collection 锁 `(service_id, model, dim)`, 手动清空 `data/chroma/` 会失去元数据
+3. 重排端点差异见 [forward.md](modules/forward.md) §4 (`/rerank` → 404 fallback `/reranks`)
 
 ---
 
@@ -291,3 +302,4 @@ rm -rf /opt/Mnemosync
 |------|------|------|
 | v0.1.0 | 2026-03-25 | 初始部署文档: Docker Compose + 源码 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 移除虚构环境变量表 (`MNEMOSYNC_DB_PATH` 等), 补 `mnemosync upgrade` / `--debug` / `--daemon`, 补 SSE 反代要点, 移除未实现的 Redis 缓存/metrics 章节 |
+| v0.2.6 | 2026-07-18 | 与代码对齐: 目录/data 列表补 `conversation.db` (v0.2.6 短期记忆) / `http_logs.db` (v0.2.5) / `prompts/` (v0.2.1); 模型绑定改由 `role_bindings` + CLI `set-model` (v0.2.3+), 不再写 `[chat]/[embedding]/[rerank]`; 换嵌入模型走 `memory reindex` (v0.2.4) 而非手动清 Chroma |

@@ -1,9 +1,9 @@
 # API Key 管理模块
 
-> **模块版本**: v0.2.1
+> **模块版本**: v0.2.6
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-18
 > **作者**: HarryHelloo
 
 ---
@@ -40,12 +40,17 @@ class ApiKey:
     id: str                        # UUID hex
     key_hash: str                  # 独立随机值, 不是 raw_key 的 hash
     key_prefix: str                # 前 12 字符, 用于展示
-    note: str                      # 前端备注 (如 "AstrBot-QQ")
+    note: str                      # 前端备注 (如 "AstrBot-QQ"), 派生 source_frontend
     created_at: datetime
     last_used_at: datetime | None
     is_active: bool
     key_full: str | None           # 仅创建时存储, 用于返回明文
+    source: str = "user"           # v0.2.5: user / panel-debug
 ```
+
+`source` 字段 (v0.2.5) 区分 Key 的来源:
+- `user` — 用户通过 `/panel/api-keys` 或 CLI 手动创建
+- `panel-debug` — 调试面板自动生成 (仅内部使用, 不在用户 Key 列表中展示, 也不能通过用户 API 撤销)
 
 ### 2.2 Schema
 
@@ -58,10 +63,13 @@ CREATE TABLE api_keys (
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_used_at TIMESTAMP,
     is_active    INTEGER NOT NULL DEFAULT 1,
-    key_full     TEXT
+    key_full     TEXT,
+    key_encrypted TEXT,                                    -- v0.2.3
+    source       TEXT NOT NULL DEFAULT 'user'              -- v0.2.5
 );
 CREATE INDEX idx_key_hash  ON api_keys(key_hash);
 CREATE INDEX idx_is_active ON api_keys(is_active);
+CREATE INDEX idx_source    ON api_keys(source);           -- v0.2.5
 ```
 
 ### 2.3 生成算法
@@ -138,16 +146,16 @@ key_prefix = raw_key[:12]
 Authorization: Bearer sk-xK9mN2pL5qR8sT1vW4yZ7aB0cD3eF6gH
 ```
 
-验证在 [forward.py `_verify_api_key`](../../src/api/routes/forward.py#L63) 完成:
+验证在 [forward.py `_verify_api_key`](../../src/api/routes/forward.py#L125) 完成, 在 `create_chat_completion` 顶部**已启用**:
 
 ```
 1. 从 Authorization 提取 raw_key
 2. SqliteApiKeyStore.get_by_raw_key(raw_key)
-3. 命中 → update_last_used → 继续处理
-4. 未命中 → 401
+3. 命中 → update_last_used → 拿到 api_key_id
+4. 未命中 → 返回 None (下游流程继续, source_frontend 为 None)
 ```
 
-**当前实现**: `_verify_api_key` 在 `create_chat_completion` 中未被调用 (预留), 实际请求鉴权尚未强制启用。生产部署前需在 `create_chat_completion` 顶部加上鉴权调用。
+**source_frontend 派生 (v0.2.6)**: `_resolve_source_frontend(request, api_key_id)` 读取 `api_key.note`, 作为服务端派生的 `source_frontend` 元数据字段——写入 `conversation_turns.source_frontend` 列, 用于跨前端调试与追溯。客户端无法伪造该值 (不读客户端 header)。见 [message-processing.md §3](message-processing.md#3-阶段-1-接收与预处理) 与 [memory-system.md §1.4](memory-system.md#14-短期记忆-v026--跨前端对话流水)。
 
 鉴权通过后进入 [消息处理流程](message-processing.md)。
 
@@ -165,8 +173,8 @@ mnemosync login
 
 | 命令 | 说明 |
 |------|------|
-| `generate-key` | 生成新 Key, 交互式输入备注, 返回一次性明文 |
-| `list-keys` | 列出所有 Key (仅 prefix) |
+| `generate-key` | 生成新 Key (source=user), 交互式输入备注, 返回一次性明文 |
+| `list-keys` | 列出所有 source=user 的 Key (仅 prefix); panel-debug 生成的 Key 不入列表 |
 | `show-key <id>` | 查看单个 Key 详情 |
 | `revoke-key <id>` | 吊销单个 Key |
 
@@ -202,7 +210,7 @@ Key 数据库路径固定为 `data/api_keys.db` ([api_key.py:17](../../src/api/r
 
 ## 9. 未来: 多人格
 
-数据模型已预留升级路径, 需时可加 `persona_id` 字段将 Key 绑定到人格。当前 v0.2.1 未实现。
+数据模型已预留升级路径, 需时可加 `persona_id` 字段将 Key 绑定到人格。当前 v0.2.x 未实现。
 
 ---
 
@@ -213,3 +221,5 @@ Key 数据库路径固定为 `data/api_keys.db` ([api_key.py:17](../../src/api/r
 | v0.1.0 | 2026-03-29 | 初始设计 |
 | v0.2.0 | 2026-07-12 | 鉴权入口切到 LangGraph 编排 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 模块路径 `src/persistence/`, 撤销 API 契约 (单个 key_id), 路由前缀 `/api-keys` |
+| v0.2.5 | 2026-07-18 | 新增 `source` 列 (`user` / `panel-debug`); `/panel/api-keys` 只列 `source=user`; 调试面板自动生成的 Key 不可通过用户 API 撤销 |
+| v0.2.6 | 2026-07-18 | 与代码对齐: `_verify_api_key` 已在 `create_chat_completion` 顶部启用; `_resolve_source_frontend` 从 `api_key.note` 派生 `source_frontend`, 写入 `conversation_turns.source_frontend` (客户端无法伪造) |

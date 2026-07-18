@@ -1,9 +1,9 @@
 # 架构设计文档 | Architecture Design
 
-> **系统版本**: v0.2.1
+> **系统版本**: v0.2.6
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
-> **最后更新**: 2026-07-16
+> **最后更新**: 2026-07-18
 > **作者**: HarryHelloo
 
 ---
@@ -102,17 +102,21 @@ class AgentState(TypedDict, total=False):
     messages: list[dict]
     extracted_new: list[dict]
     source_user: str
+    source_frontend: str | None    # v0.2.5: 派生自 api_key.note
     persona: str
     persona_name: str
     thread_id: str
     proxy_thinking_enabled: bool
+    prompt_cleaning_result: dict | None  # v0.2.1: 客户端 system 剥离结果
 
     # proxy_thinking 写入
     proxy_thinking_result: str | None
 
     # main_dialogue 写入
+    main_model: str                 # v0.2.3: 由 RoleResolver 解析
     response: str
     response_chunks: list[bytes]
+    upstream_usage: dict | None     # v0.2.5: 上游返回的 usage (tokens)
 
     # memory_analysis 写入
     new_memories: list[dict]
@@ -127,7 +131,7 @@ class AgentState(TypedDict, total=False):
     stream_mode: bool
 ```
 
-检索到的记忆 (`retrieved_memories` / `permanent_memories`) **不入 state**——由 `main_dialogue_node` 内部处理, 减少 checkpoint 体积。
+检索到的记忆 (`retrieved_memories` / `permanent_memories`) **不入 state** — 由 forward.py 或 `main_dialogue_node` 内部处理, 减少 checkpoint 体积。短期记忆的 `conversation_turns` 也不入 state, 装填时直接从 SqliteConversationStore 读, 装填完的 messages 才进 state。
 
 ---
 
@@ -140,18 +144,23 @@ Client ──► /v1/chat/completions (stream=true)
              │
              ▼
     [forward.py._handle_stream]
+      0. _verify_api_key + _resolve_source_frontend + RoleResolver
       1. 加载永久记忆 + 语义检索 + 关系状态
-      2. build_main_dialogue_messages() 拼上下文
-      3. Forwarder.chat_stream → 上游 SSE
-      4. 边收边 yield 给客户端 (零缓冲)
-      5. 流结束: asyncio.create_task(_run_memory_graph)
+      2. render_main_dialogue_system() → system_text
+      3. build_short_term_history() → 双窗裁剪 conversation_turns (v0.2.6)
+      4. build_main_dialogue_messages(system, history, new_user)
+      5. Forwarder.chat_stream (MultiForwarder 按 main 候选优先级) → 上游 SSE
+      6. 边收边 yield 给客户端 (零缓冲)
+      7. 流结束:
+         - conversation_store.append(user + assistant) [v0.2.6]
+         - asyncio.create_task(_run_memory_graph)
              │
              ▼
     [后台记忆图] (不阻塞客户端)
       main_dialogue 结果已就绪 → 直接跑
         ├─ relationship_analysis (并行)
         └─ memory_analysis (并行)
-              └─ MemoryLifecycle 写向量 + SQLite
+              └─ MemoryLifecycle 写向量 + SQLite (受 embedding lock 保护, v0.2.4)
 ```
 
 ### 4.2 非流式请求
@@ -220,25 +229,28 @@ Mnemosync 的核心不变量: **多个前端 = 同一个用户**。AstrBot / AIR
 
 ---
 
-## 8. 目录结构 (v0.2)
+## 8. 目录结构 (v0.2.6)
 
 v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已删除, 新布局:
 
 | 位置 | 内容 |
 |------|------|
-| `src/api/` | FastAPI 路由 + 中间件 |
+| `src/api/` | FastAPI 路由 + 中间件 + lifespan (含 conversation prune loop) |
+| `src/api/routes/admin_debug.py` | v0.2.5 调试面板 SSE / session-key 端点 |
 | `src/cli/` | CLI 与交互式 shell |
 | `src/core/agents/` | Agent 执行函数 + prompt builder + ReAct 循环 |
 | `src/core/agents/prompts/defaults/` | Agent 提示词默认层 (随包发布) |
 | `src/core/prompts/` | PromptStore + registry (两层提示词加载/校验/备份) |
 | `src/core/graph/` | LangGraph builder / nodes / state |
-| `src/core/memory/` | 记忆模型、生命周期、上下文拼装 |
-| `src/core/config/` | 配置加载 |
-| `src/infra/forwarder/` | Forwarder |
-| `src/infra/llm_service/` | LLM 服务商配置 |
-| `src/infra/vector_store.py` | Chroma 封装 |
-| `src/infra/extraction.py` | 消息提取 |
-| `src/persistence/` | SQLite 存储 (memory / auth / api_key) |
+| `src/core/memory/` | 记忆模型、生命周期、上下文拼装、Reindex (v0.2.4)、short_term (v0.2.6) |
+| `src/core/models/` | v0.2.3 RoleResolver (从 role_bindings + services 组合 ResolvedCandidate) |
+| `src/core/config.py` | 配置加载 |
+| `src/infra/forwarder/` | Forwarder + MultiForwarder + debug_hook |
+| `src/infra/llm_service/` | LLM 服务商 + role_bindings 存储 |
+| `src/infra/vector_store.py` | Chroma 封装 (含 embedding lock, v0.2.4) |
+| `src/infra/extraction.py` | 消息提取 (仅供后台记忆图) |
+| `src/infra/debug_bus.py` / `debug_context.py` | v0.2.5 调试事件总线 + correlation_id 传播 |
+| `src/persistence/` | SQLite 存储 (memory / auth / api_key / conversation / http_log) |
 | `src/tools/` | Agent 工具工厂 |
 
 ---
@@ -273,4 +285,7 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 | v0.2.1 | 2026-07-15 | 与代码对齐: 修正拓扑 (5 节点, 无 vector_index)、AgentState 字段、目录结构 |
 | v0.2.1 | 2026-07-16 | 明确服务器优先人格设计原则: 人格由服务器端权威定义, 不从客户端请求提取; 新增人格自我演化远期规划 |
 | v0.2.1 | 2026-07-16 | 新增"提示词可自定义"核心决策; 提示词从 Python 常量迁到 defaults + 覆盖两层文件系统; admin 路由统一鉴权 |
+| v0.2.3 | 2026-07-17 | 模型绑定从 config 迁到 `role_bindings` 表; 引入 RoleResolver + MultiForwarder 多候选 fallback; main_model/source_frontend/upstream_usage/prompt_cleaning_result 进 AgentState |
+| v0.2.4 | 2026-07-17 | 嵌入角色单绑定 + Chroma collection 锁 (service_id/model/dim); Reindex + Prune 端点 |
+| v0.2.5 | 2026-07-17 | 调试面板 (DebugEventBus + SSE + panel-debug API key + use_agent 标签点) |
 | v0.2.6 | 2026-07-18 | 短期记忆重定义: 服务器维护跨前端 `conversation_turns` 流, 时间窗 (默认 7d) + 模型窗双窗装填, 忽略客户端携带的历史 |

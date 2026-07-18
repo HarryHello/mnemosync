@@ -1,9 +1,9 @@
 # 多 Agent 设计 | Multi-Agent Design
 
-> **系统版本**: v0.2.1
+> **系统版本**: v0.2.6
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-07-16
+> **最后更新**: 2026-07-18
 > **作者**: HarryHelloo
 
 ---
@@ -85,7 +85,7 @@ parse_request
 ### 2.4 参数
 
 - `temperature`: 0.7 (默认)
-- `model`: `settings.chat.main_model`
+- `model`: 由 `RoleResolver.resolve(ModelType.MAIN)` 返回的首位候选决定 (v0.2.3), 存入 `state["main_model"]`; 具体候选优先级见 [llm-service.md](llm-service.md)
 
 ---
 
@@ -331,7 +331,7 @@ Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `
 ### 6.4 循环约束
 
 - `max_iterations = 3` (API 层传入)
-- 使用辅助模型 (`settings.chat.assist_model`), 阻塞 API 请求, 目标延迟 < 2s
+- 使用辅助模型 (`RoleResolver.resolve(ModelType.ASSIST)` 的首位候选), 阻塞 API 请求, 目标延迟 < 2s
 - Prompt 引导流程: 分句 → 逐句调 `classify_sentence_type` → 收集分类 → 输出最终 JSON
 
 ### 6.5 输出 JSON schema
@@ -459,6 +459,7 @@ class AgentState(TypedDict, total=False):
     messages: list[dict]
     extracted_new: list[dict]
     source_user: str
+    source_frontend: str | None    # v0.2.5: 派生自 api_key.note (服务器不信任客户端 header)
     persona: str
     persona_name: str
     thread_id: str
@@ -471,6 +472,7 @@ class AgentState(TypedDict, total=False):
     prompt_cleaning_result: dict  # {retained, discarded, reasoning}
 
     # 主对话输出 (main_dialogue 写入)
+    main_model: str               # v0.2.3: RoleResolver 解析出的首位主候选 model
     response: str
     response_chunks: list[bytes]
     upstream_usage: dict          # 上游原样 usage (prompt/completion/total_tokens)
@@ -488,7 +490,7 @@ class AgentState(TypedDict, total=False):
     stream_mode: bool
 ```
 
-**注意**: 检索出的记忆 (`retrieved_memories` / `permanent_memories`) **不放入 state**, 由 `main_dialogue_node` 内部处理; 状态尽量瘦身以减少 checkpoint 开销。
+**注意**: 检索出的记忆 (`retrieved_memories` / `permanent_memories`) **不放入 state**, 由 forward.py 或 `main_dialogue_node` 内部处理; 短期记忆 `conversation_turns` 也不入 state, 装填后的 messages 才进 state。状态尽量瘦身以减少 checkpoint 开销 (checkpoint 在 v0.2.6 起仅作单请求内节点间共享 state, 见 [langgraph.md §6](langgraph.md))。
 
 ---
 
@@ -512,3 +514,5 @@ class AgentState(TypedDict, total=False):
 | v0.2.1 | 2026-07-15 | 代理推理落地: API 层决策 (reasoning_control), 双通道注入 (system prompt + `reasoning_content` SSE 帧); 语义修正为"补齐原生推理"而非可选优化 |
 | v0.2.1 | 2026-07-16 | 新增第 5 个 Agent: 提示词清洗 (服务器人格权威守门员, ReAct + `classify_sentence_type` 工具); AgentState 补充 `prompt_cleaning_result` / `upstream_usage` |
 | v0.2.1 | 2026-07-16 | 提示词从硬编码常量迁到两层文件系统 (defaults + 用户覆盖), 新增 §7 自定义提示词章节, 记录 8 项 registry 与 `.replace` 统一约定; 修复 factory.py:314 proxy_thinking `.format` 静默返回未渲染模板的历史 bug |
+| v0.2.3 | 2026-07-17 | 主对话/记忆分析/关系分析/代理推理/提示词清洗全部改由 `RoleResolver` 解析角色 → 首位 `ResolvedCandidate` 提供 model + base_url + api_key; AgentState 补充 `main_model` (v0.2.3), `source_frontend` (v0.2.5) |
+| v0.2.6 | 2026-07-18 | 与代码对齐: `source_frontend` 字段说明 (派生自 api_key.note); AgentState 检索/短期记忆均不入 state 的注释更新 (checkpoint 已退化为单请求内 state 共享) |

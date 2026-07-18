@@ -1,8 +1,8 @@
 # 认证 API 文档
 
-> **系统版本**: v0.2.1
+> **系统版本**: v0.2.6
 > **文档状态**: 与代码同步
-> **最后更新**: 2026-07-16
+> **最后更新**: 2026-07-18
 
 ---
 
@@ -204,11 +204,13 @@ AstrBot / AIRI / Web  ── 走 /v1/chat/completions
 | 文件 | 用途 |
 |------|------|
 | `data/auth.db` | 管理员账号 + 会话 Token |
-| `data/api_keys.db` | 前端 API Key |
+| `data/api_keys.db` | 前端 API Key (含 v0.2.5 `source` 列) |
+| `data/conversation.db` | v0.2.6 跨前端短期记忆 (`conversation_turns`) |
+| `data/http_logs.db` | v0.2.5 调试面板 HTTP 日志 |
 
 ---
 
-## 8. 常见问题
+## 9. 常见问题
 
 **Q: 支持多管理员吗?**
 A: 数据模型支持, 但当前 UI/CLI 只暴露默认管理员; 需要手动通过 auth_store 添加。
@@ -217,11 +219,11 @@ A: 数据模型支持, 但当前 UI/CLI 只暴露默认管理员; 需要手动�
 A: 单人格架构下不打算支持——终端用户由前端自行管理。多人格是未来规划 (v1.0+)。
 
 **Q: API Key 与代理思考的关系?**
-A: 独立。API Key 只做鉴权; 代理思考当前硬编码 `False` ([forward.py:158](../src/api/routes/forward.py#L158)), 请求头 `X-Enable-Proxy-Thinking` 目前未接入, 需修改代码启用。
+A: 独立。API Key 只做鉴权; 代理思考是否启用由 [`src/api/reasoning_control.py`](../src/api/reasoning_control.py) 的 `should_use_proxy_thinking()` 按 4 条规则决策 (tools 存在 → 关; 原生思考模型 → 关; 前台点名 `reasoning_effort` / `thinking` / `reasoning` → 开; 否则回落 `[graph].proxy_thinking_default`)。详见 [agents.md](modules/agents.md) §4。
 
 ---
 
-## 9. 版本历史
+## 10. 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
@@ -230,3 +232,4 @@ A: 独立。API Key 只做鉴权; 代理思考当前硬编码 `False` ([forward.
 | v0.2.3 | 2026-07-17 | 面板端口前缀由 `/api/v1` 改为 `/panel`, 与 OpenAI 兼容层 `/v1` 完全隔离 |
 | v0.2.4 | 2026-07-17 | 新增 `/panel/admin/model-bindings/probe-dimension` + `/panel/admin/memory/reindex` + `/panel/admin/memory/reindex/status` + `/panel/admin/memory/prune`, 全部通过 admin router 的 `Depends(get_current_user)` 前置鉴权 |
 | v0.2.5 | 2026-07-18 | 新增调试面板路由 `/panel/admin/debug/*` (session-key / status / events / events/{id} / events/stream (SSE) / DELETE events), 均前置鉴权; `api_keys` 表新增 `source` 列 (`user` / `panel-debug`), `/panel/api-keys` 只列出 `source=user`, 调试面板自动生成的 key 不可通过用户 API 撤销 |
+| v0.2.6 | 2026-07-18 | 与代码对齐: 代理思考启用方式修正 (`reasoning_control.should_use_proxy_thinking` 4 条规则); 数据库表新增 `data/conversation.db` (跨前端短期记忆) 与 `data/http_logs.db` (v0.2.5 调试面板日志) |

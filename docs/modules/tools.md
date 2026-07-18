@@ -1,9 +1,9 @@
 # 工具设计 | Tools
 
-> **模块版本**: v0.2.1
+> **模块版本**: v0.2.6
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-07-16
+> **最后更新**: 2026-07-18
 > **作者**: HarryHelloo
 
 ---
@@ -12,7 +12,9 @@
 
 Mnemosync 的 Agent (ReAct 循环节点) 通过 LangChain function_call 调用工具。工具本身是无状态的**闭包工厂** `make_*_tool(...)` 产出——工厂在图节点内组装依赖 (Forwarder / VectorStore / MemoryStore) 后返回一个绑定好依赖的 `@tool` 装饰函数, 交给对应 Agent。
 
-**代码位置**: [src/tools/](../../src/tools/) (`vector_search.py` / `emotion_analyzer.py` / `time_decay_calculator.py` / `sentence_classifier.py`), 组装点在 [src/core/graph/nodes.py:208](../../src/core/graph/nodes.py#L208) (`memory_analysis_node` / `relationship_analysis_node`) 与 [src/api/routes/forward.py](../../src/api/routes/forward.py) (`prompt_cleaning` 在 API 层组装, 不进图)。
+**代码位置**: [src/tools/](../../src/tools/) (`vector_search.py` / `emotion_analyzer.py` / `time_decay_calculator.py` / `sentence_classifier.py`), 组装点在 [src/core/graph/nodes.py:191](../../src/core/graph/nodes.py#L191) (`memory_analysis_node` / `relationship_analysis_node`) 与 [src/api/routes/forward.py](../../src/api/routes/forward.py) (`prompt_cleaning` 在 API 层组装, 不进图)。
+
+从 v0.2.3 起, 工具工厂接收的 forwarder 参数类型是 [MultiForwarder](forward.md), 按角色 (`assist` / `embedding` / `rerank`) 从 `role_bindings` 拉候选并 fallback。
 
 工厂全景:
 
@@ -42,13 +44,13 @@ def make_vector_search_tool(retriever: MemoryRetriever):
     return vector_search
 ```
 
-**依赖**: `MemoryRetriever(forwarder, vector_store, memory_store)`——[vector_search.py:49](../../src/tools/vector_search.py#L49)。同一个 `MemoryRetriever` 类既被工具使用, 也被主对话前置检索使用, 保证行为一致。
+**依赖**: `MemoryRetriever(forwarder, vector_store, memory_store)`——[vector_search.py:52](../../src/tools/vector_search.py#L52)。同一个 `MemoryRetriever` 类既被工具使用, 也被主对话前置检索使用, 保证行为一致。
 
 **执行流程** (见 `MemoryRetriever.search`):
 
-1. `Forwarder.embed(query, model, dimensions)` → 查询向量
+1. `MultiForwarder.embed(query, role=EMBEDDING, dimensions=...)` → 查询向量 (v0.2.4 起走单绑定 embedding, 不 fallback)
 2. `VectorStore.search(vector, top_k=max(top_k*2, 10), source_user=...)` → 粗筛候选
-3. 若 `settings.rerank` 存在: `Forwarder.rerank(query, documents, model, top_n=top_k)` 精排; 失败降级为纯 cosine top_k
+3. 若 rerank 角色有绑定: `MultiForwarder.rerank(query, documents, role=RERANK, top_n=top_k)` 精排; 失败降级为纯 cosine top_k
 4. 逐条 `SqliteMemoryStore.get_by_id(...)` 补完整字段
 
 **返回**: `list[dict]`, 每条字段 (见 `RetrievedMemory.to_dict`):
@@ -77,18 +79,18 @@ def make_vector_search_tool(retriever: MemoryRetriever):
 **签名**:
 
 ```python
-def make_emotion_analyzer_tool(forwarder: Forwarder):
+def make_emotion_analyzer_tool(forwarder: MultiForwarder):
     @tool
     async def emotion_analyzer(text: str) -> dict: ...
     return emotion_analyzer
 ```
 
-**依赖**: 只需 `Forwarder` (走辅助模型)。
+**依赖**: `MultiForwarder`——通过 `role=ModelType.ASSIST` 从 role_bindings 拿辅助模型候选 (v0.2.3+)。
 
 **执行流程** ([emotion_analyzer.py:51](../../src/tools/emotion_analyzer.py#L51) `analyze_emotion`):
 
-1. `settings.chat.assist_model` + system prompt + user prompt (`EMOTION_PROMPT` 填入待分析文本)
-2. `Forwarder.chat(temperature=0.1, response_format={"type": "json_object"}, extra_body={"enable_thinking": False})`——低温 + 强制 JSON + 关闭 Qwen3 thinking
+1. 走 assist 角色首位候选 + system prompt + user prompt (`EMOTION_PROMPT` 填入待分析文本)
+2. `MultiForwarder.chat(role=ASSIST, temperature=0.1, response_format={"type": "json_object"}, extra_body={"enable_thinking": False})`——低温 + 强制 JSON + 关闭 Qwen3 thinking
 3. 防御性剥离残留 `<think>...</think>`
 4. `json.loads(content)` → `EmotionResult`
 
@@ -157,20 +159,20 @@ Agent 应在此**公式基线**之上进行 CoT 判断——例如考虑访问�
 **签名**:
 
 ```python
-def make_sentence_classifier_tool(forwarder: Forwarder):
+def make_sentence_classifier_tool(forwarder: MultiForwarder):
     @tool
     async def classify_sentence_type(text: str) -> dict: ...
     return classify_sentence_type
 ```
 
-**依赖**: 只需 `Forwarder` (走辅助模型)。
+**依赖**: `MultiForwarder` (走 assist 角色)。
 
 **用途**: 提示词清洗 Agent (见 [agents.md §6](agents.md#6-提示词清洗-agent)) 逐句判断客户端 system 消息中的每一句属于**人格描述** (`persona`) 还是**功能性指令** (`instruction`), 前者丢弃, 后者与服务器人格合并。
 
-**执行流程** ([sentence_classifier.py](../../src/tools/sentence_classifier.py)):
+**执行流程** ([sentence_classifier.py:65](../../src/tools/sentence_classifier.py#L65)):
 
 1. 加载 `sentence_classifier` 提示词模板 (走 [PromptStore](../../src/core/prompts/store.py), 支持用户覆盖, 见 [agents.md §7](agents.md#7-自定义-agent-提示词)), 用 `str.replace("__TEXT__", text)` 填占位符
-2. `settings.chat.assist_model` + 单次 `Forwarder.chat(response_format={"type": "json_object"}, extra_body={"enable_thinking": False})`, 不循环
+2. `MultiForwarder.chat(role=ASSIST, response_format={"type": "json_object"}, extra_body={"enable_thinking": False})`, 不循环
 3. `json.loads(content)` → `{type, confidence, reasoning}`
 
 **返回**:
@@ -192,7 +194,7 @@ def make_sentence_classifier_tool(forwarder: Forwarder):
 
 ## 6. 节点内组装
 
-真实组装点 [nodes.py:207](../../src/core/graph/nodes.py#L207):
+真实组装点 [nodes.py:191](../../src/core/graph/nodes.py#L191):
 
 ```python
 # memory_analysis_node
@@ -244,7 +246,7 @@ out = await run_relationship_analysis(
 | [Forwarder](forward.md) | 所有远端调用 (embed / rerank / chat) 的唯一出口 |
 | [消息处理](message-processing.md) | 主对话前置检索复用 `MemoryRetriever` (非工具形式) |
 | [提示词覆盖](agents.md#7-自定义-agent-提示词) | `sentence_classifier` 的提示词经 PromptStore 支持用户覆盖 |
-| [配置](../configuration.md) | `[embedding]` / `[rerank]` / `[chat].assist_model` |
+| [配置](../configuration.md) | 模型选择走 `role_bindings` (v0.2.3 起, `[chat]/[embedding]/[rerank]` 已废弃) |
 
 ---
 
@@ -255,3 +257,5 @@ out = await run_relationship_analysis(
 | v0.2.0 | 2026-07-11 | 初始设计: 3 个工具 (向量检索 / 情绪 / 衰减) |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 全部改为 `make_*_tool()` 闭包工厂描述; 补 rerank 降级、`enable_thinking=False`、`current_state` 由 `DecayState.from_priority` 决定; 明确主对话不绑定工具 |
 | v0.2.1 | 2026-07-16 | 新增第 4 个工具 `classify_sentence_type` (提示词清洗 Agent 专用); 提示词模板迁到 PromptStore, 占位符统一 `__TEXT__` + `.replace` |
+| v0.2.3 | 2026-07-17 | 所有工具工厂改接收 `MultiForwarder`, 通过 `role=ModelType.{ASSIST,EMBEDDING,RERANK}` 从 `role_bindings` 拉候选; embedding 单绑定不 fallback (v0.2.4) |
+| v0.2.6 | 2026-07-18 | 与代码对齐: 修正 `nodes.py` / `vector_search.py` / `sentence_classifier.py` 行号, 移除对 `settings.chat.assist_model` / `settings.rerank` 的引用 (v0.2.3 已废弃) |

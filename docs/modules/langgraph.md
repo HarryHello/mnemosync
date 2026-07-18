@@ -1,9 +1,9 @@
 # LangGraph 编排模块 | LangGraph Orchestration
 
-> **模块版本**: v0.2.1
+> **模块版本**: v0.2.6
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-12
-> **最后更新**: 2026-07-15
+> **最后更新**: 2026-07-18
 > **作者**: HarryHelloo
 
 ---
@@ -216,18 +216,27 @@ graph.add_edge("memory_analysis", END)
 
 ---
 
-## 6. 短期记忆 (Checkpoint)
+## 6. Checkpoint 的角色变化 (v0.2.6)
 
-LangGraph 的 checkpoint 提供会话级短期记忆。当前实现走 `MemorySaver` (进程内, 重启丢失); 生产可切 `SqliteSaver`。同一 `thread_id` 下的多次请求共享 state 历史, 主对话节点因此能感知上文。
+v0.2.5 及以前, LangGraph 的 `MemorySaver` checkpoint 被同时用作两件事: (a) 图内节点共享 state; (b) 跨请求短期记忆 (按 `thread_id` 关联多轮对话)。
 
-短期 (Checkpoint) 与长期 (Chroma + SQLite) 的分工:
+v0.2.6 把 (b) 剥离到服务端 `conversation_turns` 表 (见 [memory-system.md §1.4](memory-system.md#14-短期记忆-v026--跨前端对话流水))。理由:
 
-| 维度 | 短期 | 长期 |
-|------|------|------|
-| 存储 | LangGraph checkpoint | Chroma + SQLite |
-| 内容 | 会话内 messages / state | 结构化 MemoryEntry |
-| 生命周期 | 会话期 | 持久化 + 衰减 |
-| 检索 | 按 thread_id 直取 | embedding + rerank |
+- **`thread_id` 由客户端决定**, 不同前端各起各的 thread, 无法跨前端同步 — 直接违背 Mnemosync"多前端 = 同一用户"的核心承诺
+- **进程内 MemorySaver 重启即失** — 服务器视角的记忆真相不该依赖进程生命周期
+- **主对话在流式路径下已不完整走图** — `_handle_stream` 直接从 forward.py 装填 messages + 转发, 图 (`_run_memory_graph`) 仅在后台跑记忆分析和关系分析, checkpoint 作跨请求上下文用不上
+
+现在 checkpoint 仅剩单请求内节点间 state 共享的角色 ([graph] `checkpoint_backend` 配置仍保留), 生产也不再需要切 SqliteSaver。
+
+短期 (conversation_turns) 与长期 (Chroma + SQLite) 分工:
+
+| 维度 | 短期 (v0.2.6) | 长期 |
+|------|-------------|------|
+| 存储 | `data/conversation.db` `conversation_turns` 表 | Chroma + `data/memory.db` |
+| 内容 | 逐字 user/assistant turn (append-only) | 结构化 MemoryEntry (抽取后的事实) |
+| 生命周期 | 时间窗 (默认 7d) 后台清理 | 衰减模型 + 手动 Prune |
+| 检索 | 按 ts 直取 + 双窗裁剪 | embedding + rerank |
+| 装填时机 | forward.py `build_short_term_history` | forward.py `render_main_dialogue_system` + 工具调用 |
 
 ---
 
@@ -280,3 +289,4 @@ Agent 执行函数在 [src/core/agents/](../../src/core/agents/) (`factory.py` /
 |------|------|------|
 | v0.2.0 | 2026-07-12 | 初始 StateGraph 编排、条件路由、并行节点 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 5 节点 (无 vector_index)、AgentState 字段修正、模块路径修正为 `src/core/graph/` |
+| v0.2.6 | 2026-07-18 | §6 checkpoint 不再承担跨请求短期记忆, 迁到 `conversation_turns`; 保留 checkpoint 仅作单请求内 state 共享 |
