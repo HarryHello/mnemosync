@@ -46,35 +46,46 @@ class MemoryAnalysisOutput:
 
 
 def _extract_json(content: str) -> dict | None:
-    """从模型输出中提取 JSON, 支持修复常见格式问题."""
+    """从模型输出中提取 JSON, 支持代码围栏与嵌套对象."""
     TRIPLE = "```"
     if TRIPLE in content:
         parts = content.split(TRIPLE)
-        if len(parts) >= 2:
+        if len(parts) >= 3:
             content = parts[-2]
     content = content.strip()
 
-    lines = content.split("\n")
-    json_lines = []
-    in_json = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("{") or in_json:
-            in_json = True
-            json_lines.append(line)
-            if stripped.endswith("}"):
-                break
-
-    if json_lines:
-        content = "\n".join(json_lines)
-
     start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+    end = -1
+    for i in range(start, len(content)):
+        ch = content[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end == -1:
         return None
 
     json_str = content[start : end + 1]
-
     try:
         return json.loads(json_str)
     except json.JSONDecodeError:
