@@ -138,6 +138,36 @@ def test_list_role_filter(app: FastAPI, store: SqliteConversationStore) -> None:
     assert [it["content"] for it in body["items"]] == ["u2", "u1"]
 
 
+def test_list_source_filter_and_sources_endpoint(
+    app: FastAPI, store: SqliteConversationStore
+) -> None:
+    """来源过滤 + /sources 列出去重列表."""
+    now = datetime.now(timezone.utc)
+    async def _seed_with_source() -> None:
+        await store.append("user", "a", 1, source_frontend="astrbot",
+                           ts=now - timedelta(minutes=3))
+        await store.append("assistant", "b", 1, source_frontend="airi",
+                           ts=now - timedelta(minutes=2))
+        await store.append("user", "c", 1, source_frontend="astrbot",
+                           ts=now - timedelta(minutes=1))
+        await store.append("user", "d", 1, source_frontend=None,
+                           ts=now)  # NULL 来源
+    asyncio.get_event_loop().run_until_complete(_seed_with_source())
+
+    # /sources 排除 NULL/空串, 去重, 按字典序
+    resp = TestClient(app).get("/panel/admin/conversation-turns/sources")
+    assert resp.status_code == 200
+    assert resp.json() == {"items": ["airi", "astrbot"]}
+
+    # source_frontend 参数精确匹配
+    resp = TestClient(app).get(
+        "/panel/admin/conversation-turns?source_frontend=astrbot"
+    )
+    body = resp.json()
+    assert body["total"] == 2
+    assert [it["content"] for it in body["items"]] == ["c", "a"]
+
+
 def test_delete_single_turn_by_id(app: FastAPI, store: SqliteConversationStore) -> None:
     now = datetime.now(timezone.utc)
     _seed(store, [

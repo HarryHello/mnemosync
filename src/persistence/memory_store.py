@@ -346,8 +346,27 @@ class SqliteMemoryStore:
         limit: int,
         offset: int,
         memory_type: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
     ) -> tuple[list[MemoryEntry], int]:
-        """面板分页: 返回 (当前页, 匹配总数). is_forgotten=0 过滤, created_at DESC."""
+        """面板分页: 返回 (当前页, 匹配总数). is_forgotten=0 过滤.
+
+        sort_by 白名单: created_at / last_accessed / importance / decay_rate /
+        access_count / memory_type / source_user. 非法值退回 created_at.
+        sort_order: 'asc' / 'desc', 其它值退回 desc.
+        """
+        allowed_sort = {
+            "created_at",
+            "last_accessed",
+            "importance",
+            "decay_rate",
+            "access_count",
+            "memory_type",
+            "source_user",
+        }
+        sort_col = sort_by if sort_by in allowed_sort else "created_at"
+        direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+
         where = ["source_user = ?", "is_forgotten = 0"]
         params: list = [source_user]
         if memory_type:
@@ -367,7 +386,7 @@ class SqliteMemoryStore:
                 f"""
                 SELECT * FROM memory_entries
                 WHERE {where_sql}
-                ORDER BY created_at DESC
+                ORDER BY {sort_col} {direction}, id ASC
                 LIMIT ? OFFSET ?
                 """,
                 (*params, limit, offset),

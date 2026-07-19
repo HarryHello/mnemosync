@@ -188,6 +188,8 @@ export interface MemoryListParams {
   page?: number
   page_size?: number
   memory_type?: string
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }
 
 export async function listMemories(
@@ -198,6 +200,8 @@ export async function listMemories(
   if (params.page) q.set('page', String(params.page))
   if (params.page_size) q.set('page_size', String(params.page_size))
   if (params.memory_type) q.set('memory_type', params.memory_type)
+  if (params.sort_by) q.set('sort_by', params.sort_by)
+  if (params.sort_order) q.set('sort_order', params.sort_order)
   return request<MemoryListResponse>(`${API_BASE}/admin/memories?${q.toString()}`)
 }
 
@@ -217,6 +221,9 @@ export interface ConversationTurnListParams {
   page?: number
   page_size?: number
   role?: 'user' | 'assistant'
+  source_frontend?: string
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }
 
 export async function listConversationTurns(
@@ -226,10 +233,17 @@ export async function listConversationTurns(
   if (params.page) q.set('page', String(params.page))
   if (params.page_size) q.set('page_size', String(params.page_size))
   if (params.role) q.set('role', params.role)
+  if (params.source_frontend) q.set('source_frontend', params.source_frontend)
+  if (params.sort_by) q.set('sort_by', params.sort_by)
+  if (params.sort_order) q.set('sort_order', params.sort_order)
   const qs = q.toString()
   return request<ConversationTurnListResponse>(
     `${API_BASE}/admin/conversation-turns${qs ? `?${qs}` : ''}`,
   )
+}
+
+export async function listConversationTurnSources(): Promise<{ items: string[] }> {
+  return request<{ items: string[] }>(`${API_BASE}/admin/conversation-turns/sources`)
 }
 
 export async function deleteConversationTurn(turnId: number): Promise<void> {

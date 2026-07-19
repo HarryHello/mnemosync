@@ -5,16 +5,36 @@ import {
   clearConversationTurns,
   deleteConversationTurn,
   deleteMemory,
+  listConversationTurnSources,
   listConversationTurns,
   listMemories,
 } from '@/api/client'
 import type { ConversationTurn, Memory } from '@/types/api'
 
 // ============================================================================
-// 通用状态
+// 通用
 // ============================================================================
 
 const activeTab = ref<'memories' | 'context'>('memories')
+
+type SortOrder = 'asc' | 'desc'
+
+/** Element Plus 排序事件里的 order 用 'ascending' / 'descending' / null. 转成后端参数. */
+function normalizeOrder(order: string | null | undefined): SortOrder | null {
+  if (order === 'ascending') return 'asc'
+  if (order === 'descending') return 'desc'
+  return null
+}
+
+/** :default-sort 需要还原为 'ascending' / 'descending'. */
+function toElOrder(o: SortOrder): 'ascending' | 'descending' {
+  return o === 'asc' ? 'ascending' : 'descending'
+}
+
+function fmtDate(s: string | null): string {
+  if (!s) return '—'
+  return new Date(s).toLocaleString('zh-CN', { hour12: false })
+}
 
 // ============================================================================
 // Tab 1: 长期记忆
@@ -25,12 +45,14 @@ const memoryLoading = ref(false)
 const memoryTotal = ref(0)
 const memoryPage = ref(1)
 const memoryPageSize = ref(10)
+const memorySortBy = ref('created_at')
+const memorySortOrder = ref<SortOrder>('desc')
+const memoryTypeFilter = ref<string[]>([])  // 空数组=全部
 const sourceUser = ref('default')
-const typeFilter = ref('')
 
-const TYPES = [
-  { label: '普通', value: 'normal' },
-  { label: '永久', value: 'permanent' },
+const MEMORY_TYPE_FILTERS = [
+  { text: '普通', value: 'normal' },
+  { text: '永久', value: 'permanent' },
 ]
 
 async function refreshMemories() {
@@ -40,7 +62,9 @@ async function refreshMemories() {
       source_user: sourceUser.value || 'default',
       page: memoryPage.value,
       page_size: memoryPageSize.value,
-      memory_type: typeFilter.value || undefined,
+      memory_type: memoryTypeFilter.value[0] || undefined,
+      sort_by: memorySortBy.value,
+      sort_order: memorySortOrder.value,
     })
     memories.value = res.items
     memoryTotal.value = res.total
@@ -64,7 +88,6 @@ async function onDeleteMemory(row: Memory) {
   try {
     await deleteMemory(row.id)
     ElMessage.success('已删除')
-    // 删掉最后一条时回退一页
     if (memories.value.length === 1 && memoryPage.value > 1) {
       memoryPage.value -= 1
     }
@@ -85,7 +108,29 @@ function onMemoryPageSizeChange(s: number) {
   refreshMemories()
 }
 
-function onMemoryFilterApply() {
+function onMemorySourceApply() {
+  memoryPage.value = 1
+  refreshMemories()
+}
+
+function onMemorySortChange(evt: { prop: string | null; order: string | null }) {
+  const order = normalizeOrder(evt.order)
+  if (!evt.prop || !order) {
+    // 用户清除排序 → 回默认
+    memorySortBy.value = 'created_at'
+    memorySortOrder.value = 'desc'
+  } else {
+    memorySortBy.value = evt.prop
+    memorySortOrder.value = order
+  }
+  memoryPage.value = 1
+  refreshMemories()
+}
+
+function onMemoryFilterChange(filters: Record<string, unknown[]>) {
+  // filters key = column-key. 我们只给 memory_type 加了 column-key。
+  const t = filters['memory_type'] as string[] | undefined
+  memoryTypeFilter.value = t ?? []
   memoryPage.value = 1
   refreshMemories()
 }
@@ -103,7 +148,7 @@ function typeLabel(t: string): string {
 }
 
 // ============================================================================
-// Tab 2: 上下文流水 (conversation_turns)
+// Tab 2: 上下文流水
 // ============================================================================
 
 const turns = ref<ConversationTurn[]>([])
@@ -111,13 +156,27 @@ const turnLoading = ref(false)
 const turnTotal = ref(0)
 const turnPage = ref(1)
 const turnPageSize = ref(10)
-const turnRoleFilter = ref<'' | 'user' | 'assistant'>('')
+const turnSortBy = ref('ts')
+const turnSortOrder = ref<SortOrder>('desc')
+const turnRoleFilter = ref<string[]>([])
+const turnSourceFilter = ref<string[]>([])
+const turnSources = ref<Array<{ text: string; value: string }>>([])
 const turnsLoaded = ref(false)
 
-const ROLES = [
-  { label: '用户', value: 'user' },
-  { label: '助手', value: 'assistant' },
+const TURN_ROLE_FILTERS = [
+  { text: '用户', value: 'user' },
+  { text: '助手', value: 'assistant' },
 ]
+
+async function refreshTurnSources() {
+  try {
+    const res = await listConversationTurnSources()
+    turnSources.value = res.items.map((v) => ({ text: v, value: v }))
+  } catch {
+    // 来源过滤是次要能力, 拉不到就静默降级 (filter 下拉为空)
+    turnSources.value = []
+  }
+}
 
 async function refreshTurns() {
   turnLoading.value = true
@@ -125,7 +184,10 @@ async function refreshTurns() {
     const res = await listConversationTurns({
       page: turnPage.value,
       page_size: turnPageSize.value,
-      role: turnRoleFilter.value || undefined,
+      role: (turnRoleFilter.value[0] as 'user' | 'assistant' | undefined) || undefined,
+      source_frontend: turnSourceFilter.value[0] || undefined,
+      sort_by: turnSortBy.value,
+      sort_order: turnSortOrder.value,
     })
     turns.value = res.items
     turnTotal.value = res.total
@@ -173,6 +235,8 @@ async function onClearAllTurns() {
     const res = await clearConversationTurns()
     ElMessage.success(`已清空 ${res.deleted} 条`)
     turnPage.value = 1
+    turnSourceFilter.value = []
+    await refreshTurnSources()
     await refreshTurns()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
@@ -190,7 +254,24 @@ function onTurnPageSizeChange(s: number) {
   refreshTurns()
 }
 
-function onTurnFilterApply() {
+function onTurnSortChange(evt: { prop: string | null; order: string | null }) {
+  const order = normalizeOrder(evt.order)
+  if (!evt.prop || !order) {
+    turnSortBy.value = 'ts'
+    turnSortOrder.value = 'desc'
+  } else {
+    turnSortBy.value = evt.prop
+    turnSortOrder.value = order
+  }
+  turnPage.value = 1
+  refreshTurns()
+}
+
+function onTurnFilterChange(filters: Record<string, unknown[]>) {
+  const r = filters['role'] as string[] | undefined
+  const s = filters['source_frontend'] as string[] | undefined
+  if (r !== undefined) turnRoleFilter.value = r ?? []
+  if (s !== undefined) turnSourceFilter.value = s ?? []
   turnPage.value = 1
   refreshTurns()
 }
@@ -208,17 +289,12 @@ function roleLabel(r: string): string {
 }
 
 // ============================================================================
-// 通用
+// 首次切到 context tab 时懒加载
 // ============================================================================
 
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
-}
-
-// 首次切到 context 标签时懒加载
 watch(activeTab, (t) => {
   if (t === 'context' && !turnsLoaded.value) {
+    refreshTurnSources()
     refreshTurns()
   }
 })
@@ -233,6 +309,7 @@ onMounted(refreshMemories)
         <h2 class="page-title">记忆管理</h2>
         <p class="page-subtitle">
           长期记忆按重要度/衰减规则汰换; 上下文流水是跨前端汇聚的连续对话, 供装填上游用。
+          列头可点击排序 / 过滤。
         </p>
       </div>
     </div>
@@ -243,34 +320,18 @@ onMounted(refreshMemories)
       <!-- ================================================================ -->
       <el-tab-pane label="长期记忆" name="memories">
         <el-card shadow="never" class="filters">
-          <el-form :inline="true" @submit.prevent="onMemoryFilterApply">
+          <el-form :inline="true" @submit.prevent="onMemorySourceApply">
             <el-form-item label="source_user">
               <el-input
                 v-model="sourceUser"
                 placeholder="default"
                 clearable
                 style="width: 180px"
-                @keyup.enter="onMemoryFilterApply"
+                @keyup.enter="onMemorySourceApply"
               />
             </el-form-item>
-            <el-form-item label="类型">
-              <el-select
-                v-model="typeFilter"
-                placeholder="全部"
-                clearable
-                style="width: 140px"
-                @change="onMemoryFilterApply"
-              >
-                <el-option
-                  v-for="t in TYPES"
-                  :key="t.value"
-                  :label="t.label"
-                  :value="t.value"
-                />
-              </el-select>
-            </el-form-item>
             <el-form-item>
-              <el-button type="primary" @click="onMemoryFilterApply">
+              <el-button type="primary" @click="onMemorySourceApply">
                 <el-icon><Search /></el-icon>
                 <span>查询</span>
               </el-button>
@@ -295,20 +356,39 @@ onMounted(refreshMemories)
             stripe
             row-key="id"
             empty-text="暂无记忆"
+            :default-sort="{ prop: memorySortBy, order: toElOrder(memorySortOrder) }"
+            @sort-change="onMemorySortChange"
+            @filter-change="onMemoryFilterChange"
           >
             <el-table-column label="内容" min-width="360">
               <template #default="{ row }">
                 <div class="mem-content">{{ row.content }}</div>
               </template>
             </el-table-column>
-            <el-table-column label="类型" width="90" align="center">
+            <el-table-column
+              label="类型"
+              width="120"
+              align="center"
+              prop="memory_type"
+              column-key="memory_type"
+              sortable="custom"
+              :filters="MEMORY_TYPE_FILTERS"
+              :filter-multiple="false"
+              :filtered-value="memoryTypeFilter"
+            >
               <template #default="{ row }">
                 <el-tag :type="typeTag(row.memory_type)" size="small">
                   {{ typeLabel(row.memory_type) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="重要度" width="110" align="center">
+            <el-table-column
+              label="重要度"
+              width="120"
+              align="center"
+              prop="importance"
+              sortable="custom"
+            >
               <template #default="{ row }">
                 <el-progress
                   :percentage="Math.round(row.importance * 100)"
@@ -319,22 +399,49 @@ onMounted(refreshMemories)
               </template>
             </el-table-column>
             <el-table-column
+              label="衰减率"
+              width="100"
+              align="center"
+              prop="decay_rate"
+              sortable="custom"
+            >
+              <template #default="{ row }">
+                <span class="mono">{{ row.decay_rate.toFixed(2) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
               prop="access_count"
               label="访问次数"
-              width="90"
+              width="110"
               align="center"
+              sortable="custom"
             />
-            <el-table-column label="来源" width="110">
+            <el-table-column
+              label="来源"
+              width="120"
+              prop="source_user"
+              sortable="custom"
+            >
               <template #default="{ row }">
                 <span class="mono muted">{{ row.source_user || '—' }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="创建时间" width="170">
+            <el-table-column
+              label="创建时间"
+              width="180"
+              prop="created_at"
+              sortable="custom"
+            >
               <template #default="{ row }">
                 <span class="mono muted">{{ fmtDate(row.created_at) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="最近访问" width="170">
+            <el-table-column
+              label="最近访问"
+              width="180"
+              prop="last_accessed"
+              sortable="custom"
+            >
               <template #default="{ row }">
                 <span class="mono muted">{{ fmtDate(row.last_accessed_at) }}</span>
               </template>
@@ -366,25 +473,9 @@ onMounted(refreshMemories)
       <!-- ================================================================ -->
       <el-tab-pane label="上下文流水" name="context">
         <el-card shadow="never" class="filters">
-          <el-form :inline="true" @submit.prevent="onTurnFilterApply">
-            <el-form-item label="角色">
-              <el-select
-                v-model="turnRoleFilter"
-                placeholder="全部"
-                clearable
-                style="width: 140px"
-                @change="onTurnFilterApply"
-              >
-                <el-option
-                  v-for="r in ROLES"
-                  :key="r.value"
-                  :label="r.label"
-                  :value="r.value"
-                />
-              </el-select>
-            </el-form-item>
+          <el-form :inline="true">
             <el-form-item>
-              <el-button :loading="turnLoading" @click="refreshTurns">
+              <el-button :loading="turnLoading" @click="() => { refreshTurnSources(); refreshTurns(); }">
                 <el-icon><Refresh /></el-icon>
                 <span>刷新</span>
               </el-button>
@@ -416,8 +507,21 @@ onMounted(refreshMemories)
             stripe
             row-key="id"
             empty-text="暂无对话流水"
+            :default-sort="{ prop: turnSortBy, order: toElOrder(turnSortOrder) }"
+            @sort-change="onTurnSortChange"
+            @filter-change="onTurnFilterChange"
           >
-            <el-table-column label="角色" width="90" align="center">
+            <el-table-column
+              label="角色"
+              width="120"
+              align="center"
+              prop="role"
+              column-key="role"
+              sortable="custom"
+              :filters="TURN_ROLE_FILTERS"
+              :filter-multiple="false"
+              :filtered-value="turnRoleFilter"
+            >
               <template #default="{ row }">
                 <el-tag :type="roleTag(row.role)" size="small">
                   {{ roleLabel(row.role) }}
@@ -432,17 +536,43 @@ onMounted(refreshMemories)
             <el-table-column
               prop="token_count"
               label="token"
-              width="80"
+              width="100"
               align="center"
+              sortable="custom"
             />
-            <el-table-column label="来源" width="130">
+            <el-table-column
+              label="来源"
+              width="140"
+              prop="source_frontend"
+              column-key="source_frontend"
+              sortable="custom"
+              :filters="turnSources"
+              :filter-multiple="false"
+              :filtered-value="turnSourceFilter"
+            >
               <template #default="{ row }">
                 <span class="mono muted">{{ row.source_frontend || '—' }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="时间" width="170">
+            <el-table-column
+              label="时间"
+              width="180"
+              prop="ts"
+              sortable="custom"
+            >
               <template #default="{ row }">
                 <span class="mono muted">{{ fmtDate(row.ts) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="ID"
+              width="90"
+              align="center"
+              prop="id"
+              sortable="custom"
+            >
+              <template #default="{ row }">
+                <span class="mono mini">#{{ row.id }}</span>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="90" align="right" fixed="right">

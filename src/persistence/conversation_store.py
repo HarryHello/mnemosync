@@ -146,13 +146,29 @@ class SqliteConversationStore:
         limit: int,
         offset: int,
         role: str | None = None,
+        source_frontend: str | None = None,
+        sort_by: str = "ts",
+        sort_order: str = "desc",
     ) -> tuple[list[ConversationTurn], int]:
-        """面板分页: 返回 (当前页, 匹配总数). ts DESC."""
-        where_sql = ""
+        """面板分页: 返回 (当前页, 匹配总数).
+
+        sort_by 白名单: ts / role / token_count / source_frontend / id.
+        sort_order: 'asc' / 'desc'. 非法值退回默认 (ts, desc).
+        source_frontend: 精确匹配 api_key.note 写入的来源标签 (None = 全部).
+        """
+        allowed_sort = {"ts", "role", "token_count", "source_frontend", "id"}
+        sort_col = sort_by if sort_by in allowed_sort else "ts"
+        direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+
+        where: list[str] = []
         params: list = []
         if role in ("user", "assistant"):
-            where_sql = " WHERE role = ?"
+            where.append("role = ?")
             params.append(role)
+        if source_frontend is not None:
+            where.append("source_frontend = ?")
+            params.append(source_frontend)
+        where_sql = f" WHERE {' AND '.join(where)}" if where else ""
 
         async with self._conn() as db:
             async with db.execute(
@@ -164,13 +180,29 @@ class SqliteConversationStore:
 
             async with db.execute(
                 f"SELECT id, role, content, ts, token_count, source_frontend "
-                f"FROM conversation_turns{where_sql} ORDER BY ts DESC LIMIT ? OFFSET ?",
+                f"FROM conversation_turns{where_sql} "
+                f"ORDER BY {sort_col} {direction}, id ASC LIMIT ? OFFSET ?",
                 (*params, limit, offset),
             ) as cur:
                 rows = await cur.fetchall()
                 items = [self._row_to_turn(r) for r in rows]
 
         return items, total
+
+    async def list_source_frontends(self) -> list[str]:
+        """列出所有出现过的 source_frontend 值 (去重, 按字典序).
+
+        面板 "来源" 列 header filter 用. NULL 排除 — 前端把它视为 "未标注",
+        用户想过滤未标注可以走 role 或直接看列表。
+        """
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT DISTINCT source_frontend FROM conversation_turns "
+                "WHERE source_frontend IS NOT NULL AND source_frontend != '' "
+                "ORDER BY source_frontend ASC"
+            ) as cur:
+                rows = await cur.fetchall()
+                return [r[0] for r in rows]
 
     async def delete_by_id(self, turn_id: int) -> bool:
         """删除单条对话轮次, 返回是否命中."""

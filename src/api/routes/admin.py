@@ -349,12 +349,14 @@ async def list_memories(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     memory_type: str | None = Query(None, description="normal | permanent"),
+    sort_by: str = Query("created_at", description="created_at | last_accessed | importance | decay_rate | access_count | memory_type | source_user"),
+    sort_order: str = Query("desc", description="asc | desc"),
     store: SqliteMemoryStore = Depends(get_memory_store),
 ):
-    """查询记忆列表 (服务器端分页).
+    """查询记忆列表 (服务器端分页 + 排序).
 
     total 是符合 source_user + memory_type 过滤的**全量匹配数**, 不是本页返回条数;
-    前端据此计算总页数。
+    前端据此计算总页数。sort_by 走白名单, 非法值退回 created_at。
     """
     offset = (page - 1) * page_size
     items, total = await store.list_page_for_user(
@@ -362,6 +364,8 @@ async def list_memories(
         limit=page_size,
         offset=offset,
         memory_type=memory_type,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     return MemoryListResponse(
         items=[_memory_to_response(m) for m in items],
@@ -1012,16 +1016,26 @@ async def list_conversation_turns(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     role: str | None = Query(None, description="user | assistant, 省略=全部"),
+    source_frontend: str | None = Query(
+        None, description="精确匹配来源标签 (api_key.note), 省略=全部"
+    ),
+    sort_by: str = Query("ts", description="ts | role | token_count | source_frontend | id"),
+    sort_order: str = Query("desc", description="asc | desc"),
     store: SqliteConversationStore = Depends(get_conversation_store),
 ):
     """按 ts 降序分页列出跨前端对话流水.
 
     面板 "上下文流水" 视图用. 服务器把所有前端的对话汇聚到这里, 装填时
-    按时间窗 + 模型窗双窗口从这里裁剪.
+    按时间窗 + 模型窗双窗口从这里裁剪. sort_by 走白名单, 非法值退回 ts。
     """
     offset = (page - 1) * page_size
     turns, total = await store.list_page(
-        limit=page_size, offset=offset, role=role
+        limit=page_size,
+        offset=offset,
+        role=role,
+        source_frontend=source_frontend,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     items = [
         ConversationTurnItem(
@@ -1037,6 +1051,17 @@ async def list_conversation_turns(
     return ConversationTurnListResponse(
         total=total, items=items, page=page, page_size=page_size
     )
+
+
+@router.get("/conversation-turns/sources")
+async def list_conversation_turn_sources(
+    store: SqliteConversationStore = Depends(get_conversation_store),
+):
+    """列出流水里出现过的所有来源标签 (source_frontend distinct).
+
+    面板 "来源" 列 header filter 用. NULL / 空串排除 (视为 "未标注")。
+    """
+    return {"items": await store.list_source_frontends()}
 
 
 @router.delete("/conversation-turns/{turn_id}")
