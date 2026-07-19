@@ -85,6 +85,11 @@ def build_entries(data: dict, source_user: str) -> list[MemoryEntry]:
         if age_days > 0:
             entry.created_at = entry.created_at - timedelta(days=age_days)
 
+        # 永久记忆回填 last_accessed 让面板有数据显示
+        if mem_type == MemoryType.PERMANENT:
+            entry.last_accessed = entry.created_at + timedelta(days=1)
+            entry.access_count = max(3, entry.access_count or 0)
+
         entries.append(entry)
     return entries
 

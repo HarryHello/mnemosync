@@ -153,6 +153,8 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
             source_user, limit=settings.memory.permanent_load_top
         )
         logger.debug("  📚 永久记忆: %d 条", len(perms))
+        for p in perms:
+            await memory_store.mark_accessed(p.id)
 
         extracted = state.get("extracted_new", [])
         query = ""
