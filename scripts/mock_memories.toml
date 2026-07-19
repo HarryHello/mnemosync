@@ -1,0 +1,131 @@
+# 模拟记忆库种子数据 (默认人格: 绫音 / 用户: 哥哥)
+#
+# 用法: `uv run python scripts/seed_mock_memories.py`
+# 每个 [[memory]] 块对应一条 memory_entries 行, 内容形态模拟"记忆分析 Agent 已提取后"的陈述句.
+#
+# 字段说明:
+#   content     必填. 陈述句本身. 用第三人称叙述 "哥哥 X" / "绫音 Y", 与提取产物一致.
+#   type        permanent | normal. permanent 不衰减; normal 走衰减模型.
+#   importance  0.0-1.0. 影响初始 priority (permanent 会被强制拉到 1.0).
+#   tags        emotional_tags 列表.
+#   age_days    距今天数, 用于构造 created_at 时间分布 (0=今天, 30=一个月前).
+#   role        可选, 默认 "user". 支持 "user" / "assistant" / "system".
+#               "user"      = 记忆来源于哥哥的发言
+#               "assistant" = 记忆来源于绫音自己的表态/承诺
+#   decay_rate  可选. 省略时按 type 推断: permanent→0.0, normal→0.3.
+
+# ============ PERMANENT: 身份 / 长期属性 (关于哥哥) ============
+
+[[memory]]
+content = "哥哥是大学生, 每天去学校上课, 课余在便利店打工"
+type = "permanent"
+importance = 0.95
+tags = ["identity", "career"]
+age_days = 120
+
+[[memory]]
+content = "哥哥不是绫音的血亲, 是没有血缘关系的哥哥"
+type = "permanent"
+importance = 1.0
+tags = ["identity", "family"]
+age_days = 200
+
+[[memory]]
+content = "哥哥每天会把三餐放在绫音房门口"
+type = "permanent"
+importance = 0.9
+tags = ["care", "daily"]
+age_days = 90
+
+[[memory]]
+content = "哥哥怕辣, 吃到辣椒会打嗝一整天"
+type = "permanent"
+importance = 0.7
+tags = ["food", "dislike"]
+age_days = 60
+
+[[memory]]
+content = "哥哥的生日是 10 月 5 日"
+type = "permanent"
+importance = 0.85
+tags = ["identity", "date"]
+age_days = 150
+
+# ============ NORMAL: 近期事件 / 状态 / 偏好 ============
+
+[[memory]]
+content = "哥哥最近在准备期末考试, 熬夜复习到很晚"
+type = "normal"
+importance = 0.65
+tags = ["study", "worry"]
+age_days = 3
+
+[[memory]]
+content = "哥哥今天带回来一盒草莓大福, 从门缝塞给绫音了"
+type = "normal"
+importance = 0.6
+tags = ["gift", "food", "happy"]
+age_days = 0
+
+[[memory]]
+content = "哥哥上周说想去看电影, 被绫音无视了"
+type = "normal"
+importance = 0.4
+tags = ["outing", "avoid"]
+age_days = 7
+
+[[memory]]
+content = "哥哥感冒了, 昨晚咳嗽声隔着墙都能听到"
+type = "normal"
+importance = 0.7
+tags = ["health", "worry"]
+age_days = 1
+
+[[memory]]
+content = "期中考试成绩出来了, 哥哥排名比上次低, 情绪有点低落"
+type = "normal"
+importance = 0.55
+tags = ["study", "sad"]
+age_days = 5
+
+[[memory]]
+content = "哥哥问绫音要不要一起去夏日祭, 绫音说要考虑"
+type = "normal"
+importance = 0.6
+tags = ["outing", "hesitate"]
+age_days = 10
+
+[[memory]]
+content = "哥哥买了新款游戏机, 说想和绫音联机"
+type = "normal"
+importance = 0.5
+tags = ["gift", "game"]
+age_days = 14
+
+# ============ NORMAL (role=assistant): 绫音自己的表态 / 承诺 ============
+
+[[memory]]
+content = "答应过哥哥, 等他考完试一起做顿晚饭"
+type = "normal"
+importance = 0.8
+tags = ["promise", "cooking"]
+age_days = 4
+role = "assistant"
+
+[[memory]]
+content = "偷偷决定明天早点起, 把画好的插图从门缝塞给哥哥"
+type = "normal"
+importance = 0.65
+tags = ["secret", "art"]
+age_days = 1
+role = "assistant"
+
+# ============ NORMAL: 老且低优先级 (用于观察衰减) ============
+
+[[memory]]
+content = "哥哥几个月前抱怨过社团的学长太烦人"
+type = "normal"
+importance = 0.3
+decay_rate = 0.7
+tags = ["social", "complaint"]
+age_days = 90
