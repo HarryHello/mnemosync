@@ -40,7 +40,7 @@ mnemosync <command> [options]
 
 - `serve --host` 默认 `0.0.0.0`, `--port` 默认 `16125`, `--log-level` 取 `debug/info/warning/error`
 - `serve --debug` 与 `ask --debug` 通过 `MNEMOSYNC_DEBUG=1` 环境变量控制 Forwarder 输出
-- `upgrade --branch` 默认 `dev`
+- `upgrade --branch` 默认 `main` (可通过 `MNEMOSYNC_BRANCH` 环境变量覆盖, 开发者常用 `dev`)
 
 顶层命令**不**包含 API Key / 服务商管理; 那些命令在交互式 shell 内。
 

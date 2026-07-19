@@ -5,12 +5,12 @@ services:
       - "16125:16125"
     volumes:
       - ./data:/app/data
-      - ./src:/app/src:ro
+      - ./config.local.toml:/app/config.local.toml:ro
     environment:
       - PORT=16125
       - HOST=0.0.0.0
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:16125/docs"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:16125/health', timeout=5).getcode()==200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3

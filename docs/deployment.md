@@ -65,13 +65,13 @@ Mnemosync/
 ### 2.1 启动
 
 ```bash
-git clone https://github.com/Mnemosync/Mnemosync.git
-cd Mnemosync
+git clone https://github.com/HarryHello/mnemosync.git
+cd mnemosync
 cp config.example.toml config.local.toml   # 编辑填入凭证
 docker compose up -d
 ```
 
-`docker-compose.yml` 已挂载 `./data`, `./config.local.toml`, `./ui` 到容器内。
+`docker-compose.yml` 挂载 `./data` 与 `./config.local.toml` 到容器内。**管理面板由 Dockerfile 多阶段自动构建** — 第一阶段 `node:22-slim` 跑 `npm run build` 生成 `ui/dist`, 第二阶段拷进 Python 镜像, 无需宿主机装 Node.js。
 
 ### 2.2 初始化数据库
 
@@ -106,13 +106,40 @@ mnemosync stop
 # Python 3.12+
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-git clone https://github.com/Mnemosync/Mnemosync.git
-cd Mnemosync
+git clone https://github.com/HarryHello/mnemosync.git
+cd mnemosync
 uv sync
 cp config.example.toml config.local.toml   # 编辑
 ```
 
-### 3.2 初始化 + 启动
+### 3.2 管理面板 (ui/dist)
+
+后端在启动时挂载 `ui/dist/` 作为静态资源。若该目录缺失, API 仍可用, 但访问 `/` 会 404。生成方式有二选一:
+
+**A. 从 GitHub Release 下载预编译产物** (推荐, 无需 Node.js)
+
+```bash
+LATEST=$(curl -fsSL https://api.github.com/repos/HarryHello/mnemosync/releases/latest | jq -r .tag_name)
+curl -fsSL "https://github.com/HarryHello/mnemosync/releases/download/${LATEST}/ui-dist.tar.gz" \
+  | tar -xz -C ui/
+```
+
+`ui-dist.tar.gz` 由 [.github/workflows/release.yml](../.github/workflows/release.yml) 在 tag 推送时由 GitHub Actions 自动构建上传。
+
+**B. 本地构建** (开发者)
+
+```bash
+cd ui
+npm install     # 首次或依赖变更后
+npm run build   # 生成 ui/dist/
+cd ..
+```
+
+需要 Node.js 22+。构建后 `ui/dist/index.html` 存在即视为就绪。
+
+一键脚本 `curl -fsSL .../install.sh | sh` 会自动尝试 A → B → 跳过并警告。
+
+### 3.3 初始化 + 启动
 
 ```bash
 uv run mnemosync init
@@ -122,7 +149,7 @@ uv run mnemosync serve --debug            # 打印所有上游 HTTP 请求/响�
 uv run mnemosync serve --host 127.0.0.1 --port 16126 --log-level debug
 ```
 
-### 3.3 systemd (可选生产)
+### 3.4 systemd (可选生产)
 
 ```ini
 # /etc/systemd/system/mnemosync.service
@@ -240,14 +267,16 @@ docker cp $(docker compose ps -q mnemosync):/tmp/backup.tar.gz ./
 顶层 CLI 提供便捷升级 (拉分支 + 重装依赖):
 
 ```bash
-mnemosync upgrade                # 默认 dev 分支
-mnemosync upgrade --branch main
+mnemosync upgrade                # 默认 main 分支
+mnemosync upgrade --branch dev   # 开发者可切 dev
 ```
 
 手动:
 ```bash
 git pull
 uv sync
+# 重新构建面板 (若从 Release 拿预编译产物, 见 §3.2)
+cd ui && npm install && npm run build && cd ..
 # Docker
 docker compose build && docker compose up -d
 # systemd
@@ -296,10 +325,51 @@ rm -rf /opt/Mnemosync
 
 ---
 
-## 11. 版本历史
+## 11. 发布流程 (维护者)
+
+Release 由 [.github/workflows/release.yml](../.github/workflows/release.yml) 自动化。整体流程:
+
+```bash
+# 1. 在 release 分支上做 dev→main 的差异修正 (install.sh BRANCH 默认、cli 描述等)
+git checkout -b release/v0.2.X
+
+# 2. 冒烟验证 (可选)
+uv run pytest -q --no-cov
+cd ui && npm install && npm run build && cd ..
+
+# 3. 合并到 main
+git checkout main
+git merge --no-ff release/v0.2.X -m "release: v0.2.X"
+git push origin main
+
+# 4. 打 tag 并推送 — 这一步触发 GitHub Actions
+git tag -a v0.2.X -m "Mnemosync v0.2.X"
+git push origin v0.2.X
+
+# 5. 观察 Actions
+# https://github.com/HarryHello/mnemosync/actions/workflows/release.yml
+# 成功后 https://github.com/HarryHello/mnemosync/releases 会出现新 Release
+# 附件包含 ui-dist.tar.gz
+```
+
+Actions 的具体动作:
+
+1. checkout tag 指向的 commit
+2. setup Node.js 22 + npm 缓存
+3. `cd ui && npm ci && npm run build`
+4. 校验 `ui/dist/index.html` 存在
+5. `tar -czf ui-dist.tar.gz -C ui dist`
+6. `gh release create $TAG --generate-notes ui-dist.tar.gz`
+
+**回滚**: 直接删除 tag 与 GitHub Release, 再重新推 tag; 用户 install.sh 会自动拉最新 release, 无需通知。
+
+---
+
+## 12. 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v0.1.0 | 2026-03-25 | 初始部署文档: Docker Compose + 源码 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 移除虚构环境变量表 (`MNEMOSYNC_DB_PATH` 等), 补 `mnemosync upgrade` / `--debug` / `--daemon`, 补 SSE 反代要点, 移除未实现的 Redis 缓存/metrics 章节 |
 | v0.2.6 | 2026-07-18 | 与代码对齐: 目录/data 列表补 `conversation.db` (v0.2.6 短期记忆) / `http_logs.db` (v0.2.5) / `prompts/` (v0.2.1); 模型绑定改由 `role_bindings` + CLI `set-model` (v0.2.3+), 不再写 `[chat]/[embedding]/[rerank]`; 换嵌入模型走 `memory reindex` (v0.2.4) 而非手动清 Chroma |
+| v0.2.11 | 2026-07-19 | 与发布流程对齐: 补 §3.2 管理面板构建 (Release 预编译 tarball 优先 / 本地 npm build 兜底); §2 Docker 改由多阶段自动 build UI, 不再挂载 `./ui`; §8 `mnemosync upgrade` 默认分支改 `main`; 新增 §11 发布流程 (GitHub Actions 自动打 Release + 上传 ui-dist.tar.gz) |

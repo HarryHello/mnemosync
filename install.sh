@@ -2,8 +2,8 @@
 # Mnemosync 安装脚本
 # 用法: curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
 #
-# 需要: bash 4.0+, git, Python 3.12+
-# 可选: uv (脚本会自动安装)
+# 需要: git, Python 3.12+
+# 可选: uv (脚本会自动安装), node + npm (若需要本地 build UI 而非从 Release 下载)
 
 set -e
 
@@ -11,9 +11,10 @@ set -e
 # 配置
 # ============================================================================
 REPO_URL="https://github.com/HarryHello/mnemosync.git"
+API_URL="https://api.github.com/repos/HarryHello/mnemosync"
 INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-$HOME/.mnemosync}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
-BRANCH="${MNEMOSYNC_BRANCH:-dev}"
+BRANCH="${MNEMOSYNC_BRANCH:-main}"
 
 # 颜色 (使用 printf 兼容 sh)
 RED='\033[0;31m'
@@ -113,6 +114,61 @@ install_deps() {
 }
 
 # ============================================================================
+# 准备管理面板 (ui/dist)
+# 优先级: 从 GitHub Release 下载预编译 tarball → 本地 npm build → 跳过并警告
+# ============================================================================
+setup_ui() {
+    cd "$INSTALL_DIR"
+
+    if [ -f "ui/dist/index.html" ]; then
+        info "管理面板已存在, 跳过构建 ✓"
+        return
+    fi
+
+    # 尝试从 latest release 拉取 ui-dist.tar.gz
+    if command -v curl > /dev/null 2>&1; then
+        info "尝试从 GitHub Release 下载预编译面板..."
+        DIST_URL=$(curl -fsSL "$API_URL/releases/latest" 2>/dev/null \
+            | grep -oE '"browser_download_url":[[:space:]]*"[^"]*ui-dist\.tar\.gz"' \
+            | head -1 \
+            | cut -d'"' -f4)
+
+        if [ -n "$DIST_URL" ]; then
+            if curl -fsSL "$DIST_URL" -o /tmp/mnemosync-ui-dist.tar.gz 2>/dev/null; then
+                tar -xzf /tmp/mnemosync-ui-dist.tar.gz -C ui/
+                rm -f /tmp/mnemosync-ui-dist.tar.gz
+                if [ -f "ui/dist/index.html" ]; then
+                    info "预编译面板下载完成 ✓"
+                    return
+                fi
+            fi
+            warn "预编译面板下载失败, 尝试本地构建"
+        else
+            warn "未找到预编译面板产物, 尝试本地构建"
+        fi
+    fi
+
+    # 本地 npm build
+    if command -v npm > /dev/null 2>&1; then
+        info "本地构建管理面板 (需要 Node.js 22+)..."
+        (
+            cd ui
+            npm install
+            npm run build
+        )
+        if [ -f "ui/dist/index.html" ]; then
+            info "本地构建完成 ✓"
+            return
+        fi
+        warn "本地构建失败"
+    fi
+
+    warn "跳过管理面板 (未安装 Node.js 且下载预编译产物失败)"
+    warn "后端 API 仍可用, 但面板 /panel 将 404"
+    warn "如需启用面板, 请手动执行: cd $INSTALL_DIR/ui && npm install && npm run build"
+}
+
+# ============================================================================
 # 初始化数据库
 # ============================================================================
 init_database() {
@@ -165,6 +221,7 @@ main() {
     install_uv
     setup_code
     install_deps
+    setup_ui
     init_database
     register_command
 

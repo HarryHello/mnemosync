@@ -341,7 +341,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
 def cmd_upgrade(args: argparse.Namespace) -> int:
     """升级 Mnemosync."""
     project_root = get_project_root()
-    branch = args.branch or os.getenv("MNEMOSYNC_BRANCH", "dev")
+    branch = args.branch or os.getenv("MNEMOSYNC_BRANCH", "main")
 
     print(f"🔄 Upgrading Mnemosync (branch: {branch})...")
     print()
@@ -454,7 +454,7 @@ Mnemosync CLI
 
 升级:
   upgrade             拉取最新代码并更新依赖
-  upgrade --branch dev  指定分支（默认 dev）
+  upgrade --branch dev  指定分支（默认 main）
 
 其他:
   help                显示此帮助信息
@@ -530,7 +530,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── upgrade ──
     upgrade_parser = subparsers.add_parser("upgrade", help="升级 Mnemosync")
-    upgrade_parser.add_argument("--branch", default=None, help="指定分支 (默认: dev)")
+    upgrade_parser.add_argument("--branch", default=None, help="指定分支 (默认: main)")
     upgrade_parser.set_defaults(func=cmd_upgrade)
 
     # ── help ──

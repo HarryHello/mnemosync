@@ -4,6 +4,21 @@
 #   docker compose exec mnemosync mnemosync init
 #   docker compose exec mnemosync mnemosync login
 
+# ============================================================================
+# Stage 1: 构建管理面板 (Vue 3)
+# ============================================================================
+FROM node:22-slim AS ui-builder
+
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+COPY ui/ ./
+RUN npm run build
+
+# ============================================================================
+# Stage 2: Python 运行时
+# ============================================================================
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -21,6 +36,9 @@ RUN uv sync --frozen --no-dev
 COPY src/ ./src/
 COPY install.sh ./
 
+# 从 ui-builder 阶段拷贝编译后的前端资源
+COPY --from=ui-builder /ui/dist ./ui/dist
+
 # 复制配置模板
 COPY config.example.toml config.local.toml
 
@@ -29,8 +47,6 @@ RUN mkdir -p /app/data
 
 # 设置环境变量
 ENV PYTHONPATH=/app
-ENV MNEMOSYNC_DB_PATH=/app/data/api_keys.db
-ENV AUTH_DB_PATH=/app/data/auth.db
 ENV PORT=16125
 ENV HOST=0.0.0.0
 
