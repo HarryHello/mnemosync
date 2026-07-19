@@ -1059,7 +1059,7 @@ async def list_conversation_turn_sources(
 ):
     """列出流水里出现过的所有来源标签 (source_frontend distinct).
 
-    面板 "来源" 列 header filter 用. NULL / 空串排除 (视为 "未标注")。
+    面板 "来源" 列 header filter 用. NULL / 空串排除 (视为 "未标注")
     """
     return {"items": await store.list_source_frontends()}
 
@@ -1071,7 +1071,7 @@ async def delete_conversation_turn(
 ):
     """删除单条对话轮次. 用于面板逐条清理.
 
-    注意: 不动其它前端已经拿到的上下文; 但下一次装填时该条从服务器视角"从未存在"。
+    注意: 不动其它前端已经拿到的上下文; 但下一次装填时该条从服务器视角"从未存在"
     """
     ok = await store.delete_by_id(turn_id)
     if not ok:
