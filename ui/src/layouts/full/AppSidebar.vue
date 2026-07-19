@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { healthCheck } from '@/api/client'
+import { useDarkMode } from '@/composables/useDarkMode'
+import { useAuthStore } from '@/stores/auth'
 
 interface MenuItem {
   path: string
@@ -11,10 +14,13 @@ interface MenuItem {
 
 const route = useRoute()
 const router = useRouter()
+const { isDark, toggle: toggleDark } = useDarkMode()
+const authStore = useAuthStore()
 
 const version = ref<string | null>(null)
 
 onMounted(async () => {
+  if (!authStore.user) void authStore.fetchUser().catch(() => undefined)
   try {
     const h = await healthCheck()
     version.value = h.version
@@ -38,7 +44,6 @@ const items: MenuItem[] = [
 ]
 
 const activePath = computed(() => {
-  // 匹配以菜单项 path 开头的当前路由 (处理 /prompts/:name 高亮到 /prompts)
   const match = items
     .map((i) => i.path)
     .filter((p) => route.path === p || route.path.startsWith(p + '/'))
@@ -46,8 +51,35 @@ const activePath = computed(() => {
   return match ?? route.path
 })
 
+const username = computed(() => authStore.user?.username ?? '未登录')
+
 function navigate(path: string) {
   if (route.path !== path) router.push(path)
+}
+
+async function handleLogout() {
+  try {
+    await ElMessageBox.confirm('确认要退出登录吗？', '提示', {
+      type: 'warning',
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await authStore.logout()
+    ElMessage.success('已退出')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  }
+  router.push('/login')
+}
+
+function handleUserCommand(cmd: string) {
+  if (cmd === 'logout') void handleLogout()
+  else if (cmd === 'change-password') router.push('/settings')
+  else if (cmd === 'toggle-theme') toggleDark()
 }
 </script>
 
@@ -56,6 +88,7 @@ function navigate(path: string) {
     <div class="brand">
       <span class="brand-mark">M</span>
       <span class="brand-text">Mnemosync</span>
+      <span v-if="version" class="version">v{{ version }}</span>
     </div>
 
     <el-menu
@@ -74,7 +107,31 @@ function navigate(path: string) {
     </el-menu>
 
     <div class="footer">
-      <span v-if="version">v{{ version }}</span>
+      <el-dropdown trigger="hover" placement="top-start" popper-class="sidebar-user-popper" @command="handleUserCommand">
+        <span class="user-trigger">
+          <el-avatar :size="28" class="avatar">{{ username.slice(0, 1).toUpperCase() }}</el-avatar>
+          <span class="user-name">{{ username }}</span>
+          <el-icon><ArrowDown /></el-icon>
+        </span>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="toggle-theme">
+              <el-icon>
+                <component :is="isDark ? 'Sunny' : 'Moon'" />
+              </el-icon>
+              切换主题
+            </el-dropdown-item>
+            <el-dropdown-item command="change-password">
+              <el-icon><EditPen /></el-icon>
+              修改密码
+            </el-dropdown-item>
+            <el-dropdown-item command="logout">
+              <el-icon color="var(--el-color-danger)"><SwitchButton /></el-icon>
+              <span style="color: var(--el-color-danger);">退出登录</span>
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
     </div>
   </aside>
 </template>
@@ -118,10 +175,58 @@ function navigate(path: string) {
 }
 
 .footer {
-  padding: $space-3 $space-4;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  padding: $space-2 $space-3 $space-3;
   border-top: 1px solid var(--el-border-color-lighter);
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+}
+
+.user-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  cursor: pointer;
+  padding: $space-1 $space-2;
+  border-radius: $radius-sm;
+  min-width: 0;
+
+  &:hover {
+    background: var(--el-fill-color-light);
+  }
+}
+
+.avatar {
+  background: linear-gradient(135deg, $brand-primary, $brand-primary-hover);
+  color: #fff;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.user-name {
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.version {
+  font-size: 10px;
+  color: var(--el-text-color-secondary);
   text-align: center;
+  margin-left: $space-2;
+}
+</style>
+
+<style lang="scss">
+.sidebar-user-popper .el-dropdown-menu__item:last-child {
+  background: transparent;
+
+  &:hover,
+  &:focus {
+    color: var(--el-color-danger) !important;
+    background: var(--el-color-danger-light-9);
+  }
 }
 </style>

@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import AppSidebar from './AppSidebar.vue'
-import AppHeader from './AppHeader.vue'
 </script>
 
 <template>
   <div class="full-layout">
     <AppSidebar class="sidebar" />
     <div class="content">
-      <AppHeader />
       <main class="main">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
