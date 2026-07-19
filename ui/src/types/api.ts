@@ -108,6 +108,28 @@ export interface Memory {
 export interface MemoryListResponse {
   items: Memory[]
   total: number
+  page: number
+  page_size: number
+}
+
+// ============================================================================
+// Conversation Turns (跨前端上下文流水)
+// ============================================================================
+
+export interface ConversationTurn {
+  id: number
+  role: string  // 'user' | 'assistant'
+  content: string
+  ts: string  // ISO datetime
+  token_count: number
+  source_frontend: string | null
+}
+
+export interface ConversationTurnListResponse {
+  items: ConversationTurn[]
+  total: number
+  page: number
+  page_size: number
 }
 
 // ============================================================================

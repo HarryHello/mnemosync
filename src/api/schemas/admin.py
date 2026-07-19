@@ -231,6 +231,8 @@ class ConversationTurnItem(BaseModel):
 class ConversationTurnListResponse(BaseModel):
     total: int
     items: list[ConversationTurnItem]
+    page: int = 1
+    page_size: int = 50
 
 
 class ConversationClearResponse(BaseModel):

@@ -103,10 +103,59 @@ def test_list_respects_limit(app: FastAPI, store: SqliteConversationStore) -> No
         ("user", str(i), now - timedelta(seconds=10 - i))
         for i in range(5)
     ])
-    resp = TestClient(app).get("/panel/admin/conversation-turns?limit=2")
+    resp = TestClient(app).get("/panel/admin/conversation-turns?page_size=2")
     body = resp.json()
     assert len(body["items"]) == 2
-    assert body["total"] == 5  # total 反映全部, 不受 limit 影响
+    assert body["total"] == 5  # total 反映全部匹配数, 不受 page_size 影响
+    assert body["page"] == 1
+    assert body["page_size"] == 2
+
+
+def test_list_page_two_offsets_correctly(app: FastAPI, store: SqliteConversationStore) -> None:
+    now = datetime.now(timezone.utc)
+    _seed(store, [
+        ("user", str(i), now - timedelta(seconds=10 - i))
+        for i in range(5)
+    ])
+    # 全部 5 条按 ts DESC: 4, 3, 2, 1, 0
+    resp = TestClient(app).get("/panel/admin/conversation-turns?page=2&page_size=2")
+    body = resp.json()
+    contents = [it["content"] for it in body["items"]]
+    assert contents == ["2", "1"]
+    assert body["total"] == 5
+
+
+def test_list_role_filter(app: FastAPI, store: SqliteConversationStore) -> None:
+    now = datetime.now(timezone.utc)
+    _seed(store, [
+        ("user", "u1", now - timedelta(minutes=3)),
+        ("assistant", "a1", now - timedelta(minutes=2)),
+        ("user", "u2", now - timedelta(minutes=1)),
+    ])
+    resp = TestClient(app).get("/panel/admin/conversation-turns?role=user")
+    body = resp.json()
+    assert body["total"] == 2
+    assert [it["content"] for it in body["items"]] == ["u2", "u1"]
+
+
+def test_delete_single_turn_by_id(app: FastAPI, store: SqliteConversationStore) -> None:
+    now = datetime.now(timezone.utc)
+    _seed(store, [
+        ("user", "keep", now - timedelta(minutes=2)),
+        ("assistant", "remove", now - timedelta(minutes=1)),
+    ])
+    turns = asyncio.get_event_loop().run_until_complete(store.list_recent())
+    remove_id = next(t.id for t in turns if t.content == "remove")
+    resp = TestClient(app).delete(f"/panel/admin/conversation-turns/{remove_id}")
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    remaining = asyncio.get_event_loop().run_until_complete(store.list_recent())
+    assert [t.content for t in remaining] == ["keep"]
+
+
+def test_delete_single_turn_not_found(app: FastAPI) -> None:
+    resp = TestClient(app).delete("/panel/admin/conversation-turns/999999")
+    assert resp.status_code == 404
 
 
 def test_delete_without_since_wipes_all(app: FastAPI, store: SqliteConversationStore) -> None:

@@ -339,6 +339,44 @@ class SqliteMemoryStore:
                 rows = await cursor.fetchall()
                 return [self._row_to_entry(r) for r in rows]
 
+    async def list_page_for_user(
+        self,
+        source_user: str,
+        *,
+        limit: int,
+        offset: int,
+        memory_type: str | None = None,
+    ) -> tuple[list[MemoryEntry], int]:
+        """面板分页: 返回 (当前页, 匹配总数). is_forgotten=0 过滤, created_at DESC."""
+        where = ["source_user = ?", "is_forgotten = 0"]
+        params: list = [source_user]
+        if memory_type:
+            where.append("memory_type = ?")
+            params.append(memory_type)
+        where_sql = " AND ".join(where)
+
+        async with self._conn() as db:
+            async with db.execute(
+                f"SELECT COUNT(*) FROM memory_entries WHERE {where_sql}",
+                tuple(params),
+            ) as cursor:
+                row = await cursor.fetchone()
+                total = row[0] if row else 0
+
+            async with db.execute(
+                f"""
+                SELECT * FROM memory_entries
+                WHERE {where_sql}
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (*params, limit, offset),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                items = [self._row_to_entry(r) for r in rows]
+
+        return items, total
+
     async def iter_all(self, batch_size: int = 200):
         """按 created_at 升序分批产出所有记忆 (含遗忘). 用于 reindex/prune 遍历."""
         offset = 0

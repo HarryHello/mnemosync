@@ -131,6 +131,8 @@ class MemoryResponse(BaseModel):
 class MemoryListResponse(BaseModel):
     items: list[MemoryResponse]
     total: int
+    page: int = 1
+    page_size: int = 50
 
 
 class RelationshipResponse(BaseModel):
@@ -344,14 +346,28 @@ async def clear_logs(store: HttpLogStore = Depends(get_http_log_store)):
 @router.get("/memories", response_model=MemoryListResponse)
 async def list_memories(
     source_user: str = "default",
-    limit: int = Query(100, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    memory_type: str | None = Query(None, description="normal | permanent"),
     store: SqliteMemoryStore = Depends(get_memory_store),
 ):
-    """查询记忆列表."""
-    all_memories = await store.list_all_for_user(source_user, limit=limit)
+    """查询记忆列表 (服务器端分页).
+
+    total 是符合 source_user + memory_type 过滤的**全量匹配数**, 不是本页返回条数;
+    前端据此计算总页数。
+    """
+    offset = (page - 1) * page_size
+    items, total = await store.list_page_for_user(
+        source_user,
+        limit=page_size,
+        offset=offset,
+        memory_type=memory_type,
+    )
     return MemoryListResponse(
-        items=[_memory_to_response(m) for m in all_memories],
-        total=len(all_memories),
+        items=[_memory_to_response(m) for m in items],
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -993,16 +1009,20 @@ async def prune_memories(
 
 @router.get("/conversation-turns", response_model=ConversationTurnListResponse)
 async def list_conversation_turns(
-    limit: int = Query(100, ge=1, le=1000),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    role: str | None = Query(None, description="user | assistant, 省略=全部"),
     store: SqliteConversationStore = Depends(get_conversation_store),
 ):
-    """列出最近 N 条对话轮次 (跨前端统一流水). 按 ts 降序。
+    """按 ts 降序分页列出跨前端对话流水.
 
-    面板 "短期记忆" 视图用. 服务器把所有前端的对话汇聚到这里, 装填时
+    面板 "上下文流水" 视图用. 服务器把所有前端的对话汇聚到这里, 装填时
     按时间窗 + 模型窗双窗口从这里裁剪.
     """
-    turns = await store.list_recent(limit=limit)
-    total = await store.count()
+    offset = (page - 1) * page_size
+    turns, total = await store.list_page(
+        limit=page_size, offset=offset, role=role
+    )
     items = [
         ConversationTurnItem(
             id=t.id or 0,
@@ -1014,7 +1034,24 @@ async def list_conversation_turns(
         )
         for t in turns
     ]
-    return ConversationTurnListResponse(total=total, items=items)
+    return ConversationTurnListResponse(
+        total=total, items=items, page=page, page_size=page_size
+    )
+
+
+@router.delete("/conversation-turns/{turn_id}")
+async def delete_conversation_turn(
+    turn_id: int,
+    store: SqliteConversationStore = Depends(get_conversation_store),
+):
+    """删除单条对话轮次. 用于面板逐条清理.
+
+    注意: 不动其它前端已经拿到的上下文; 但下一次装填时该条从服务器视角"从未存在"。
+    """
+    ok = await store.delete_by_id(turn_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="conversation turn not found")
+    return {"success": True, "id": turn_id}
 
 
 @router.delete("/conversation-turns", response_model=ConversationClearResponse)

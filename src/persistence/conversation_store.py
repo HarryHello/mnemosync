@@ -140,6 +140,48 @@ class SqliteConversationStore:
                 rows = await cur.fetchall()
                 return [self._row_to_turn(r) for r in rows]
 
+    async def list_page(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        role: str | None = None,
+    ) -> tuple[list[ConversationTurn], int]:
+        """面板分页: 返回 (当前页, 匹配总数). ts DESC."""
+        where_sql = ""
+        params: list = []
+        if role in ("user", "assistant"):
+            where_sql = " WHERE role = ?"
+            params.append(role)
+
+        async with self._conn() as db:
+            async with db.execute(
+                f"SELECT COUNT(*) FROM conversation_turns{where_sql}",
+                tuple(params),
+            ) as cur:
+                row = await cur.fetchone()
+                total = row[0] if row else 0
+
+            async with db.execute(
+                f"SELECT id, role, content, ts, token_count, source_frontend "
+                f"FROM conversation_turns{where_sql} ORDER BY ts DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ) as cur:
+                rows = await cur.fetchall()
+                items = [self._row_to_turn(r) for r in rows]
+
+        return items, total
+
+    async def delete_by_id(self, turn_id: int) -> bool:
+        """删除单条对话轮次, 返回是否命中."""
+        async with self._conn() as db:
+            cur = await db.execute(
+                "DELETE FROM conversation_turns WHERE id = ?",
+                (turn_id,),
+            )
+            await db.commit()
+            return (cur.rowcount or 0) > 0
+
     async def delete_before(self, cutoff: datetime) -> int:
         """删除 cutoff 之前的所有记录, 返回删除数."""
         async with self._conn() as db:

@@ -12,6 +12,7 @@ import type {
   HttpLog,
   MemoryListResponse,
   Memory,
+  ConversationTurnListResponse,
   PersonaConfigRead,
   PersonaConfigUpdateBody,
   Relationship,
@@ -182,8 +183,22 @@ export async function clearLogs(): Promise<void> {
 // Admin API - Memories
 // ============================================================================
 
-export async function listMemories(sourceUser: string = 'default'): Promise<MemoryListResponse> {
-  return request<MemoryListResponse>(`${API_BASE}/admin/memories?source_user=${sourceUser}`)
+export interface MemoryListParams {
+  source_user?: string
+  page?: number
+  page_size?: number
+  memory_type?: string
+}
+
+export async function listMemories(
+  params: MemoryListParams = {},
+): Promise<MemoryListResponse> {
+  const q = new URLSearchParams()
+  q.set('source_user', params.source_user || 'default')
+  if (params.page) q.set('page', String(params.page))
+  if (params.page_size) q.set('page_size', String(params.page_size))
+  if (params.memory_type) q.set('memory_type', params.memory_type)
+  return request<MemoryListResponse>(`${API_BASE}/admin/memories?${q.toString()}`)
 }
 
 export async function getMemory(memoryId: string): Promise<Memory> {
@@ -192,6 +207,43 @@ export async function getMemory(memoryId: string): Promise<Memory> {
 
 export async function deleteMemory(memoryId: string): Promise<void> {
   await request(`${API_BASE}/admin/memories/${memoryId}`, { method: 'DELETE' })
+}
+
+// ============================================================================
+// Admin API - Conversation Turns (跨前端上下文流水)
+// ============================================================================
+
+export interface ConversationTurnListParams {
+  page?: number
+  page_size?: number
+  role?: 'user' | 'assistant'
+}
+
+export async function listConversationTurns(
+  params: ConversationTurnListParams = {},
+): Promise<ConversationTurnListResponse> {
+  const q = new URLSearchParams()
+  if (params.page) q.set('page', String(params.page))
+  if (params.page_size) q.set('page_size', String(params.page_size))
+  if (params.role) q.set('role', params.role)
+  const qs = q.toString()
+  return request<ConversationTurnListResponse>(
+    `${API_BASE}/admin/conversation-turns${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export async function deleteConversationTurn(turnId: number): Promise<void> {
+  await request(`${API_BASE}/admin/conversation-turns/${turnId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function clearConversationTurns(since?: string): Promise<{ deleted: number }> {
+  const qs = since ? `?since=${encodeURIComponent(since)}` : ''
+  return request<{ deleted: number }>(
+    `${API_BASE}/admin/conversation-turns${qs}`,
+    { method: 'DELETE' },
+  )
 }
 
 // ============================================================================
