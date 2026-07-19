@@ -231,12 +231,12 @@ watch(
       </div>
     </div>
 
-    <el-row :gutter="16">
-      <el-col :xs="24" :lg="12">
-        <el-card shadow="hover" class="section">
+    <el-row :gutter="16" class="equal-row">
+      <el-col :xs="24" :lg="12" class="equal-col">
+        <el-card shadow="hover" class="section equal-card">
           <template #header>
             <div class="sec-head">
-              <span class="sec-title">Reindex</span>
+              <span class="sec-title">重建记忆向量库 (Reindex)</span>
               <el-tag :type="{
                 idle: 'info',
                 running: 'warning',
@@ -294,7 +294,7 @@ watch(
                 :disabled="isRunning"
                 @click="onStartReindex"
               >
-                {{ isRunning ? '进行中…' : '启动 Reindex' }}
+                {{ isRunning ? '进行中…' : '启动' }}
               </el-button>
               <el-button @click="fetchStatus" :disabled="isRunning && reindexStarting">
                 刷新状态
@@ -304,11 +304,11 @@ watch(
         </el-card>
       </el-col>
 
-      <el-col :xs="24" :lg="12">
-        <el-card shadow="hover" class="section">
+      <el-col :xs="24" :lg="12" class="equal-col">
+        <el-card shadow="hover" class="section equal-card">
           <template #header>
             <div class="sec-head">
-              <span class="sec-title">Prune (独立清理)</span>
+              <span class="sec-title">清理低价值记忆 (Prune)</span>
             </div>
           </template>
 
@@ -329,7 +329,7 @@ watch(
                 :disabled="isRunning"
                 @click="onPreviewPrune"
               >
-                预览 (dry-run)
+                预览
               </el-button>
               <el-button
                 type="danger"
@@ -397,7 +397,7 @@ watch(
             :disabled="isRunning || resetRunning"
             @click="onPreviewReset"
           >
-            预览 (dry-run)
+            预览
           </el-button>
           <el-button
             type="danger"
@@ -442,6 +442,25 @@ watch(
 
 .section {
   margin-bottom: $space-4;
+}
+
+.equal-row {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.equal-col {
+  display: flex;
+}
+
+.equal-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+
+  :deep(.el-card__body) {
+    flex: 1;
+  }
 }
 
 .sec-head {

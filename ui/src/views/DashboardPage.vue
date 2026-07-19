@@ -157,8 +157,8 @@ onMounted(refresh)
       <el-descriptions v-if="health" :column="2" border>
         <el-descriptions-item label="状态">{{ health.status }}</el-descriptions-item>
         <el-descriptions-item label="版本">{{ health.version }}</el-descriptions-item>
-        <el-descriptions-item label="时间戳" :span="2">
-          <span class="mono">{{ health.timestamp }}</span>
+        <el-descriptions-item label="检查时间" :span="2">
+          <span class="mono">{{ new Date(health.timestamp).toLocaleString() }}</span>
         </el-descriptions-item>
       </el-descriptions>
       <el-alert
