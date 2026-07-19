@@ -644,6 +644,8 @@ CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
 | v0.2.4 | 2026-07-17 | 嵌入角色单绑定 + ChromaDB collection 锁定 `(service_id, model, dim)`; 新增 Reindex + Prune 端点; MemoryEntry 新增 `related_memories` 与 `memory_type` 字段消费路径 |
 | v0.2.6 | 2026-07-18 | 短期记忆从 LangGraph checkpoint 迁到服务端 `conversation_turns` 流水; 双时间+模型窗装填; 忽略客户端历史; source_frontend 元数据; 面板可查看/重置 |
 | v0.2.7 | 2026-07-18 | 新增 `POST /panel/admin/persona/reset`: 原子清空 memory_entries (含 PERMANENT) / relationships / conversation_turns / Chroma collection, 保留服务商与 API Key。面板 + CLI 二次确认后触发 |
+| v0.2.9 | 2026-07-19 | 关系基线抽入 TOML `[persona.relation]` (`persona_addressing` / `user_addressing` / `context`), memory / relationship 两个 Agent prompt 通过占位符消费 |
+| v0.2.10 | 2026-07-19 | **关系称呼动态演化**: `relationships` 表加 3 个 nullable 列 (同名字段); 新增 `relationship_audit_log` 表 (字段级 diff, source=agent/manual); 关系分析 Agent 获得 `update_addressing` tool (自证 `reason` ≥ 10 字, `persona_id`/`user_id` 由 factory 闭包绑定不可越权); `nodes.py._resolve_addressing` 优先读表, NULL 回退 TOML 基线; `PUT /panel/admin/relationship` + `GET /panel/admin/relationship/audit` 提供人工 override 与历史回溯 |
 
 ---
 

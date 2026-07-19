@@ -12,7 +12,11 @@ import type {
   HttpLog,
   MemoryListResponse,
   Memory,
+  PersonaConfigRead,
+  PersonaConfigUpdateBody,
   Relationship,
+  RelationshipAuditListResponse,
+  RelationshipUpdateBody,
   HealthResponse,
   ChatCompletionRequest,
   ChatCompletionResponse,
@@ -196,6 +200,22 @@ export async function deleteMemory(memoryId: string): Promise<void> {
 
 export async function getRelationship(userId: string = 'default'): Promise<Relationship> {
   return request<Relationship>(`${API_BASE}/admin/relationship?user_id=${userId}`)
+}
+
+export async function updateRelationship(body: RelationshipUpdateBody): Promise<Relationship> {
+  return request<Relationship>(`${API_BASE}/admin/relationship`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getRelationshipAudit(
+  userId: string = 'default',
+  limit: number = 20,
+): Promise<RelationshipAuditListResponse> {
+  return request<RelationshipAuditListResponse>(
+    `${API_BASE}/admin/relationship/audit?user_id=${userId}&limit=${limit}`,
+  )
 }
 
 // ============================================================================
@@ -389,6 +409,29 @@ export async function resetPersona(
   return request<PersonaResetResponse>(`${API_BASE}/admin/persona/reset`, {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+}
+
+// ============================================================================
+// Admin API - Persona Config (v0.2.11 面板人格编辑)
+// ============================================================================
+
+export async function getPersonaConfig(): Promise<PersonaConfigRead> {
+  return request<PersonaConfigRead>(`${API_BASE}/admin/persona`)
+}
+
+export async function updatePersonaConfig(
+  body: PersonaConfigUpdateBody,
+): Promise<PersonaConfigRead> {
+  return request<PersonaConfigRead>(`${API_BASE}/admin/persona`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function resetPersonaConfig(): Promise<PersonaConfigRead> {
+  return request<PersonaConfigRead>(`${API_BASE}/admin/persona`, {
+    method: 'DELETE',
   })
 }
 

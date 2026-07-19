@@ -122,6 +122,33 @@ export interface Relationship {
   relationship_type: string | null
   notes: string | null
   updated_at: string
+  persona_addressing: string
+  user_addressing: string
+  context: string
+}
+
+export interface RelationshipAuditEntry {
+  id: number
+  persona_id: string
+  user_id: string
+  changed_at: string
+  source: 'agent' | 'manual'
+  field_name: 'persona_addressing' | 'user_addressing' | 'context'
+  old_value: string | null
+  new_value: string | null
+  reason: string
+}
+
+export interface RelationshipAuditListResponse {
+  items: RelationshipAuditEntry[]
+}
+
+export interface RelationshipUpdateBody {
+  persona_addressing?: string | null
+  user_addressing?: string | null
+  context?: string | null
+  reason: string
+  user_id?: string
 }
 
 // ============================================================================
@@ -354,7 +381,27 @@ export interface DebugStatusResponse {
 }
 
 // ============================================================================
-// Chat (OpenAI Compatible)
+// Persona Config (v0.2.11 面板人格编辑)
+// ============================================================================
+
+export interface PersonaConfigRelation {
+  persona_addressing: string
+  user_addressing: string
+  context: string
+}
+
+export interface PersonaConfigRead {
+  name: string
+  prompt: string
+  relation: PersonaConfigRelation
+  overridden: boolean
+}
+
+export interface PersonaConfigUpdateBody {
+  name?: string | null
+  prompt?: string | null
+  relation?: PersonaConfigRelation | null
+}
 // ============================================================================
 
 export interface ChatMessage {

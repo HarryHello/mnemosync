@@ -130,7 +130,10 @@ def test_get_prompt_unknown_returns_404(app_auth: FastAPI, temp_store: PromptSto
 
 def test_put_prompt_saves_override(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
-    content = "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ custom"
+    content = (
+        "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ "
+        "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ __RELATION_CONTEXT__ custom"
+    )
     resp = client.put(
         "/panel/admin/prompts/memory_analysis",
         json={"content": content},
@@ -155,7 +158,10 @@ def test_put_prompt_missing_placeholder_returns_400(
 
 def test_delete_prompt_resets_override(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
-    content = "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__"
+    content = (
+        "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ "
+        "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ __RELATION_CONTEXT__"
+    )
     client.put("/panel/admin/prompts/memory_analysis", json={"content": content})
 
     resp = client.delete("/panel/admin/prompts/memory_analysis")
@@ -169,7 +175,10 @@ def test_validate_dry_run_does_not_persist(
     client = TestClient(app_auth)
     resp = client.post(
         "/panel/admin/prompts/memory_analysis:validate",
-        json={"content": "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__"},
+        json={"content": (
+            "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ "
+            "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ __RELATION_CONTEXT__"
+        )},
     )
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
@@ -186,12 +195,18 @@ def test_validate_reports_missing(app_auth: FastAPI, temp_store: PromptStore) ->
     body = resp.json()
     assert resp.status_code == 200
     assert body["ok"] is False
-    assert set(body["missing_placeholders"]) == {"SOURCE_USER", "CONVERSATION", "DECAY_TARGETS"}
+    assert set(body["missing_placeholders"]) == {
+        "SOURCE_USER", "CONVERSATION", "DECAY_TARGETS",
+        "PERSONA_NAME", "PERSONA_ADDRESSING", "USER_ADDRESSING", "RELATION_CONTEXT",
+    }
 
 
 def test_history_lists_backups(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
-    content = "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__"
+    content = (
+        "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ "
+        "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ __RELATION_CONTEXT__"
+    )
     # 需要至少 2 次 save 才有 1 份备份 (首次无旧覆盖)
     client.put("/panel/admin/prompts/memory_analysis", json={"content": content + " v0"})
     client.put("/panel/admin/prompts/memory_analysis", json={"content": content + " v1"})

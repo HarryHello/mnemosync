@@ -31,6 +31,7 @@ from src.tools import (
     MemoryRetriever,
     make_emotion_analyzer_tool,
     make_time_decay_calculator_tool,
+    make_update_addressing_tool,
     make_vector_search_tool,
 )
 
@@ -40,6 +41,23 @@ logger = logging.getLogger(__name__)
 
 # 与 src.api.lifespan 保持一致的默认路径 (相对项目根)
 _LLM_SERVICE_DB_PATH = "data/llm_service.db"
+
+
+def _resolve_addressing(rel, settings) -> tuple[str, str, str]:
+    """运行时称呼解析: 表值 (非 None) 优先, 否则回退 TOML 基线.
+
+    v0.2.10 起 relationships 表有 persona_addressing / user_addressing / context 三列.
+    Agent 或人工可通过 update_addressing tool / PUT 端点修改这些字段; 未被覆盖时
+    (NULL / rel is None) 沿用 settings.persona.relation.* 的安装基线.
+    """
+    base = settings.persona.relation
+    if rel is None:
+        return base.persona_addressing, base.user_addressing, base.context
+    return (
+        rel.persona_addressing or base.persona_addressing,
+        rel.user_addressing or base.user_addressing,
+        rel.context or base.context,
+    )
 
 
 def _make_multi_forwarder_with_resolver() -> tuple[MultiForwarder, RoleResolver]:
@@ -229,6 +247,9 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         ]
         logger.debug("  📉 待衰减评估: %d 条", len(decay_targets))
 
+        rel_for_addressing = await memory_store.get_relationship("default", source_user)
+        persona_addr, user_addr, rel_ctx = _resolve_addressing(rel_for_addressing, settings)
+
         logger.debug("  🚀 调用记忆分析 Agent...")
         out = await run_memory_analysis(
             forwarder=forwarder,
@@ -237,6 +258,10 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             tools=tools,
             decay_targets=decay_targets if decay_targets else None,
             max_iterations=6,
+            persona_name=settings.persona.name,
+            persona_addressing=persona_addr,
+            user_addressing=user_addr,
+            relation_context=rel_ctx,
         )
 
         logger.debug("  ✅ 记忆分析完成: 新记忆 %d 条, 衰减评估 %d 条",
@@ -288,13 +313,22 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
             logger.debug("  ⚠️ 无对话内容, 跳过")
             return {"relationship_delta": {}}
 
+        persona_addr, user_addr, rel_ctx = _resolve_addressing(rel, settings)
+
         logger.debug("  🚀 调用关系分析 Agent...")
         out = await run_relationship_analysis(
             forwarder=forwarder,
             current_relationship=current_rel_str,
             conversation=conversation,
-            tools=[make_emotion_analyzer_tool(forwarder)],
+            tools=[
+                make_emotion_analyzer_tool(forwarder),
+                make_update_addressing_tool(memory_store, "default", source_user),
+            ],
             max_iterations=3,
+            persona_name=settings.persona.name,
+            persona_addressing=persona_addr,
+            user_addressing=user_addr,
+            relation_context=rel_ctx,
         )
 
         logger.debug("  ✅ 关系分析完成: 亲密 %+.2f, 信任 %+.2f",

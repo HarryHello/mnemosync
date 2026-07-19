@@ -273,6 +273,10 @@ class Relationship:
     interaction_count: int = 0
     last_active: datetime | None = None
     notes: str = ""
+    # v0.2.10: 动态称呼演化. None = 沿用 TOML 基线 (settings.persona.relation)
+    persona_addressing: str | None = None
+    user_addressing: str | None = None
+    context: str | None = None
 
     @staticmethod
     def create(persona_id: str, user_id: str) -> "Relationship":
@@ -344,3 +348,22 @@ class CandidateMemory:
     overrides: str | None = None  # 被覆盖的已有记忆 ID
     related_to: list[str] = field(default_factory=list)
     reasoning: str = ""
+
+
+@dataclass
+class RelationshipAuditEntry:
+    """关系称呼字段的变更审计记录 (v0.2.10).
+
+    每次 Agent 或人工修改 relationships 表的 persona_addressing / user_addressing /
+    context 字段都会追加一条; 一次调用改多字段则写多条 (便于按字段查询/回退).
+    """
+
+    id: int  # 数据库 AUTOINCREMENT 分配, 未持久化前可为 0
+    persona_id: str
+    user_id: str
+    changed_at: datetime
+    source: str  # 'agent' | 'manual'
+    field_name: str  # 'persona_addressing' | 'user_addressing' | 'context'
+    old_value: str | None
+    new_value: str | None
+    reason: str

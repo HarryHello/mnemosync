@@ -1,8 +1,8 @@
 # 认证 API 文档
 
-> **系统版本**: v0.2.7
+> **系统版本**: v0.2.11
 > **文档状态**: 与代码同步
-> **最后更新**: 2026-07-18
+> **最后更新**: 2026-07-19
 
 ---
 
@@ -234,3 +234,6 @@ A: 独立。API Key 只做鉴权; 代理思考是否启用由 [`src/api/reasonin
 | v0.2.5 | 2026-07-18 | 新增调试面板路由 `/panel/admin/debug/*` (session-key / status / events / events/{id} / events/stream (SSE) / DELETE events), 均前置鉴权; `api_keys` 表新增 `source` 列 (`user` / `panel-debug`), `/panel/api-keys` 只列出 `source=user`, 调试面板自动生成的 key 不可通过用户 API 撤销 |
 | v0.2.6 | 2026-07-18 | 与代码对齐: 代理思考启用方式修正 (`reasoning_control.should_use_proxy_thinking` 4 条规则); 数据库表新增 `data/conversation.db` (跨前端短期记忆) 与 `data/http_logs.db` (v0.2.5 调试面板日志) |
 | v0.2.7 | 2026-07-18 | 新增 `POST /panel/admin/persona/reset`: 原子清空 memory_entries (含 PERMANENT) / relationships / conversation_turns / Chroma collection; 与 reindex 互斥; 通过 admin router 前置 `Depends(get_current_user)` 自动鉴权 |
+| v0.2.9 | 2026-07-19 | 关系基线 (`persona.relation.persona_addressing` / `user_addressing` / `context`) 抽入 TOML, 供 memory / relationship 两个 Agent 的 prompt 使用 |
+| v0.2.10 | 2026-07-19 | 关系称呼动态演化: `relationships` 表新增 3 个 nullable 列 (`persona_addressing` / `user_addressing` / `context`) + `relationship_audit_log` 表; 新增 `PUT /panel/admin/relationship` 与 `GET /panel/admin/relationship/audit`; 关系分析 Agent 获得 `update_addressing` tool (自证 `reason` ≥ 10 字, source='agent'); 面板 `RelationshipsPage` 加编辑对话框与变更历史面板 (可"回退到此"); `RelationshipResponse` 恒返回当前有效值 (表 → TOML 基线回退) |
+| v0.2.11 | 2026-07-19 | 人格配置面板编辑: 新增 `GET/PUT/DELETE /panel/admin/persona` 端点, 持久化 `data/persona_override.toml` (多层合并, 优先级: override > config.local [persona] > 资源默认); 运行时 `_reset_settings()` 热重载; 前端 `PromptsPage` 新增"人格编辑"标签页 (name / prompt / relation 三段编辑, 含保存与重置为默认) |

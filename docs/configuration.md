@@ -41,14 +41,16 @@ Mnemosync 用**单一配置源**: 项目根目录下的 `config.local.toml`。**
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `name` | str | `"助手"` | 人格名 (仅面板展示 / prompt 变量) |
-| `prompt` | str | `"你是一个温暖、有记忆能力的 AI 助手。"` | 系统提示词, 会拼进主对话 system |
+| `name` | str | `"纱雾"` | 人格名 (仅面板展示 / prompt 变量) |
+| `prompt` | str | 以和泉纱雾为原型的 "宅家内向的妹妹" 长提示 (见 [src/core/config.py](../src/core/config.py) `PersonaConfig`) | 系统提示词, 会拼进主对话 system |
 
 ```toml
 [persona]
 name = "Alice"
 prompt = "你是 Alice, 27 岁, 语气温和, 记得用户告诉你的每一件事。"
 ```
+
+**默认人格**: v0.2.9 起默认人格改为 "宅家内向的妹妹" (以和泉纱雾为原型), 用户身份为哥哥. 想换回中立助手风格请自行覆盖 `[persona]` 段.
 
 **设计原则**: 人格由服务器权威定义, 客户端 system 消息中的角色扮演会被 `prompt_cleaning` Agent 剥离, 只保留功能性指令 (格式要求、工具约束等)。见 [dev-decisions.md](dev-decisions.md) v0.2.1 相关章节。
 

@@ -13,6 +13,12 @@ import pytest
 from src.core.prompts.registry import PROMPT_REGISTRY
 from src.core.prompts.store import BACKUP_KEEP, PromptStore
 
+# v0.2.9: memory_analysis 新增 4 个占位符, 用一个常量集中管理测试用 body 片段
+_MA_ALL_PH = (
+    "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__ "
+    "PN=__PERSONA_NAME__ PA=__PERSONA_ADDRESSING__ UA=__USER_ADDRESSING__ RC=__RELATION_CONTEXT__"
+)
+
 
 # ─── 辅助 ──────────────────────────────────────────────────
 
@@ -44,19 +50,13 @@ def test_load_falls_back_to_default_when_no_override(store: PromptStore) -> None
 
 
 def test_override_wins_over_default(store: PromptStore) -> None:
-    body = (
-        "# custom memory_analysis\n"
-        "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__\n"
-    )
+    body = "# custom memory_analysis\n" + _MA_ALL_PH + "\n"
     store.save("memory_analysis", body)
     assert store.load("memory_analysis") == body
 
 
 def test_frontmatter_is_stripped_on_load(store: PromptStore) -> None:
-    body = (
-        "---\nversion: 3\n---\n"
-        "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__"
-    )
+    body = "---\nversion: 3\n---\n" + _MA_ALL_PH
     store.save("memory_analysis", body)
     loaded = store.load("memory_analysis")
     assert loaded.startswith("SOURCE=")  # frontmatter 已去除
@@ -64,10 +64,7 @@ def test_frontmatter_is_stripped_on_load(store: PromptStore) -> None:
 
 
 def test_load_raw_keeps_frontmatter(store: PromptStore) -> None:
-    body = (
-        "---\nversion: 5\n---\n"
-        "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__"
-    )
+    body = "---\nversion: 5\n---\n" + _MA_ALL_PH
     store.save("memory_analysis", body)
     raw = store.load_raw("memory_analysis")
     assert raw.startswith("---\nversion: 5\n---")
@@ -81,7 +78,7 @@ def test_corrupted_yaml_frontmatter_falls_back_gracefully(
         "---\n"
         "version: [unterminated\n"
         "---\n"
-        "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__"
+        + _MA_ALL_PH
     )
     # 直接写文件 (绕过 save 校验)
     (store.override_dir / "memory_analysis.md").write_text(bad, encoding="utf-8")
@@ -96,7 +93,7 @@ def test_corrupted_yaml_frontmatter_falls_back_gracefully(
 
 
 def test_validate_ok(store: PromptStore) -> None:
-    body = "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__"
+    body = _MA_ALL_PH
     r = store.validate("memory_analysis", body)
     assert r.ok
     assert r.missing_placeholders == []
@@ -152,7 +149,7 @@ def test_unknown_name_rejected_on_validate(store: PromptStore) -> None:
 
 
 def test_reset_deletes_override_and_backs_up(store: PromptStore) -> None:
-    body = "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__"
+    body = _MA_ALL_PH
     store.save("memory_analysis", body)
     assert (store.override_dir / "memory_analysis.md").is_file()
 
@@ -172,7 +169,7 @@ def test_reset_no_override_is_noop(store: PromptStore) -> None:
 
 
 def test_backups_rotate_to_keep_limit(store: PromptStore) -> None:
-    body = "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__"
+    body = _MA_ALL_PH
     # save 一次不产生备份 (首次无旧覆盖)
     store.save("memory_analysis", body + " v0")
     # 再 save BACKUP_KEEP + 3 次 → 每次都备份旧的
@@ -186,7 +183,7 @@ def test_backups_rotate_to_keep_limit(store: PromptStore) -> None:
 
 
 def test_same_second_backups_do_not_collide(store: PromptStore) -> None:
-    body = "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__"
+    body = _MA_ALL_PH
     store.save("memory_analysis", body + " v0")
     # 快速连续 save (可能同秒)
     for i in range(3):
@@ -209,10 +206,7 @@ def test_list_returns_all_registry_entries(store: PromptStore) -> None:
 
 
 def test_get_info_reports_version_from_frontmatter(store: PromptStore) -> None:
-    body = (
-        "---\nversion: 7\n---\n"
-        "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__"
-    )
+    body = "---\nversion: 7\n---\n" + _MA_ALL_PH
     store.save("memory_analysis", body)
     info = store.get_info("memory_analysis")
     assert info.overridden is True
@@ -220,7 +214,7 @@ def test_get_info_reports_version_from_frontmatter(store: PromptStore) -> None:
 
 
 def test_list_history_returns_backups(store: PromptStore) -> None:
-    body = "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__"
+    body = _MA_ALL_PH
     store.save("memory_analysis", body + " v0")
     time.sleep(0.01)
     store.save("memory_analysis", body + " v1")

@@ -29,7 +29,15 @@ class PromptSpec:
 PROMPT_REGISTRY: dict[str, PromptSpec] = {
     "memory_analysis": PromptSpec(
         name="memory_analysis",
-        placeholders=("SOURCE_USER", "CONVERSATION", "DECAY_TARGETS"),
+        placeholders=(
+            "SOURCE_USER",
+            "CONVERSATION",
+            "DECAY_TARGETS",
+            "PERSONA_NAME",
+            "PERSONA_ADDRESSING",
+            "USER_ADDRESSING",
+            "RELATION_CONTEXT",
+        ),
         description="记忆分析 Agent",
     ),
     "memory_analysis_decay_header": PromptSpec(
@@ -39,7 +47,14 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
     ),
     "relationship_analysis": PromptSpec(
         name="relationship_analysis",
-        placeholders=("CURRENT_REL", "CONVERSATION"),
+        placeholders=(
+            "CURRENT_REL",
+            "CONVERSATION",
+            "PERSONA_NAME",
+            "PERSONA_ADDRESSING",
+            "USER_ADDRESSING",
+            "RELATION_CONTEXT",
+        ),
         description="关系分析 Agent",
     ),
     "prompt_cleaning_system": PromptSpec(

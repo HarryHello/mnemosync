@@ -257,6 +257,28 @@ class PersonaResetResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class PersonaConfigRelation(BaseModel):
+    """人格关系框架 (v0.2.11). 与 PersonaConfigRead 嵌套."""
+    persona_addressing: str = "人格"
+    user_addressing: str = "用户"
+    context: str = "AI 助手与用户"
+
+
+class PersonaConfigRead(BaseModel):
+    """面板人格编辑视图 (v0.2.11). 反映多层合并后的当前有效值."""
+    name: str = "助手"
+    prompt: str = "你是一个有记忆能力的 AI 助手。"
+    relation: PersonaConfigRelation = Field(default_factory=PersonaConfigRelation)
+    overridden: bool = False  # data/persona_override.toml 是否存在
+
+
+class PersonaConfigUpdateBody(BaseModel):
+    """PUT /admin/persona body. 三字段都可选, 但至少传一个."""
+    name: str | None = None
+    prompt: str | None = None
+    relation: PersonaConfigRelation | None = None
+
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
@@ -285,4 +307,7 @@ __all__ = [
     "ConversationClearResponse",
     "PersonaResetBody",
     "PersonaResetResponse",
+    "PersonaConfigRelation",
+    "PersonaConfigRead",
+    "PersonaConfigUpdateBody",
 ]

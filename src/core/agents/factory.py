@@ -160,8 +160,17 @@ async def run_memory_analysis(
     tools: list,
     decay_targets: list[dict] | None = None,
     max_iterations: int = 6,
+    *,
+    persona_name: str,
+    persona_addressing: str,
+    user_addressing: str,
+    relation_context: str,
 ) -> MemoryAnalysisOutput:
-    """记忆分析 Agent: ReAct 循环, 提取候选 + 衰减评估."""
+    """记忆分析 Agent: ReAct 循环, 提取候选 + 衰减评估.
+
+    persona_name / persona_addressing / user_addressing / relation_context: v0.2.9 起
+    透传给 prompt, 让 Agent 用 "哥哥 X" 而不是 "用户 X" 提取记忆.
+    """
     decay_section = ""
     if decay_targets:
         lines = []
@@ -175,6 +184,10 @@ async def run_memory_analysis(
     user_prompt = build_memory_analysis_prompt(
         source_user=source_user, conversation=conversation,
         decay_targets_section=decay_section,
+        persona_name=persona_name,
+        persona_addressing=persona_addressing,
+        user_addressing=user_addressing,
+        relation_context=relation_context,
     )
     with use_agent("memory_analysis"):
         result = await run_react_loop(
@@ -212,10 +225,23 @@ async def run_relationship_analysis(
     conversation: str,
     tools: list,
     max_iterations: int = 3,
+    *,
+    persona_name: str,
+    persona_addressing: str,
+    user_addressing: str,
+    relation_context: str,
 ) -> RelationshipAnalysisOutput:
-    """关系分析 Agent: CoT, 调用 emotion_analyzer 后输出亲密度增量."""
+    """关系分析 Agent: CoT, 调用 emotion_analyzer 后输出亲密度增量.
+
+    persona_name / persona_addressing / user_addressing / relation_context: v0.2.9 起
+    透传给 prompt, 让 Agent 用兄妹/主仆等关系基线判断信号, 不再默认助手-用户.
+    """
     user_prompt = build_relationship_analysis_prompt(
         current_relationship=current_relationship, conversation=conversation,
+        persona_name=persona_name,
+        persona_addressing=persona_addressing,
+        user_addressing=user_addressing,
+        relation_context=relation_context,
     )
     try:
         with use_agent("relationship_analysis"):

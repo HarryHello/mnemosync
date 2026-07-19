@@ -98,3 +98,77 @@ def test_relationship_missing_for_unknown_user(app: FastAPI) -> None:
     assert body["intimacy"] == 0.0
     assert body["trust"] == 0.0
     assert body["relationship_type"] == "stranger"
+
+
+# ─── v0.2.10 动态称呼演化 ────────────────────────────
+
+
+def test_response_falls_back_to_toml_addressing_when_null(app: FastAPI) -> None:
+    """新装 → 表空 → 响应用 settings.persona.relation.* 填充 addressing."""
+    from src.core.config import get_settings
+    base = get_settings().persona.relation
+    client = TestClient(app)
+    resp = client.get("/panel/admin/relationship?user_id=default")
+    body = resp.json()
+    assert body["persona_addressing"] == base.persona_addressing
+    assert body["user_addressing"] == base.user_addressing
+    assert body["context"] == base.context
+
+
+def test_put_relationship_updates_addressing_and_writes_audit(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.put(
+        "/panel/admin/relationship",
+        json={
+            "user_addressing": "小哥",
+            "reason": "人工设置初值 (面板)",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["user_addressing"] == "小哥"
+
+    audit = client.get("/panel/admin/relationship/audit?user_id=default").json()
+    assert len(audit["items"]) == 1
+    assert audit["items"][0]["source"] == "manual"
+    assert audit["items"][0]["field_name"] == "user_addressing"
+    assert audit["items"][0]["new_value"] == "小哥"
+
+
+def test_put_relationship_rejects_missing_reason(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.put(
+        "/panel/admin/relationship",
+        json={"user_addressing": "小哥"},
+    )
+    assert resp.status_code == 422  # Pydantic reason required
+
+
+def test_put_relationship_rejects_too_short_reason(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.put(
+        "/panel/admin/relationship",
+        json={"user_addressing": "小哥", "reason": "短"},
+    )
+    assert resp.status_code == 422  # min_length=5
+
+
+def test_put_relationship_rejects_all_none_fields(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.put(
+        "/panel/admin/relationship",
+        json={"reason": "只有 reason, 没传字段"},
+    )
+    assert resp.status_code == 400
+
+
+def test_audit_orders_by_id_desc(app: FastAPI) -> None:
+    client = TestClient(app)
+    client.put("/panel/admin/relationship",
+               json={"user_addressing": "v1", "reason": "first change"})
+    client.put("/panel/admin/relationship",
+               json={"user_addressing": "v2", "reason": "second change"})
+    audit = client.get("/panel/admin/relationship/audit?user_id=default").json()
+    assert len(audit["items"]) == 2
+    assert audit["items"][0]["new_value"] == "v2"
+    assert audit["items"][1]["new_value"] == "v1"

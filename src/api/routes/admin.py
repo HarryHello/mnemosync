@@ -12,7 +12,7 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.api.deps import (
     get_api_key_store,
@@ -26,11 +26,15 @@ from src.api.deps import (
     get_vector_store,
 )
 from src.api.routes.auth import get_current_user
+from src.core.config import get_settings
 from src.core.models.resolver import RoleResolver
 from src.api.schemas.admin import (
     ConversationClearResponse,
     ConversationTurnItem,
     ConversationTurnListResponse,
+    PersonaConfigRead,
+    PersonaConfigRelation,
+    PersonaConfigUpdateBody,
     PersonaResetBody,
     PersonaResetResponse,
     ProbeDimensionBody,
@@ -50,6 +54,13 @@ from src.api.schemas.admin import (
     RoleBindingItem,
     RoleBindingListResponse,
     RoleBindingReorderBody,
+)
+from src.core.config import (
+    _delete_persona_override,
+    _load_persona_override,
+    _reset_settings,
+    _write_persona_override,
+    get_settings,
 )
 from src.core.prompts import get_prompt_store
 from src.core.prompts.registry import PROMPT_REGISTRY
@@ -130,6 +141,38 @@ class RelationshipResponse(BaseModel):
     relationship_type: Optional[str]
     notes: Optional[str]
     updated_at: str
+    # v0.2.10: 动态称呼演化. 序列化时保证非 None (若表中为 NULL 则填 TOML 基线值),
+    # 前端拿到的永远是"当前有效值".
+    persona_addressing: str
+    user_addressing: str
+    context: str
+
+
+class RelationshipUpdateBody(BaseModel):
+    """v0.2.10: 人工 override 关系称呼/背景 (source='manual').
+
+    三字段都可选传, 但至少一个非 None. reason 必填 (至少 5 字), 用于审计.
+    """
+
+    persona_addressing: Optional[str] = None
+    user_addressing: Optional[str] = None
+    context: Optional[str] = None
+    reason: str = Field(..., min_length=5, max_length=500)
+    user_id: str = "default"
+
+
+class RelationshipAuditItem(BaseModel):
+    id: int
+    changed_at: str
+    source: str
+    field_name: str
+    old_value: Optional[str]
+    new_value: Optional[str]
+    reason: str
+
+
+class RelationshipAuditResponse(BaseModel):
+    items: list[RelationshipAuditItem]
 
 
 class DashboardStatsResponse(BaseModel):
@@ -347,7 +390,12 @@ async def get_relationship(
 
     关系尚未建立 (新装 / 人格重置后 / 与新 user_id 首次交互) 时返回默认 stranger/0/0,
     不落库 — 后续对话时 `lifecycle.update_relationship` 会自然创建真实行。
+
+    v0.2.10: 响应含 persona_addressing / user_addressing / context. 表中为 NULL 时
+    用 settings.persona.relation.* 基线填充, 前端拿到的永远是"当前有效值".
     """
+    settings = get_settings()
+    base = settings.persona.relation
     rel = await store.get_relationship("default", user_id)
     if not rel:
         return RelationshipResponse(
@@ -358,6 +406,9 @@ async def get_relationship(
             relationship_type="stranger",
             notes=None,
             updated_at="",
+            persona_addressing=base.persona_addressing,
+            user_addressing=base.user_addressing,
+            context=base.context,
         )
 
     return RelationshipResponse(
@@ -368,6 +419,67 @@ async def get_relationship(
         relationship_type=rel.type,
         notes=rel.notes,
         updated_at=rel.last_active.isoformat() if rel.last_active else "",
+        persona_addressing=rel.persona_addressing or base.persona_addressing,
+        user_addressing=rel.user_addressing or base.user_addressing,
+        context=rel.context or base.context,
+    )
+
+
+@router.put("/relationship", response_model=RelationshipResponse)
+async def update_relationship_addressing(
+    body: RelationshipUpdateBody,
+    store: SqliteMemoryStore = Depends(get_memory_store),
+):
+    """人工 override 关系称呼/背景 (source='manual').
+
+    v0.2.10: 允许通过面板/CLI 修改 persona_addressing / user_addressing / context.
+    - 三字段可选, 至少传一个非 None
+    - reason 必填 (min 5), 写入审计日志
+    - 相同值会被跳过, 不写 audit
+    - 相同响应 shape 与 GET 一致
+    """
+    provided = {
+        "persona_addressing": body.persona_addressing,
+        "user_addressing": body.user_addressing,
+        "context": body.context,
+    }
+    if all(v is None for v in provided.values()):
+        raise HTTPException(400, detail="至少需要传入一个字段")
+    try:
+        await store.update_relationship_addressing(
+            "default", body.user_id,
+            persona_addressing=body.persona_addressing,
+            user_addressing=body.user_addressing,
+            context=body.context,
+            source="manual",
+            reason=body.reason,
+        )
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    return await get_relationship(user_id=body.user_id, store=store)
+
+
+@router.get("/relationship/audit", response_model=RelationshipAuditResponse)
+async def list_relationship_audit(
+    user_id: str = "default",
+    limit: int = Query(20, ge=1, le=200),
+    store: SqliteMemoryStore = Depends(get_memory_store),
+):
+    """按时间倒序返回关系称呼字段的审计条目 (v0.2.10)."""
+    entries = await store.list_relationship_audit("default", user_id, limit=limit)
+    return RelationshipAuditResponse(
+        items=[
+            RelationshipAuditItem(
+                id=e.id,
+                changed_at=e.changed_at.isoformat(),
+                source=e.source,
+                field_name=e.field_name,
+                old_value=e.old_value,
+                new_value=e.new_value,
+                reason=e.reason,
+            )
+            for e in entries
+        ]
     )
 
 
@@ -1023,4 +1135,70 @@ async def reset_persona(
         vector_reset=vector_reset,
         errors=errors,
     )
+
+
+# ============================================================================
+# 人格配置编辑 (v0.2.11) —— 覆盖 data/persona_override.toml, 热重载
+# ============================================================================
+
+
+def _build_persona_read() -> PersonaConfigRead:
+    """从多层合并后的 settings 构建响应."""
+    s = get_settings()
+    rel = s.persona.relation
+    override_exists = _load_persona_override() is not None
+    return PersonaConfigRead(
+        name=s.persona.name,
+        prompt=s.persona.prompt,
+        relation=PersonaConfigRelation(
+            persona_addressing=rel.persona_addressing,
+            user_addressing=rel.user_addressing,
+            context=rel.context,
+        ),
+        overridden=override_exists,
+    )
+
+
+@router.get("/persona", response_model=PersonaConfigRead)
+async def get_persona_config():
+    """获取当前人格配置 (多层合并后). 不返回 TOML 原始内容, 返回解析后的字段."""
+    return _build_persona_read()
+
+
+@router.put("/persona", response_model=PersonaConfigRead)
+async def update_persona_config(body: PersonaConfigUpdateBody):
+    """写入 data/persona_override.toml, 覆盖人格字段.
+
+    三字段都可选传, 但至少传一个. 写入后立即热重载 (调用 _reset_settings).
+    """
+    if body.name is None and body.prompt is None and body.relation is None:
+        raise HTTPException(400, detail="至少需要传入一个字段")
+
+    # 读取当前 override (若存在) 作为增量基础
+    current = _load_persona_override() or {}
+    if body.name is not None:
+        current["name"] = body.name
+    if body.prompt is not None:
+        current["prompt"] = body.prompt
+    if body.relation is not None:
+        current_rel = dict(current.get("relation", {}))
+        if body.relation.persona_addressing is not None:
+            current_rel["persona_addressing"] = body.relation.persona_addressing
+        if body.relation.user_addressing is not None:
+            current_rel["user_addressing"] = body.relation.user_addressing
+        if body.relation.context is not None:
+            current_rel["context"] = body.relation.context
+        current["relation"] = current_rel
+
+    _write_persona_override(current)
+    _reset_settings()
+    return _build_persona_read()
+
+
+@router.delete("/persona", response_model=PersonaConfigRead)
+async def reset_persona_config():
+    """删除 persona override 文件, 回退到 config.local.toml / 资源默认值."""
+    _delete_persona_override()
+    _reset_settings()
+    return _build_persona_read()
 

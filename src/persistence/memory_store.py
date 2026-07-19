@@ -16,6 +16,7 @@ from src.core.memory.models import (
     MemoryEntry,
     MemoryType,
     Relationship,
+    RelationshipAuditEntry,
     Visibility,
 )
 
@@ -136,6 +137,33 @@ class SqliteMemoryStore:
                 PRIMARY KEY (persona_id, user_id)
             )
         """)
+        # v0.2.10: 动态称呼演化. NULL = 沿用 TOML 基线.
+        # SQLite 不支持 ADD COLUMN IF NOT EXISTS, 手动查 PRAGMA table_info.
+        async with db.execute("PRAGMA table_info(relationships)") as cur:
+            existing_cols = {row[1] async for row in cur}
+        for col in ("persona_addressing", "user_addressing", "context"):
+            if col not in existing_cols:
+                await db.execute(
+                    f"ALTER TABLE relationships ADD COLUMN {col} TEXT"
+                )
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS relationship_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                persona_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                changed_at TIMESTAMP NOT NULL,
+                source TEXT NOT NULL,
+                field_name TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                reason TEXT NOT NULL
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_persona_user "
+            "ON relationship_audit_log(persona_id, user_id, changed_at DESC)"
+        )
 
     async def init_db(self) -> None:
         """兼容旧接口: 幂等地初始化 schema. 长连接模式下 connect() 已包含此步骤."""
@@ -335,7 +363,10 @@ class SqliteMemoryStore:
         async with self._conn() as db:
             async with db.execute(
                 """
-                SELECT * FROM relationships WHERE persona_id = ? AND user_id = ?
+                SELECT persona_id, user_id, type, intimacy_score, trust_level,
+                       interaction_count, last_active, notes,
+                       persona_addressing, user_addressing, context
+                FROM relationships WHERE persona_id = ? AND user_id = ?
                 """,
                 (persona_id, user_id),
             ) as cursor:
@@ -348,8 +379,9 @@ class SqliteMemoryStore:
                 """
                 INSERT OR REPLACE INTO relationships
                 (persona_id, user_id, type, intimacy_score, trust_level,
-                 interaction_count, last_active, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 interaction_count, last_active, notes,
+                 persona_addressing, user_addressing, context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rel.persona_id,
@@ -360,9 +392,159 @@ class SqliteMemoryStore:
                     rel.interaction_count,
                     _dt(rel.last_active),
                     rel.notes,
+                    rel.persona_addressing,
+                    rel.user_addressing,
+                    rel.context,
                 ),
             )
             await db.commit()
+
+    # ============ Relationship 称呼动态演化 (v0.2.10) ============
+
+    _ADDRESSING_FIELDS = ("persona_addressing", "user_addressing", "context")
+
+    async def update_relationship_addressing(
+        self,
+        persona_id: str,
+        user_id: str,
+        *,
+        persona_addressing: str | None = None,
+        user_addressing: str | None = None,
+        context: str | None = None,
+        source: str,
+        reason: str,
+    ) -> list[RelationshipAuditEntry]:
+        """更新关系的称呼/背景字段, 同步写审计日志.
+
+        None = 该字段本次不改 (保持旧值).
+        source ∈ {'agent', 'manual'}. reason 由调用方保证非空.
+
+        Returns:
+            本次实际写入的 audit 条目 (改了几个字段就有几条).
+        """
+        if source not in ("agent", "manual"):
+            raise ValueError(f"source must be 'agent' or 'manual', got {source!r}")
+        proposals = {
+            "persona_addressing": persona_addressing,
+            "user_addressing": user_addressing,
+            "context": context,
+        }
+        if all(v is None for v in proposals.values()):
+            raise ValueError("至少需要传入一个待更新字段")
+
+        now = datetime.now(timezone.utc)
+        audit_entries: list[RelationshipAuditEntry] = []
+        async with self._conn() as db:
+            # 读现状: 若无 relationship 行则创建 stranger 基线
+            async with db.execute(
+                "SELECT persona_addressing, user_addressing, context "
+                "FROM relationships WHERE persona_id = ? AND user_id = ?",
+                (persona_id, user_id),
+            ) as cur:
+                row = await cur.fetchone()
+
+            if row is None:
+                # 建行, 用 Relationship.create 的默认值
+                new_rel = Relationship.create(persona_id, user_id)
+                await db.execute(
+                    """
+                    INSERT INTO relationships
+                    (persona_id, user_id, type, intimacy_score, trust_level,
+                     interaction_count, last_active, notes,
+                     persona_addressing, user_addressing, context)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+                    """,
+                    (
+                        new_rel.persona_id,
+                        new_rel.user_id,
+                        new_rel.type,
+                        new_rel.intimacy_score,
+                        new_rel.trust_level,
+                        new_rel.interaction_count,
+                        _dt(new_rel.last_active),
+                        new_rel.notes,
+                    ),
+                )
+                current = {k: None for k in self._ADDRESSING_FIELDS}
+            else:
+                current = dict(zip(self._ADDRESSING_FIELDS, row))
+
+            for field_name, new_val in proposals.items():
+                if new_val is None:
+                    continue
+                old_val = current[field_name]
+                if old_val == new_val:
+                    continue  # 无变化则跳过写入 (audit 也不记)
+                await db.execute(
+                    f"UPDATE relationships SET {field_name} = ? "
+                    "WHERE persona_id = ? AND user_id = ?",
+                    (new_val, persona_id, user_id),
+                )
+                cur = await db.execute(
+                    """
+                    INSERT INTO relationship_audit_log
+                    (persona_id, user_id, changed_at, source,
+                     field_name, old_value, new_value, reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        persona_id,
+                        user_id,
+                        _dt(now),
+                        source,
+                        field_name,
+                        old_val,
+                        new_val,
+                        reason,
+                    ),
+                )
+                audit_entries.append(
+                    RelationshipAuditEntry(
+                        id=cur.lastrowid or 0,
+                        persona_id=persona_id,
+                        user_id=user_id,
+                        changed_at=now,
+                        source=source,
+                        field_name=field_name,
+                        old_value=old_val,
+                        new_value=new_val,
+                        reason=reason,
+                    )
+                )
+            await db.commit()
+        return audit_entries
+
+    async def list_relationship_audit(
+        self, persona_id: str, user_id: str, limit: int = 20
+    ) -> list[RelationshipAuditEntry]:
+        """按 changed_at 倒序返回审计条目."""
+        async with self._conn() as db:
+            async with db.execute(
+                """
+                SELECT id, persona_id, user_id, changed_at, source,
+                       field_name, old_value, new_value, reason
+                FROM relationship_audit_log
+                WHERE persona_id = ? AND user_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (persona_id, user_id, limit),
+            ) as cur:
+                rows = await cur.fetchall()
+        return [
+            RelationshipAuditEntry(
+                id=r[0],
+                persona_id=r[1],
+                user_id=r[2],
+                changed_at=_parse_dt(r[3]) or datetime.now(timezone.utc),
+                source=r[4],
+                field_name=r[5],
+                old_value=r[6],
+                new_value=r[7],
+                reason=r[8],
+            )
+            for r in rows
+        ]
 
     # ============ 批量清理 (人格状态重置) ============
 
@@ -419,4 +601,7 @@ class SqliteMemoryStore:
             interaction_count=row[5],
             last_active=_parse_dt(row[6]),
             notes=row[7] or "",
+            persona_addressing=row[8] if len(row) > 8 else None,
+            user_addressing=row[9] if len(row) > 9 else None,
+            context=row[10] if len(row) > 10 else None,
         )

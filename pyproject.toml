@@ -1,6 +1,6 @@
 [project]
 name = "mnemosync"
-version = "0.2.8"
+version = "0.2.11"
 description = "基于 LangGraph 多 Agent 编排的跨平台人格记忆管理系统"
 readme = "README.md"
 license = { text = "MIT" }

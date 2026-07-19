@@ -25,18 +25,16 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_PERSONA = "你是一个温暖、有记忆能力的 AI 助手。"
-DEFAULT_PERSONA_NAME = "助手"
-
-
 def _get_default_persona() -> tuple[str, str]:
-    """从服务器配置获取默认人格."""
+    """从服务器配置获取默认人格; 失败时回落到资源 TOML."""
     try:
         from src.core.config import get_settings
         s = get_settings()
         return s.persona.prompt, s.persona.name
     except Exception:
-        return DEFAULT_PERSONA, DEFAULT_PERSONA_NAME
+        from src.core.config import _load_default_persona
+        data = _load_default_persona()
+        return data["prompt"], data["name"]
 
 
 def _read_persona(path: str | None) -> tuple[str, str]:
@@ -49,7 +47,7 @@ def _read_persona(path: str | None) -> tuple[str, str]:
     p = Path(path)
     if not p.is_file():
         print(f"❌ 人格文件不存在: {path}", file=sys.stderr)
-        return DEFAULT_PERSONA, DEFAULT_PERSONA_NAME
+        return _get_default_persona()
     return p.read_text(encoding="utf-8").strip(), p.stem
 
 
