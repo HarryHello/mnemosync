@@ -1,9 +1,9 @@
 # 架构设计文档 | Architecture Design
 
-> **系统版本**: v0.2.6
+> **系统版本**: v0.2.11
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
-> **最后更新**: 2026-07-18
+> **最后更新**: 2026-07-19
 > **作者**: HarryHelloo
 
 ---
@@ -289,3 +289,8 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 | v0.2.4 | 2026-07-17 | 嵌入角色单绑定 + Chroma collection 锁 (service_id/model/dim); Reindex + Prune 端点 |
 | v0.2.5 | 2026-07-17 | 调试面板 (DebugEventBus + SSE + panel-debug API key + use_agent 标签点) |
 | v0.2.6 | 2026-07-18 | 短期记忆重定义: 服务器维护跨前端 `conversation_turns` 流, 时间窗 (默认 7d) + 模型窗双窗装填, 忽略客户端携带的历史 |
+| v0.2.7 | 2026-07-18 | 新增 `POST /panel/admin/persona/reset`: 原子清空 memory_entries (含 PERMANENT) / relationships / conversation_turns / Chroma collection, 保留服务商 / API Key / 提示词覆盖 |
+| v0.2.8 | 2026-07-18 | CLI `--debug` 模式: 全链路请求/响应落库到 `data/http_logs.db`, 面板 `请求日志` 支持按 note / status / 时间筛选 |
+| v0.2.9 | 2026-07-18 | 默认人格改为"宅家内向的妹妹"; TOML `[persona.relation]` 抽出 `persona_addressing / user_addressing / context` 三字段, 记忆分析 / 关系分析 prompt 通过占位符消费 |
+| v0.2.10 | 2026-07-19 | 关系称呼动态演化: `relationships` 加 3 个 nullable 列 + `relationship_audit_log` 表; 关系分析 Agent 获 `update_addressing` 工具; 面板 `RelationshipsPage` 加编辑对话框 + 变更历史 + 回退按钮 |
+| v0.2.11 | 2026-07-19 | 人格面板编辑: `GET/PUT/DELETE /panel/admin/persona` + `data/persona_override.toml` (优先级最高); 面板 `MemoriesPage` 全列 sortable + filter (含 `source_frontend` 枚举筛选); 亲密度 / 信任度进度条按数值分档着色; 全局品牌图标改为 SVG favicon; 文档批量对齐 |

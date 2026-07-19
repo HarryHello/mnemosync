@@ -19,7 +19,7 @@
 │  \_│  │_╱╲_│ ╲_╱╲____╱╲_│  │_╱╲___╱╲____╱  \_/ ╲_│ ╲_╱╲____╱  │
 │                                                               │
 │                         Mnemosync                             │
-│                          v0.2.6                               │
+│                          v0.2.11                              │
 │                                                               │
 ╰───────────────────────────────────────────────────────────────╯
 ```
@@ -212,6 +212,11 @@ Mnemosync > set-embedding-model dashscope text-embedding-v3 --dim 1024
 - [x] **v0.2.4** — 嵌入单绑定 + Reindex + Prune + 元数据字段
 - [x] **v0.2.5** — 调试聊天面板 + HTTP hop 观测
 - [x] **v0.2.6** — 跨前端短期记忆双窗装填
+- [x] **v0.2.7** — `POST /panel/admin/persona/reset` 原子清空业务数据
+- [x] **v0.2.8** — CLI `--debug` 全链路请求/响应落库 (`data/http_logs.db`)
+- [x] **v0.2.9** — `[persona.relation]` 三字段基线 (`persona_addressing / user_addressing / context`), 默认人格改为"宅家内向的妹妹"
+- [x] **v0.2.10** — 关系称呼动态演化: `update_addressing` tool + `relationship_audit_log`; 面板编辑对话框 + 变更历史 + 回退
+- [x] **v0.2.11** — 人格面板编辑 (`data/persona_override.toml` 热重载); `MemoriesPage` 全列 sortable + filter; 亲密度 / 信任度按数值分档着色; SVG favicon 品牌图标
 - [ ] **未来** — 多人格 (`persona_id`) / 多用户 / 人格自我演化
 
 ---

@@ -207,6 +207,8 @@ AstrBot / AIRI / Web  ── 走 /v1/chat/completions
 | `data/api_keys.db` | 前端 API Key (含 v0.2.5 `source` 列) |
 | `data/conversation.db` | v0.2.6 跨前端短期记忆 (`conversation_turns`) |
 | `data/http_logs.db` | v0.2.5 调试面板 HTTP 日志 |
+| `data/memory.db` | v0.2.10 长期记忆 + `relationship_audit_log` (字段级审计) |
+| `data/persona_override.toml` | v0.2.11 面板 `PUT /panel/admin/persona` 落地的人格覆盖 (优先级最高), 见 [configuration.md §3.1](configuration.md#31-persona-v021-服务器优先人格) |
 
 ---
 

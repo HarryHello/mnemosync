@@ -1,9 +1,9 @@
 # 配置文档 | Configuration
 
-> **系统版本**: v0.2.6
+> **系统版本**: v0.2.11
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
-> **最后更新**: 2026-07-18
+> **最后更新**: 2026-07-19
 > **作者**: HarryHelloo
 
 ---
@@ -53,6 +53,25 @@ prompt = "你是 Alice, 27 岁, 语气温和, 记得用户告诉你的每一件�
 **默认人格**: v0.2.9 起默认人格改为 "宅家内向的妹妹" (以和泉纱雾为原型), 用户身份为哥哥. 想换回中立助手风格请自行覆盖 `[persona]` 段.
 
 **设计原则**: 人格由服务器权威定义, 客户端 system 消息中的角色扮演会被 `prompt_cleaning` Agent 剥离, 只保留功能性指令 (格式要求、工具约束等)。见 [dev-decisions.md](dev-decisions.md) v0.2.1 相关章节。
+
+**v0.2.11 面板覆盖层**: 面板 `设置 → 人格` 页 (`PUT /panel/admin/persona`) 会把编辑结果写入 `data/persona_override.toml`, 优先级 **override > config.local.toml [persona] > 资源默认值** (见 [§6 加载流程](#6-加载流程))。`data/persona_override.toml` 由代码机械生成 (每次 PUT 全量覆写), 结构固定:
+
+```toml
+name = "..."
+prompt = """
+...
+"""
+
+[relation]
+persona_addressing = "..."
+user_addressing    = "..."
+context            = "..."
+```
+
+- 该文件默认存在 `.gitignore` 中, **不要手编**——手写的注释与格式会被下次 PUT 覆盖
+- 面板 "重置为默认" 触发 `DELETE /panel/admin/persona`, 删除本文件, 回退到上一级 (`config.local.toml` 或资源默认)
+- `[persona.relation]` 三字段是**新装基线**; 对话中 Agent 通过 [`update_addressing` 工具](modules/tools.md#5-make_update_addressing_toolmemory_store-persona_id-user_id-v0210) 落库到 `relationships` 表的相同字段, 表中非空值会**运行时覆盖** override 值 (即 `relationships > persona_override > config.local > 资源默认`)
+- 见 [modules/memory-system.md](modules/memory-system.md) 关系称呼演化章节
 
 ### 3.2 [storage]
 
@@ -177,8 +196,11 @@ mnemosync login
 1. `get_settings()` 首次调用触发 `load_settings()`
 2. 检查 `config.local.toml` 存在性; **不存在时直接返回 `Settings()` 全默认值** (v0.2.3 起放宽, 不再报错)
 3. 存在时解析各段, 缺省字段用 `@dataclass` 默认值填充
-4. 缓存单例, 之后调用返回同一实例
-5. 测试可用 `_reset_settings()` 清缓存
+4. **v0.2.11**: 检查 `data/persona_override.toml`, 若存在则用其覆盖 `[persona]` 段字段 (name / prompt / relation.*, 嵌套字段按键合并), 未覆盖字段沿用上一级
+5. 缓存单例, 之后调用返回同一实例
+6. 测试可用 `_reset_settings()` 清缓存
+
+对话运行时的 `persona.relation.*` 还会被 `relationships` 表的非空列进一步覆盖 (Agent 通过 `update_addressing` tool 写入), 见 [modules/memory-system.md](modules/memory-system.md) 关系称呼演化。
 
 ---
 
@@ -205,3 +227,6 @@ mnemosync login
 | v0.2.1 | 2026-07-16 | `[storage]` 新增 `prompts_override_dir` |
 | v0.2.3 | 2026-07-17 | `[chat]`/`[embedding]`/`[rerank]` 废弃, 迁到 `role_bindings`; `config.local.toml` 缺失时不再报错 |
 | v0.2.6 | 2026-07-18 | 新增 `[persona]` 段说明; `[storage]` 增 `conversation_db_path` / `short_term_days`; 迁移嵌入模型的完整步骤章节 |
+| v0.2.9 | 2026-07-18 | `[persona]` 加 `[persona.relation]` 段 (persona_addressing / user_addressing / context), 默认人格改为"宅家内向的妹妹" |
+| v0.2.10 | 2026-07-19 | `[persona.relation]` 三字段变为**运行时可演化** — Agent 通过 `update_addressing` tool 落库到 `relationships` 表, TOML 值降级为"新装基线" |
+| v0.2.11 | 2026-07-19 | 新增 `data/persona_override.toml` 覆盖层 (面板 `PUT /panel/admin/persona` 写入, 优先级高于 `config.local.toml`) |

@@ -1,8 +1,8 @@
 # 记忆系统设计 | Memory System Design
 
-> **文档版本**: v0.2.7
+> **文档版本**: v0.2.11
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-18
+> **最后更新**: 2026-07-19
 > **状态**: 与代码同步
 
 **结构**: 短期记忆 (v0.2.6, 跨前端对话流水双窗装填) + 长期记忆 (向量库 + SQLite + 衰减模型)。两者独立存储、独立生命周期, 在装填时汇合成同一份主对话 messages。
@@ -566,6 +566,41 @@ CREATE INDEX idx_priority ON memory_entries(priority DESC);
 CREATE INDEX idx_is_forgotten ON memory_entries(is_forgotten);
 CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
 ```
+
+**关系表 (v0.2.10 起 3 个 nullable 列; NULL = 沿用 TOML 基线)**
+
+```sql
+CREATE TABLE relationships (
+    persona_id           TEXT NOT NULL,
+    user_id              TEXT NOT NULL,
+    intimacy             REAL NOT NULL DEFAULT 0.0,   -- 0.0 ~ 1.0
+    trust                REAL NOT NULL DEFAULT 0.0,
+    stage                TEXT NOT NULL DEFAULT 'stranger',
+    memory_count         INTEGER NOT NULL DEFAULT 0,
+    last_interaction     TIMESTAMP,
+    created_at           TIMESTAMP NOT NULL,
+    persona_addressing   TEXT,                        -- v0.2.10 nullable
+    user_addressing      TEXT,                        -- v0.2.10 nullable
+    context              TEXT,                        -- v0.2.10 nullable
+    PRIMARY KEY (persona_id, user_id)
+);
+
+-- v0.2.10: 字段级审计, 一次多字段更新写多行
+CREATE TABLE relationship_audit_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    persona_id   TEXT NOT NULL,
+    user_id      TEXT NOT NULL,
+    changed_at   TEXT NOT NULL,                       -- ISO 8601
+    source       TEXT NOT NULL,                       -- 'agent' | 'manual'
+    field        TEXT NOT NULL,                       -- persona_addressing | user_addressing | context
+    old_value    TEXT,
+    new_value    TEXT,
+    reason       TEXT
+);
+CREATE INDEX idx_audit_user ON relationship_audit_log(persona_id, user_id, id DESC);
+```
+
+**称呼演化 (v0.2.10)**: 关系分析 Agent 通过 [`update_addressing` 工具](tools.md#5-make_update_addressing_toolmemory_store-persona_id-user_id-v0210) 把用户消息中"以后叫我 X"等真诚请求原子写入 `relationships` (3 个 addressing 列) + `relationship_audit_log` (每字段一行 diff)。运行时 `nodes.py._resolve_addressing()` 用**表 → `persona_override.toml` → `config.local.toml [persona.relation]` → 资源默认**四层优先级取值, 面板 `GET /panel/admin/relationship` 直接返回**当前有效值**而非 NULL, `PUT /panel/admin/relationship` 允许人工覆盖并写 source=manual 审计条目, `GET /panel/admin/relationship/audit` 拉最近历史用于回退。
 
 ---
 

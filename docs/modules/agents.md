@@ -1,9 +1,9 @@
 # 多 Agent 设计 | Multi-Agent Design
 
-> **系统版本**: v0.2.6
+> **系统版本**: v0.2.11
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-07-18
+> **最后更新**: 2026-07-19
 > **作者**: HarryHelloo
 
 ---
@@ -256,8 +256,10 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 ### 5.2 循环与工具
 
 - 走 `run_react_loop`, `max_iterations = 3`
-- 唯一工具: `emotion_analyzer` (通过工厂函数注入 Forwarder)
-- 提示词流程: 调 `emotion_analyzer` → 识别关系信号 → 量化 → 输出 JSON
+- 工具:
+  - `emotion_analyzer` — 每轮识别关系信号强度
+  - `update_addressing` (v0.2.10) — 检测到用户真诚请求改变称呼 / 关系背景时, 把 `persona_addressing / user_addressing / context` 落库到 `relationships` 表, 同时写 `relationship_audit_log`; `persona_id / user_id` 通过工厂闭包 bind, Agent 无法越权改写他人。详见 [tools.md §5](tools.md#5-make_update_addressing_toolmemory_store-persona_id-user_id-v0210)
+- 提示词流程: 调 `emotion_analyzer` → 识别关系信号 → (如有称呼演化) 调 `update_addressing` → 量化 → 输出 JSON
 
 ### 5.3 信号量化参考
 
@@ -516,3 +518,6 @@ class AgentState(TypedDict, total=False):
 | v0.2.1 | 2026-07-16 | 提示词从硬编码常量迁到两层文件系统 (defaults + 用户覆盖), 新增 §7 自定义提示词章节, 记录 8 项 registry 与 `.replace` 统一约定; 修复 factory.py:314 proxy_thinking `.format` 静默返回未渲染模板的历史 bug |
 | v0.2.3 | 2026-07-17 | 主对话/记忆分析/关系分析/代理推理/提示词清洗全部改由 `RoleResolver` 解析角色 → 首位 `ResolvedCandidate` 提供 model + base_url + api_key; AgentState 补充 `main_model` (v0.2.3), `source_frontend` (v0.2.5) |
 | v0.2.6 | 2026-07-18 | 与代码对齐: `source_frontend` 字段说明 (派生自 api_key.note); AgentState 检索/短期记忆均不入 state 的注释更新 (checkpoint 已退化为单请求内 state 共享) |
+| v0.2.9 | 2026-07-19 | 记忆分析 / 关系分析 prompt 通过 `__PERSONA_ADDRESSING__` / `__USER_ADDRESSING__` / `__RELATION_CONTEXT__` 占位符消费关系基线; 默认人格改为"宅家内向的妹妹" |
+| v0.2.10 | 2026-07-19 | 关系分析 Agent 新增 `update_addressing` 工具 (自证 `reason` ≥ 10 字, 落 `relationships` 三 nullable 列 + `relationship_audit_log`); prompt 加"称呼演化"判断维度; `nodes.py._resolve_addressing` 让占位符按 表 → override → config → 默认 四层取值 |
+| v0.2.11 | 2026-07-19 | 文档补齐 v0.2.7–v0.2.11 (persona_override.toml, /conversation-turns/sources, /panel/admin/persona) |

@@ -258,6 +258,53 @@ v0.2.5 之前, 每次 `/v1/chat/completions` 用的都是**客户端传来的** 
 
 ---
 
+## 关系称呼动态演化 (v0.2.10)
+
+### 背景
+
+v0.2.9 把 `[persona.relation]` 抽到 TOML, 记忆分析 / 关系分析 prompt 通过占位符消费三个字段。但那是**安装态基线**, 一旦启动就冻结; 用户在对话里说"以后叫我小哥"或关系从"兄妹"漂移到"恋人", 无处落库。下一轮 prompt 里模型依旧被灌旧称呼, Agent 看得见信号却无法演化 — 缺 tool + 缺存储。
+
+### 决策
+
+1. **持久化选表, 不选 JSON blob**: `relationships` 加 3 个 `TEXT NULL` 列 (`persona_addressing / user_addressing / context`), NULL 语义 = "沿用上层基线"。运行时 `nodes.py._resolve_addressing()` 按 **表 → `persona_override.toml` → `config.local.toml` → 资源默认** 四层取值, 面板 `GET /panel/admin/relationship` 直接返回**当前有效值**而非 NULL。
+2. **审计日志独立表 `relationship_audit_log`**: 一次多字段更新写多行 (字段级), 便于按字段回退。source 只有 `agent` / `manual` 两种。选独立表而非 JSON diff column 是因为审计需要按字段查询。
+3. **Tool 极简**: `update_addressing(persona_addressing?, user_addressing?, context?, reason)` — 三字段全部 nullable, `reason` ≥ 10 字必填。`persona_id / user_id` 通过 factory 闭包 bind, Agent 看不见, 防跨用户改写。
+4. **判断阈值不写死**: 不设"K 轮无撤回"这种数字规则。Prompt 给 Agent 提"判断维度" (是否玩笑 / 场景扮演 / 引用他人 / 撤回信号), 让语用判断决定; 代码层只兜底 `reason` 长度 + 至少一字段非 None。
+5. **信号只看用户侧**: 强调"不能因为我上一轮回复用了新称呼就以为已稳定 — 模型自己的输出是 prompt 回声"。
+6. **兜底面板 override**: `PUT /panel/admin/relationship` 允许人工写 (source=manual); UI 加"编辑称呼"对话框 + 变更历史面板, 每条 audit 可"回退到此"触发一次反向 PUT。
+7. **memory_analysis Agent 不给此 tool**: 保持"事实提取"纯净, 关系演化只由 relationship_analysis 负责。memory_analysis 仍消费动态称呼 (通过 `_resolve_addressing`), 但不写。
+
+### 显式范围外
+
+- **K 轮撤回窗口 / 数字阈值**: 交给 Agent 判断
+- **addressing 的 embedding / 相似度检索**: 纯字符串, 用户说什么就落什么
+- **锁定称呼字段**: 靠"手动 PUT 覆写 + audit 回退"兜底, 加锁是提前优化
+- **动 `default.toml`**: TOML 仍是"新装基线", `POST /panel/admin/persona/reset` 会清空 `relationships` 让新对话回落基线
+
+---
+
+## 人格面板编辑 (v0.2.11)
+
+### 背景
+
+v0.2.9 的 `[persona]` 段只能改 `config.local.toml` 后重启, 面板无法编辑; 而 `POST /panel/admin/persona/reset` 又只能"清空业务数据回落 TOML", 缺一个正向编辑入口。用户希望在面板直接改人格 name / prompt / relation 三段并热重载。
+
+### 决策
+
+1. **文件覆盖层 `data/persona_override.toml`**: 面板 `PUT /panel/admin/persona` 全量写此文件, 优先级 `override > config.local > 资源默认` (`load_settings` 三级合并)。选文件而非表因为人格是"启动态 + 面板偶尔改", 不需要事务或字段级审计, 文件更好 diff。
+2. **格式机械生成 + 不要手编**: 每次 PUT 全量覆写, 转义策略固定 (basic string + triple-quoted prompt), 不解析注释。手编的注释和格式会被下次 PUT 覆盖 → 文档明确警告。
+3. **热重载**: PUT 完成后 `_reset_settings()` 清缓存, 下次 `get_settings()` 重新加载。运行中的图节点若已捕获旧 settings 需等下一轮请求 — 单人格单机场景可接受。
+4. **重置分层**: `DELETE /panel/admin/persona` 删本文件 → 回落到 `config.local.toml [persona]` 或资源默认; 与 `POST /panel/admin/persona/reset` (清 memory / relationships / conversation_turns) 语义严格分离, **不混用**。
+5. **GET 显示 overridden 标志**: `overridden: bool = data/persona_override.toml.exists()`, 前端据此渲染"已覆盖 / 重置为默认"按钮态。
+
+### 显式范围外
+
+- **多 persona / 每用户 persona 切换**: 单人格单用户阶段不做
+- **prompt 版本历史 / diff**: 走 PromptStore 那套 (面板 Agent prompt 覆盖) 而非 persona override; 需要时再扩
+- **partial PUT**: 一次全量覆写更简单, 前端在 GET 时拿到当前值填表单即可
+
+---
+
 ## 待补充
 
 后续遇到的新决策会追加到本文档.

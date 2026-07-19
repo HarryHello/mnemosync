@@ -1,9 +1,9 @@
 # 工具设计 | Tools
 
-> **模块版本**: v0.2.6
+> **模块版本**: v0.2.11
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-07-18
+> **最后更新**: 2026-07-19
 > **作者**: HarryHelloo
 
 ---
@@ -23,6 +23,7 @@ Mnemosync 的 Agent (ReAct 循环节点) 通过 LangChain function_call 调用�
 | `make_vector_search_tool(retriever)` | `vector_search` | `memory_analysis_node` |
 | `make_emotion_analyzer_tool(forwarder)` | `emotion_analyzer` | `memory_analysis_node`, `relationship_analysis_node` |
 | `make_time_decay_calculator_tool(memory_store)` | `time_decay_calculator` | `memory_analysis_node` |
+| `make_update_addressing_tool(memory_store, persona_id, user_id)` | `update_addressing` | `relationship_analysis_node` (v0.2.10) |
 | `make_sentence_classifier_tool(forwarder)` | `classify_sentence_type` | API 层的 `run_prompt_cleaning` (提示词清洗 Agent) |
 
 > 主对话不走 ReAct, 不绑定工具; 主对话所需的记忆检索由**节点外的 MemoryRetriever** 完成 (见 [message-processing.md](message-processing.md))。
@@ -154,7 +155,63 @@ Agent 应在此**公式基线**之上进行 CoT 判断——例如考虑访问�
 
 ---
 
-## 5. `make_sentence_classifier_tool(forwarder)`
+## 5. `make_update_addressing_tool(memory_store, persona_id, user_id)` (v0.2.10)
+
+**签名**:
+
+```python
+def make_update_addressing_tool(
+    memory_store: SqliteMemoryStore,
+    persona_id: str,
+    user_id: str,
+):
+    @tool
+    async def update_addressing(
+        persona_addressing: str | None = None,
+        user_addressing: str | None = None,
+        context: str | None = None,
+        reason: str = "",
+    ) -> dict[str, Any]: ...
+    return update_addressing
+```
+
+**依赖**: 只需 `SqliteMemoryStore`——无外部 API 调用。`persona_id / user_id` 通过闭包 bind, Agent 无法跨用户 / 跨人格改写 (v0.2.x 单人格单用户阶段实际固定为 `("default", source_user)`)。
+
+**用途**: 让**关系分析 Agent** 在检测到用户真诚请求改变称呼或关系背景时, 把新值写回 `relationships` 表 (v0.2.10 新增的 3 个 nullable 列: `persona_addressing / user_addressing / context`) 并留下审计日志。判断维度 (是否玩笑 / 场景扮演 / 引用他人 / 撤回信号) 由 [`relationship_analysis` 提示词](../../src/core/agents/prompts/defaults/relationship_analysis.md) 指导, 代码层只做兜底:
+
+- `reason` 至少 10 字, 触发 `ValueError` → ReAct 循环让 Agent 重试
+- 三字段全 `None` 直接 `ValueError`
+- 相同值的字段会被 store 层跳过 (不重复写审计)
+
+**执行流程** ([update_addressing.py:24](../../src/tools/update_addressing.py#L24)):
+
+1. 校验 `reason` 长度 + "至少一字段非 None"
+2. `memory_store.get_relationship(persona_id, user_id)` 读取旧值
+3. `memory_store.update_relationship_addressing(..., source="agent", reason=r)` 原子写表 + 逐字段审计日志
+4. 再读一次拿新值, 返回 `{updated_fields, prev, current, audit_ids}` 供 Agent 后续推理
+
+**返回**:
+
+```json
+{
+  "updated_fields": ["user_addressing"],
+  "prev": {"persona_addressing": null, "user_addressing": "你", "context": null},
+  "current": {"persona_addressing": null, "user_addressing": "小哥", "context": null},
+  "audit_ids": [42]
+}
+```
+
+`prev` / `current` 中的 `null` 表示该字段未被覆盖, 沿用 `default.toml` 的 `[persona.relation.*]` 基线; 面板 `GET /panel/admin/relationship` 会把这些 `null` 展开为当前有效值 (见 [memory-system.md](memory-system.md))。
+
+**注意**:
+- **只观察用户消息, 不能因为"我上一轮回复用了新称呼"就认为已稳定** — 模型自己的输出是 prompt 回声, 不构成新证据
+- 一次调用允许改多字段 (语义原子), 但每个字段会写独立一行 audit, 方便按字段回退
+- `source` 参数由代码固定为 `"agent"`; 面板手动编辑走 `PUT /panel/admin/relationship`, store 层写 `source="manual"`
+- **不给 memory_analysis Agent 绑定此 tool** — 保持事实提取与关系演化职责隔离
+
+---
+
+## 6. `make_sentence_classifier_tool(forwarder)`
 
 **签名**:
 
@@ -192,7 +249,7 @@ def make_sentence_classifier_tool(forwarder: MultiForwarder):
 
 ---
 
-## 6. 节点内组装
+## 7. 节点内组装
 
 真实组装点 [nodes.py:191](../../src/core/graph/nodes.py#L191):
 
@@ -217,7 +274,10 @@ out = await run_relationship_analysis(
     forwarder=forwarder,
     current_relationship=current_rel_str,
     conversation=conversation,
-    tools=[make_emotion_analyzer_tool(forwarder)],
+    tools=[
+        make_emotion_analyzer_tool(forwarder),
+        make_update_addressing_tool(memory_store, "default", source_user),  # v0.2.10
+    ],
     max_iterations=3,
 )
 ```
@@ -226,7 +286,7 @@ out = await run_relationship_analysis(
 
 ---
 
-## 7. 错误行为
+## 8. 错误行为
 
 | 工具 | 触发条件 | 处理 |
 |------|---------|------|
@@ -234,23 +294,25 @@ out = await run_relationship_analysis(
 | `vector_search` | embedding 端点异常 | 直接抛 `UpstreamError`, ReAct 循环感知并终止 |
 | `emotion_analyzer` | JSON 解析失败 | 抛 `json.JSONDecodeError` (未处理), 需 Agent prompt 保证 JSON 输出 |
 | `time_decay_calculator` | memory_id 不存在 | 返回 `{"error": "memory not found", "memory_id": ...}`, 不抛 |
+| `update_addressing` | `reason` 短于 10 字 / 三字段全 `None` | 抛 `ValueError`, ReAct 循环拿到错误消息后让 Agent 重试; 数据库层保证事务原子 |
 | `classify_sentence_type` | JSON 解析失败 | 抛 `json.JSONDecodeError`; 由提示词清洗 Agent 的保守降级兜底 (全部丢弃客户端 system 消息, 见 [agents.md §6.6](agents.md#66-失败降级-保守策略)) |
 
 ---
 
-## 8. 与其他模块
+## 9. 与其他模块
 
 | 模块 | 关系 |
 |------|------|
-| [LangGraph 编排](langgraph.md) | 3 个工具工厂在 `memory_analysis_node` / `relationship_analysis_node` 内组装; `sentence_classifier` 在 API 层组装, 不进图 |
+| [LangGraph 编排](langgraph.md) | 4 个工具工厂在 `memory_analysis_node` / `relationship_analysis_node` 内组装; `sentence_classifier` 在 API 层组装, 不进图 |
 | [Forwarder](forward.md) | 所有远端调用 (embed / rerank / chat) 的唯一出口 |
 | [消息处理](message-processing.md) | 主对话前置检索复用 `MemoryRetriever` (非工具形式) |
 | [提示词覆盖](agents.md#7-自定义-agent-提示词) | `sentence_classifier` 的提示词经 PromptStore 支持用户覆盖 |
+| [记忆系统](memory-system.md) | `update_addressing` 写 `relationships` + `relationship_audit_log`, 面板 `GET/PUT /panel/admin/relationship` 与之共享数据 |
 | [配置](../configuration.md) | 模型选择走 `role_bindings` (v0.2.3 起, `[chat]/[embedding]/[rerank]` 已废弃) |
 
 ---
 
-## 9. 版本历史
+## 10. 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
@@ -259,3 +321,5 @@ out = await run_relationship_analysis(
 | v0.2.1 | 2026-07-16 | 新增第 4 个工具 `classify_sentence_type` (提示词清洗 Agent 专用); 提示词模板迁到 PromptStore, 占位符统一 `__TEXT__` + `.replace` |
 | v0.2.3 | 2026-07-17 | 所有工具工厂改接收 `MultiForwarder`, 通过 `role=ModelType.{ASSIST,EMBEDDING,RERANK}` 从 `role_bindings` 拉候选; embedding 单绑定不 fallback (v0.2.4) |
 | v0.2.6 | 2026-07-18 | 与代码对齐: 修正 `nodes.py` / `vector_search.py` / `sentence_classifier.py` 行号, 移除对 `settings.chat.assist_model` / `settings.rerank` 的引用 (v0.2.3 已废弃) |
+| v0.2.10 | 2026-07-19 | 新增第 5 个工具 `update_addressing` (关系分析 Agent 专用): 让 Agent 把用户消息中"以后叫我 X"等真诚请求落库到 `relationships.persona_addressing/user_addressing/context`, 同时写 `relationship_audit_log`; `persona_id/user_id` 通过闭包 bind 防跨用户改写 |
+| v0.2.11 | 2026-07-19 | 文档补齐: 与 v0.2.7–v0.2.11 面板/后端变更 (persona_override.toml, /conversation-turns/sources, panel/admin/persona 端点) 一致 |
