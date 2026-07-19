@@ -2,8 +2,9 @@
 # Mnemosync 安装脚本
 # 用法: curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
 #
-# 需要: git, Python 3.12+
+# 需要: git
 # 可选: uv (脚本会自动安装), node + npm (若需要本地 build UI 而非从 Release 下载)
+# 备注: Python 3.12+ 若系统未安装, uv 会在同步依赖时自动下载并管理, 无需手动准备.
 
 set -e
 
@@ -28,28 +29,26 @@ error() { printf "${RED}[ERROR]${NC} %s\n" "$1"; exit 1; }
 
 # ============================================================================
 # 检查依赖
+# 只硬性要求 git; Python 由 uv 负责 (系统 python3 不满足 3.12+ 时 uv 会自动下载)
 # ============================================================================
 check_dependencies() {
-    # 检查 git
     if ! command -v git > /dev/null 2>&1; then
         error "git 未安装。请先安装 git:\n  Ubuntu/Debian: sudo apt-get install git\n  macOS: xcode-select --install"
     fi
 
-    # 检查 Python
-    if ! command -v python3 > /dev/null 2>&1; then
-        error "python3 未安装。请先安装 Python 3.12+: https://www.python.org/downloads/"
+    if command -v python3 > /dev/null 2>&1; then
+        PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
+        PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+        PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+
+        if [ "$PYTHON_MAJOR" = "3" ] && [ "$PYTHON_MINOR" -ge 12 ] 2>/dev/null; then
+            info "系统 Python $PYTHON_VERSION ✓ (可复用)"
+        else
+            info "系统 Python $PYTHON_VERSION 不满足 3.12+, uv 将自动下载所需版本"
+        fi
+    else
+        info "未检测到系统 Python, uv 将自动下载所需版本"
     fi
-
-    # 检查 Python 版本
-    PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
-    PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
-
-    if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 12 ]); then
-        error "Python 版本过低: $PYTHON_VERSION (需要 3.12+)"
-    fi
-
-    info "Python $PYTHON_VERSION ✓"
 }
 
 # ============================================================================
@@ -104,10 +103,10 @@ setup_code() {
 }
 
 # ============================================================================
-# 安装依赖
+# 安装依赖 (uv sync 会按 pyproject.toml requires-python 自动准备 Python)
 # ============================================================================
 install_deps() {
-    info "安装依赖..."
+    info "安装依赖 (uv 会按需下载 Python 3.12+)..."
     cd "$INSTALL_DIR"
     uv sync --frozen 2>/dev/null || uv sync
     info "依赖安装完成 ✓"
