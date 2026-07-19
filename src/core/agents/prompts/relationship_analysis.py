@@ -1,0 +1,34 @@
+"""Relationship analysis agent prompt.
+
+模板位于 `src/core/agents/prompts/defaults/relationship_analysis.md`,
+由 PromptStore 加载. 用户覆盖: `data/prompts/relationship_analysis.md`.
+"""
+
+from __future__ import annotations
+
+from src.core.prompts import get_prompt_store
+
+
+def build_relationship_analysis_prompt(
+    current_relationship: str,
+    conversation: str,
+    *,
+    persona_name: str,
+    persona_addressing: str,
+    user_addressing: str,
+    relation_context: str,
+) -> str:
+    """构建关系分析 Agent 的 prompt.
+
+    persona_name / persona_addressing / user_addressing / relation_context 用于让
+    Agent 用正确的关系基线判断亲密/距离信号 (见 v0.2.9 [relation] 设计).
+    """
+    tmpl = get_prompt_store().load("relationship_analysis")
+    return (
+        tmpl.replace("__CURRENT_REL__", current_relationship)
+        .replace("__CONVERSATION__", conversation)
+        .replace("__PERSONA_NAME__", persona_name)
+        .replace("__PERSONA_ADDRESSING__", persona_addressing)
+        .replace("__USER_ADDRESSING__", user_addressing)
+        .replace("__RELATION_CONTEXT__", relation_context)
+    )

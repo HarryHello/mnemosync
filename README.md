@@ -6,9 +6,23 @@
 
 [![License](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Status](https://img.shields.io/badge/Status-Early%20Development-yellow)](https://github.com/Mnemosync/Mnemosync)
-[![Python](https://img.shields.io/badge/Python-3.10+-green.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12+-green.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-red.svg)](https://fastapi.tiangolo.com/)
 
+```text
+╭───────────────────────────────────────────────────────────────╮
+│                                                               │
+│  │  ╲╱  ││ \ │ ││  ___│  ╲╱  │  _  ╱  ___\ ╲ ╱ / ╲ │ /  __ ╲  │
+│  │ .  . ││  \│ ││ │__ │ .  . │ │ │ ╲ `──. \ V /│  ╲│ │ /  ╲╱  │
+│  │ │╲╱│ ││ . ` ││  __││ │╲╱│ │ │ │ │`──. ╲ ╲ / │ . ` │ │      │
+│  │ │  │ ││ │\  ││ │___│ │  │ │ \_/ ╱╲__╱ ╱ │ │ │ │╲  │ \__╱╲  │
+│  \_│  │_╱╲_│ ╲_╱╲____╱╲_│  │_╱╲___╱╲____╱  \_/ ╲_│ ╲_╱╲____╱  │
+│                                                               │
+│                         Mnemosync                             │
+│                          v0.2.11                              │
+│                                                               │
+╰───────────────────────────────────────────────────────────────╯
+```
 **同一人格，任意前端 | One Persona, Any Frontend**
 
 </div>
@@ -17,126 +31,199 @@
 
 ## 📖 项目简介
 
-**Mnemosync**\/niːˈmɒzɪŋk\/ 是一个专为 LLM 人格扮演设计的**中间代理服务器**。
+**Mnemosync** \/niːˈmɒzɪŋk\/ 是一个专为 LLM 人格扮演设计的**中间代理服务器**。
 
 在当前的 LLM 生态中，用户往往需要在多个平台（如 AIRI 桌宠、AstrBot 机器人、Web 聊天室）之间切换。传统架构导致**上下文记忆分散**：你在桌宠上告诉模型的名字，机器人并不知道；你在工作中培养的人格，回家后无法延续。
 
-Mnemosync 通过在网络层拦截请求，**在转发给模型前统一预处理上下文**，将多端对话合并为**单一连贯会话（Single Coherent Session）**。它不仅是代理，更是人格记忆的同步器，模拟人类记忆的连续性与情境性。
+Mnemosync 在网络层拦截 OpenAI 兼容请求，**服务器持有对话真相**，把所有前端的对话汇聚成一条连续流后再转发给上游模型。它不仅是代理，更是人格记忆的同步器。
 
-> **名字由来**：Mnemosyne（希腊神话记忆女神）+ Sync（同步）。旨在孕育连续、有灵魂的对话体验。
+> **名字由来**：Mnemosyne（希腊神话记忆女神）+ Sync（同步）。
 
 ---
 
 ## ✨ 核心特性
 
-- **🧠 人格记忆同步**
-  打破平台壁垒，无论通过 QQ、微信还是桌面端对话，模型始终记得"你是谁"以及"之前的约定"。
+- **🧠 跨前端连续对话 (v0.2.6)**
+  服务端维护 `conversation_turns` append-only 流水，所有前端 (AstrBot / AIRI / Web / SDK) 写入同一 bucket。装填时**忽略客户端携带的历史**，只取最后一条 user 消息，其余上下文由服务器双窗装填 (时间窗默认 7d + 模型窗按 `context_length` 从最老那端裁剪)。换前端不失忆，客户端 UI"清空"也不会抹掉服务器的连续记忆。
 
-- **🛡️ 提示词智能清洗**
-  在请求发出前完成**去重、时序排序、上下文压缩**。确保发送给模型的每一条消息都是纯净、有序且符合 Token 限制的。
+- **🎭 服务器优先人格 (Server-First Persona)**
+  人格由服务器 `[persona]` 段权威定义，客户端 system 消息走**提示词清洗 Agent** 剥离人格描述、保留功能性指令。第三方前端注入的角色扮演不会污染人格。
 
 - **🔌 OpenAI 兼容接口**
-  完全遵循 OpenAI API 标准。只需修改前端配置的 API Base 和 Key，即可无缝接入 AstrBot、AIRI、NextChat 等任意兼容平台。
+  遵循 OpenAI API `/v1/chat/completions` 标准 (流式 / 非流式)。前端只需改 API Base 与 Key，即可无缝接入 AstrBot、AIRI、NextChat 等平台。
 
-- **📚 三层记忆模型（规划中）**
-  模拟人类记忆结构：
-    - **人格核心**：性格、价值观、长期偏好（永久保留）
-    - **工作笔记**：项目、待办、专业术语（情境激活）
-    - **生活日记**：闲聊、情感记录、生活待办（动态衰减）
+- **🗄️ 智能长期记忆**
+  ChromaDB 向量库 + SQLite 元数据 + 时间衰减模型。永久记忆 (核心事实) 常驻；普通记忆按重要性/衰减/过期动态管理。支持背景 Reindex 与低价值记忆 Prune (v0.2.4)。
+
+- **🔧 多服务商模型绑定 (v0.2.3+)**
+  main / assist / embedding / rerank 四种角色各自维护优先级候选列表 (存 `role_bindings` 表)。主对话与辅助 Agent 上游失败自动 fallback；**嵌入角色单绑定** (v0.2.4)，换嵌入模型必须走 Reindex 走完再服务。
+
+- **✏️ 提示词两层可覆盖 (v0.2.1)**
+  记忆分析 / 关系分析 / 代理推理 / 提示词清洗 / 主对话框架等 Agent 提示词以 Markdown 文件形式随包发布 (默认层)，可在 `data/prompts/` 覆盖。通过 `mnemosync prompt` CLI 或面板 `/panel/admin/prompts` 即时生效，无需重启。
+
+- **🛠️ 调试面板 (v0.2.5)**
+  Web UI 内嵌调试聊天页 + HTTP hop 观测：每次请求的进出方向、body、耗时都通过 SSE 推给面板，支持流式 chunk 组装。
 
 - **🚀 轻量级部署**
-  基于 Python + FastAPI 构建，支持 Docker 一键启动，资源占用极低，适合个人服务器或本地部署。
+  Python 3.12+ / FastAPI / SQLite / ChromaDB (本地嵌入式)。支持 Docker 一键启动。
 
 ---
 
 ## 🏗️ 架构原理
 
-Mnemosync 的核心设计原则是 **"预处理优先 (Pre-process First)"**。所有记忆合并与清洗均在本地完成，确保上游模型接收到的永远是最终状态。
+Mnemosync 的核心不变量是 **"服务器持有真相"**：多个前端 = 同一个用户 = 同一份记忆 = 同一个人格。
 
 ```mermaid
 graph LR
-    A[前端客户端] -->|1. 原始请求 | B(Mnemosync 代理)
-    subgraph Mnemosync [本地预处理阶段]
-    B -->|2. 加载人格配置 | C[记忆存储]
-    C -->|3. 返回记忆 | B
-    B -->|4. 清洗流水线 | D{清洗引擎}
-    D -->|去重/排序/压缩 | E[合并上下文]
+    A[前端: AstrBot/AIRI/Web] -->|1. OpenAI 兼容请求 | B(Mnemosync /v1)
+    subgraph Mnemosync
+      B -->|2. 只取最后一条 user | C[短期记忆装填]
+      C -->|3. 时间窗+模型窗| D[conversation_turns]
+      B -->|4. 检索长期记忆| E[ChromaDB + SQLite]
+      D --> F[build main_dialogue messages]
+      E --> F
+      F -->|5. 装填后 messages| G(MultiForwarder)
+      G -->|6. 流式转发| H[上游 LLM]
+      H -->|7. 边收边 yield| B
+      B -->|8. 后台图: 记忆分析/关系分析| E
+      B -->|9. 回写 user+assistant turn| D
     end
-    E -->|5. 纯净请求 | F[上游模型平台]
-    F -->|6. 流式响应 | B
-    B -->|7. 透传响应 | A
+    B -->|10. 流式响应| A
 ```
 
-### 关键流程
-1.  **拦截**：接收前端发送的 OpenAI 兼容请求。
-2.  **合成**：根据 API Key 识别用户，加载对应的人格配置与历史记忆。
-3.  **清洗**：执行哈希去重、时间戳标准化、长上下文压缩。
-4.  **转发**：将处理后的 `messages` 发送给上游模型（OpenAI/OneAPI/本地模型）。
-5.  **透传**：将模型响应流式返回给前端，无感知延迟。
+详细拓扑与 Agent 分工见 [docs/architecture.md](./docs/architecture.md)。
+
+---
+
+## 🔑 API Key 与前端识别
+
+**当前版本为单人格单用户架构** —— 一个 Mnemosync 实例 = 一个人格 = 一个用户 (`source_user='default'`)。
+
+API Key (每前端一枚) 的作用是**区分前端来源**，非多用户隔离：
+
+- 每个 Key 建议对应一个前端 (AstrBot / AIRI / Web / 自研)，命名靠 `note` 字段
+- 服务器把 `api_key.note` 作为 `source_frontend` 元数据写入 `conversation_turns` (v0.2.6)，仅用于观测，不参与查询条件
+- 所有 Key 共享同一份人格 + 同一条连续对话流
+
+多人格 / 多用户是未来规划 (`persona_id` 字段已预留)。
 
 ---
 
 ## 🚀 快速开始
 
-> ⚠️ **注意**：本项目目前处于早期开发阶段，架构设计已定型，代码实现中。
-
-### 1. 部署准备
-确保您拥有 Docker 环境。
+### 方式一：Docker 部署
 
 ```bash
-# 克隆仓库
+git clone https://github.com/Mnemosync/Mnemosync.git
+cd Mnemosync
+docker compose up -d
+docker compose logs -f
+docker compose exec mnemosync uv run mnemosync init
+```
+
+### 方式二：源码部署
+
+```bash
+# 安装 uv (若未装)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 git clone https://github.com/Mnemosync/Mnemosync.git
 cd Mnemosync
 
-# 启动服务
-docker compose up -d
+# 1. 复制配置模板并填 [persona] / 服务商凭证
+cp config.example.toml config.local.toml
+$EDITOR config.local.toml
+
+# 2. 安装依赖
+uv sync
+
+# 3. 初始化数据库
+uv run mnemosync init
+
+# 4. 启动服务
+uv run mnemosync serve
 ```
 
-### 2. 配置人格
-访问 WebUI 配置页（默认 `http://localhost:8080`），创建人格配置：
-- 设置 System Prompt
-- 配置上游 API Key
-- 定义记忆策略（压缩阈值、保留条数）
+启动后:
+- OpenAI 兼容层: `http://localhost:16125/v1/chat/completions`
+- 管理面板: `http://localhost:16125/` (Vue UI, 需登录)
+- 默认账号密码: `mnemosync` / `mnemosync` (首次登录后请改)
 
-### 3. 接入前端
-在您的对话前端（如 AstrBot）修改模型提供商设置：
-- **API 地址**: `http://your-server:8000/v1`
-- **API Key**: `your-mnemosync-key`
-- **模型名**: `any` (由代理层统一接管)
+### 首次使用
+
+```bash
+# 登录交互式 shell
+uv run mnemosync login
+
+Mnemosync > generate-key
+> AstrBot          # 前端 note, 会作为 source_frontend
+sk-qwertyuiop...   # 保存
+
+# 在面板"模型管理"页面绑定 main / assist / embedding / rerank
+# 或用 CLI:
+Mnemosync > set-model main dashscope qwen-max
+Mnemosync > set-embedding-model dashscope text-embedding-v3 --dim 1024
+```
+
+### 接入前端
+
+在客户端 (AstrBot / AIRI / NextChat / ...) 修改模型提供商:
+- **API 地址**: `http://your-server:16125/v1`
+- **API Key**: 上一步生成的 `sk-xxx`
+- **模型名**: 填 `mnemosync-any` 或留空 (由代理层根据 `role_bindings` 接管)
+
+---
+
+## 📚 文档索引
+
+- [架构总览](./docs/architecture.md) — 分层、Agent 拓扑、数据流
+- [配置指南](./docs/configuration.md) — `config.local.toml` 各段字段
+- [认证与鉴权](./docs/auth.md) — API Key / Session / admin 路由
+- [部署指南](./docs/deployment.md) — Docker / 源码 / 备份
+- [开发决策记录](./docs/dev-decisions.md) — 各版本重大设计决策
+- 模块文档: [modules/](./docs/modules/)
+  - [记忆系统](./docs/modules/memory-system.md) — 长期 + 短期双窗装填
+  - [Agent 与提示词](./docs/modules/agents.md)
+  - [LangGraph 编排](./docs/modules/langgraph.md)
+  - [消息处理管道](./docs/modules/message-processing.md)
+  - [Forward 转发路径](./docs/modules/forward.md)
+  - [LLM 服务商与 role_bindings](./docs/modules/llm-service.md)
+  - [工具](./docs/modules/tools.md)
+  - [CLI](./docs/modules/cli.md)
 
 ---
 
 ## 📜 开源协议
 
-本项目采用 **GNU Affero General Public License v3.0 (AGPL-3.0)** 协议。
+**GNU Affero General Public License v3.0 (AGPL-3.0)**。
 
-- **自由使用**：您可以免费使用、修改、分发本软件。
-- **传染性**：如果您修改了本软件代码，**必须开源**您的修改版本。
-- **网络服务条款**：如果您将本软件作为网络服务提供给他人（如 SaaS），**必须向用户提供源码**。
-
-> 💡 **商业许可**：如果您希望闭源集成或用于商业 SaaS 服务而不遵守 AGPL 条款，请联系作者获取商业授权。
+- 修改后必须开源修改版本
+- 作为网络服务提供给他人时必须提供源码
+- 如需闭源集成 / 商业 SaaS 请联系作者获取商业授权
 
 ---
 
 ## 🛣️ 开发路线图
 
-- [x] **Phase 0**: 架构设计与技术栈选型
-- [ ] **Phase 1**: 核心代理功能实现 (API 转发 + 基础清洗)
-- [ ] **Phase 2**: WebUI 配置页面与人格管理
-- [ ] **Phase 3**: 三层记忆模型实现 (情境匹配 + 记忆衰减)
-- [ ] **Phase 4**: 插件系统与向量记忆检索
+- [x] **v0.1** — 确定性管道
+- [x] **v0.2.0** — LangGraph 多 Agent + ChromaDB + 代理思考
+- [x] **v0.2.1** — 提示词两层覆盖 + 服务器优先人格 + `/panel` 路由前缀
+- [x] **v0.2.3** — `role_bindings` 单一真相源, 多服务商候选 + fallback
+- [x] **v0.2.4** — 嵌入单绑定 + Reindex + Prune + 元数据字段
+- [x] **v0.2.5** — 调试聊天面板 + HTTP hop 观测
+- [x] **v0.2.6** — 跨前端短期记忆双窗装填
+- [x] **v0.2.7** — `POST /panel/admin/persona/reset` 原子清空业务数据
+- [x] **v0.2.8** — CLI `--debug` 全链路请求/响应落库 (`data/http_logs.db`)
+- [x] **v0.2.9** — `[persona.relation]` 三字段基线 (`persona_addressing / user_addressing / context`), 默认人格改为"宅家内向的妹妹"
+- [x] **v0.2.10** — 关系称呼动态演化: `update_addressing` tool + `relationship_audit_log`; 面板编辑对话框 + 变更历史 + 回退
+- [x] **v0.2.11** — 人格面板编辑 (`data/persona_override.toml` 热重载); `MemoriesPage` 全列 sortable + filter; 亲密度 / 信任度按数值分档着色; SVG favicon 品牌图标
+- [ ] **未来** — 多人格 (`persona_id`) / 多用户 / 人格自我演化
 
 ---
 
 ## 🤝 参与贡献
 
-我们欢迎所有认同"人格连续性"理念的开发者加入！
-
-- **提交 Issue**: 报告 Bug 或提出新功能建议。
-- **提交 PR**: 参与代码开发或文档完善。
-- **社区讨论**: 分享您的配置技巧或人格设计案例。
-
-请参阅 [CONTRIBUTING.md](./docs/CONTRIBUTING.md) 了解详细的贡献指南。
+欢迎提交 Issue / PR。请先阅读 [dev-decisions.md](./docs/dev-decisions.md) 了解现有设计约束（尤其是"不能修改客户端行为""服务器优先人格"两条硬边界）。
 
 ---
 
@@ -144,6 +231,6 @@ docker compose up -d
 
 **Mnemosync** | 让每一次对话都延续记忆的温度
 
-[📄 架构文档](./docs/architecture.md) &nbsp;•&nbsp; [📚 配置指南](./docs/configuration.md) &nbsp;•&nbsp; [🧠 记忆模型](./docs/memory-model.md)
+[📄 架构](./docs/architecture.md) &nbsp;•&nbsp; [📚 配置](./docs/configuration.md) &nbsp;•&nbsp; [🧠 记忆系统](./docs/modules/memory-system.md) &nbsp;•&nbsp; [🔧 开发决策](./docs/dev-decisions.md)
 
 </div>

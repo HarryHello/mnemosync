@@ -1,0 +1,98 @@
+// 全局样式: 基础 reset + Element Plus 主题色覆盖 + 暗色模式适配
+
+// ─── Reset ──────────────────────────────────────────
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'PingFang SC',
+    'Microsoft YaHei',
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--el-text-color-primary);
+  background-color: var(--el-bg-color-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--el-color-primary-light-3);
+  }
+}
+
+// ─── Element Plus 主题色覆盖 ──────────────────────────
+:root {
+  --el-color-primary: #{$brand-primary};
+  --el-color-primary-light-3: #{$brand-primary-hover};
+  --el-color-primary-dark-2: #{$brand-primary-active};
+}
+
+// ─── 暗色模式 ──────────────────────────────────────
+// Element Plus 官方约定 `<html class="dark">` 切换.
+:root.dark {
+  color-scheme: dark;
+}
+
+// ─── 滚动条 ─────────────────────────────────────────
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--el-border-color);
+  border-radius: 4px;
+
+  &:hover {
+    background: var(--el-border-color-darker);
+  }
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+// ─── 通用 utility ───────────────────────────────────
+.page-container {
+  padding: $space-5;
+  max-width: $content-max-width;
+  margin: 0 auto;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 $space-4;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin: 0 0 $space-5;
+}
+
+.mono {
+  @include monospace;
+}

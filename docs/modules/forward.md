@@ -1,0 +1,238 @@
+# 上游转发模块 (Forward Module)
+
+> **模块版本**: v0.2.11
+> **文档状态**: 与代码同步
+> **创建时间**: 2026-03-29
+> **最后更新**: 2026-07-19
+> **作者**: HarryHelloo
+
+---
+
+## 1. 定位
+
+Forwarder 是 Mnemosync **所有上游 HTTP 调用的唯一出口** — 包括对话、嵌入、重排、模型列表。Mnemosync 本地不做推理; Agent 节点组装请求后, 一律通过它送到远端服务商。
+
+v0.2.3 起, 顶层入口是 `MultiForwarder` — 它按角色 (`main`/`assist`/`embedding`/`rerank`) 从 `role_bindings` 拉出候选优先级列表, 用第一位 `ResolvedCandidate` 构造一个内部 `Forwarder` 实例发起调用; 失败时按候选顺序 fallback (**嵌入角色除外**, 见 §1.1)。
+
+**代码位置**:
+- [src/infra/forwarder/forwarder.py](../../src/infra/forwarder/forwarder.py) — `Forwarder` (单服务商)
+- [src/infra/forwarder/multi.py](../../src/infra/forwarder/multi.py) — `MultiForwarder` (多候选调度)
+- [src/infra/forwarder/connection_pool.py](../../src/infra/forwarder/connection_pool.py) — 连接池
+- [src/infra/forwarder/debug_hook.py](../../src/infra/forwarder/debug_hook.py) — v0.2.5 出/入方向 emit 到 DebugEventBus
+
+**调用方一览**:
+
+| 调用者 | 方法 | 用途 | 角色 |
+|-------|------|------|------|
+| 主对话 Agent (非流式) | `MultiForwarder.chat()` | 生成回复 | main |
+| 主对话 (流式路径 forward.py) | `MultiForwarder.chat_stream()` | SSE 透传给客户端 | main |
+| 记忆分析 / 关系分析 / 代理思考 | `MultiForwarder.chat()` (含 tools) | ReAct 循环 | assist |
+| MemoryRetriever / MemoryLifecycle | `MultiForwarder.embed()` | 文本 → 向量 | embedding |
+| MemoryRetriever | `MultiForwarder.rerank()` | 检索精排 | rerank |
+| LLM 服务管理 | `Forwarder.list_models()` | 拉取服务商模型列表 (直接实例, 不走 Multi) |
+
+### 1.1 嵌入角色的特殊语义 (v0.2.4)
+
+嵌入角色**只能有一条绑定**, 且 `MultiForwarder.embed()` 遇错**直接抛出, 不 fallback**。理由: 不同嵌入模型输出的向量空间语义不同, 换模型会让已存向量瞬间失效; ChromaDB collection 在首次写入时锁定 `(service_id, model, dim)` 三元组, 之后每次写入前 assert 一致, 不一致抛 `VectorStoreLockError`。想换模型必须走 `POST /panel/admin/memory/reindex`。见 [dev-decisions.md 嵌入模型单绑定 + Reindex + Prune](../dev-decisions.md)。
+
+主/辅助/重排保持原多候选 fallback 语义不变。
+
+---
+
+## 2. 快速开始
+
+生产代码不直接 `new Forwarder()` — 走 `MultiForwarder`:
+
+```python
+from src.infra.forwarder.multi import MultiForwarder
+from src.infra.llm_service.models import ModelType
+
+# resolver 由 lifespan/deps 注入, 从 role_bindings 读取候选
+multi = MultiForwarder(resolver)
+resp = await multi.chat(
+    role=ModelType.MAIN,
+    messages=[{"role": "user", "content": "你好"}],
+)
+```
+
+低层 `Forwarder` 保留给需要精确控制服务商的场景 (如 CLI `probe-dimension`):
+
+```python
+from src.infra.forwarder import Forwarder, ForwarderConfig
+
+config = ForwarderConfig(
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    api_key="sk-...",
+    default_model="qwen-max",
+    timeout=30.0,
+)
+
+async with Forwarder(config) as fwd:
+    async for chunk in fwd.chat_stream(messages=[...]):
+        ...
+```
+
+---
+
+## 3. API
+
+### 3.1 ForwarderConfig
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `base_url` | str | — | 服务商 OpenAI 兼容基址 |
+| `api_key` | str | — | 服务商 API Key |
+| `default_model` | str | — | `chat` / `chat_stream` 默认模型 |
+| `timeout` | float | 30.0 | 请求超时 (秒) |
+| `connect_timeout` | float | 10.0 | 连接超时 (秒) |
+
+生产使用建议根据调用类型给不同超时: 主对话流式 `90s`, 记忆图内部 `30s` (见 [forward.py:244/286](../../src/api/routes/forward.py))。
+
+### 3.2 Forwarder.chat
+
+```python
+async def chat(
+    messages, model=None, temperature=1.0, max_tokens=None,
+    tools=None, tool_choice=None,
+    response_format=None, extra_body=None, **kwargs,
+) -> dict
+```
+
+- 非流式对话, 返回完整 OpenAI 响应字典
+- `tools` 用于 function_call (ReAct 循环)
+- `extra_body` 合并到 payload 顶层, 如 `{"enable_thinking": False}` 关闭 Qwen3 思考流
+
+**契约**: DashScope 等服务商 tools 与 stream=True 互斥, 但**这是服务商的限制**, 不是 Mnemosync 层的限制。`chat_stream` 支持透传 tools 等所有可选字段 (见 §3.3), 撞上服务商限制时上游会返回 4xx, 错误通过 SSE error 帧回到客户端。
+
+### 3.3 Forwarder.chat_stream
+
+```python
+async def chat_stream(
+    messages, model=None, temperature=1.0, max_tokens=None, **kwargs,
+) -> AsyncIterator[bytes]
+```
+
+- 流式对话, yield 上游 SSE 原始字节 (`b"data: {...}\n\n"`)
+- `**kwargs` 会原样合入 payload——**支持 tools / tool_choice / response_format / stream_options / top_p / stop / seed / reasoning_effort / thinking 等所有 OpenAI 兼容字段**
+- 服务商侧限制 (如 DashScope stream+tools 互斥) 交由上游报错反馈, 本层不做静默剥离
+
+### 3.4 Forwarder.embed
+
+```python
+async def embed(
+    input: str | list[str], model: str, dimensions: int | None = None,
+) -> list[list[float]]
+```
+
+- 调 `/embeddings`, 返回向量列表 (按 index 排序)
+- `dimensions` 可选; 若不指定, 维度由所选模型决定 (见 [dev-decisions.md](../dev-decisions.md))
+
+### 3.5 Forwarder.rerank
+
+```python
+async def rerank(
+    query: str, documents: list[str], model: str, top_n: int | None = None,
+) -> list[dict]
+```
+
+- 先试 `/rerank`, 404 时降级到 `/reranks` (部分服务商用复数)
+- 返回 `[{index, relevance_score, document}, ...]`, 按 relevance_score 降序
+
+### 3.6 Forwarder.list_models
+
+```python
+async def list_models() -> list[str]
+```
+
+调 `GET /models`, 返回模型 id 列表。
+
+### 3.7 生命周期
+
+- 支持 `async with`; 或手动 `await fwd.close()`
+- 可选注入 `ConnectionPool` 复用底层 httpx client (见 [connection_pool.py](../../src/infra/forwarder/connection_pool.py))
+
+---
+
+## 4. 上游 API 契约
+
+**已知约束**:
+
+- DashScope OpenAI 兼容端点 tools 与 stream 互斥——**由服务商拒绝, Mnemosync 不预先剥离**; 客户端会收到 SSE error 帧告知具体错误
+- rerank 端点在部分服务商为 `/reranks` (复数)
+- DashScope 的 `gte-rerank` 已下线, 请用 `gte-rerank-v2` 或其他继任
+- 嵌入维度由模型决定, 不再写死 (`dimensions` 只在服务商明确支持时传)
+
+---
+
+## 5. 错误
+
+| 异常 | 触发 | 处理 |
+|------|------|------|
+| `UpstreamError(status, message)` | 4xx/5xx | 记 log, 上抛给节点 |
+| `UpstreamTimeout(msg)` | httpx 超时 | 记 log, 上抛 |
+
+Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求/响应到日志 (见 [chore commit `--debug` mode](../../src/infra/forwarder/forwarder.py))。
+
+---
+
+## 6. 与 API 层的关系
+
+- **鉴权与请求组装**: [src/api/routes/forward.py](../../src/api/routes/forward.py) 完成 API Key 验证 (`_verify_api_key`)、`source_frontend` 派生 (`_resolve_source_frontend`, 从 `api_key.note`)、模型白名单校验 (`mnemosync-any`)、记忆加载、上下文拼装、短期记忆装填 (`build_short_term_history`, v0.2.6), 再交给 `MultiForwarder`
+- **短期记忆装填 (v0.2.6)**: 主 Forwarder 调用前, forward.py 用 `main_candidate.context_length` 从 `conversation_turns` 双窗裁剪历史; 主对话流结束后同步写 user + assistant 两条 turn。见 [message-processing.md](message-processing.md) §4.1
+- **模型白名单**: `/v1/chat/completions` 只接受 `model="mnemosync-any"` 或空, 其他直接 400
+- **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的决策函数控制。见 [agents.md](agents.md) §4
+- **流式字段透传**: `_handle_stream` 会把 `request` 里所有 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `MultiForwarder.chat_stream(**passthrough)`
+- **调试面板 (v0.2.5)**: `debug_hook` 模块级单例被 lifespan 注入 `set_debug_bus(bus)`, 让 forwarder 每次出/入方向都写一条 event 到 DebugEventBus; 订阅数为 0 时 emit 走惰性 gate 近似 no-op
+
+---
+
+## 7. 连接池
+
+```python
+from src.infra.forwarder import ConnectionPool, Forwarder
+
+pool = ConnectionPool(max_connections=50, max_keepalive_connections=10)
+fwd = Forwarder(config, pool=pool)
+...
+await pool.close()
+```
+
+高并发场景使用; 单次请求不必要。
+
+---
+
+## 8. 服务商配置示例
+
+**DashScope (阿里云百炼)**:
+```python
+ForwarderConfig(
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    api_key="sk-xxx", default_model="qwen-max",
+)
+```
+
+**SiliconFlow**:
+```python
+ForwarderConfig(
+    base_url="https://api.siliconflow.cn/v1",
+    api_key="sk-xxx", default_model="Qwen/Qwen2.5-72B-Instruct",
+)
+```
+
+**OpenAI / OneAPI / Ollama** 同理, 只要接口 OpenAI 兼容即可。
+
+---
+
+## 9. 版本历史
+
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| v0.1.0 | 2026-03-29 | 初始实现: 转发, 连接池, SSE |
+| v0.2.0 | 2026-07-12 | 定位为所有 Agent 的唯一上游通道 |
+| v0.2.1 | 2026-07-14 | 迁移到 `src/infra/forwarder/`; API 改为 `chat` / `chat_stream` / `embed` / `rerank` / `list_models`, 移除旧 `send` / `send_stream` |
+| v0.2.1 | 2026-07-15 | 与代码对齐: 修正 API 方法名、模型白名单说明、代理思考启用方式、rerank 端点降级 |
+| v0.2.1 | 2026-07-15 | 流式路径全量透传 OpenAI 兼容可选字段 (tools / response_format / seed 等); 服务商限制由上游报错; 接入代理推理决策 (reasoning_control) |
+| v0.2.3 | 2026-07-17 | 引入 `MultiForwarder` 顶层入口, 按角色 (main/assist/embedding/rerank) 从 `role_bindings` 拉候选; 非嵌入角色支持 fallback |
+| v0.2.4 | 2026-07-17 | 嵌入角色单绑定, `MultiForwarder.embed()` 遇错不 fallback; ChromaDB collection 锁定 (service_id, model, dim) |
+| v0.2.5 | 2026-07-17 | `debug_hook` 模块级单例; forwarder 出/入方向 emit 到 DebugEventBus |
+| v0.2.6 | 2026-07-18 | forward.py 装填改由 `render_main_dialogue_system` + `build_short_term_history` 组合; 主对话完成后写 `conversation_turns` 两条 |

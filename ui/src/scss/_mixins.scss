@@ -1,0 +1,59 @@
+// 常用 mixin. 除通过 vite `additionalData` 自动注入之外, 请在需要时手工 `@use "@/scss/mixins" as *;`.
+
+@use "sass:map";
+
+// 通用 flex 居中
+@mixin flex-center($direction: row) {
+  display: flex;
+  flex-direction: $direction;
+  align-items: center;
+  justify-content: center;
+}
+
+// 卡片阴影
+@mixin card-shadow {
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.06);
+
+  :root.dark & {
+    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.4);
+  }
+}
+
+// 单行溢出省略
+@mixin truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// 多行溢出省略
+@mixin line-clamp($lines: 2) {
+  display: -webkit-box;
+  -webkit-line-clamp: $lines;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+// 断点媒体查询
+$breakpoints: (
+  sm: 640px,
+  md: 768px,
+  lg: 1024px,
+  xl: 1280px,
+);
+
+@mixin respond-to($name) {
+  $bp: map.get($breakpoints, $name);
+
+  @if $bp {
+    @media (min-width: $bp) {
+      @content;
+    }
+  }
+}
+
+// 等宽字体 (monaco/consolas 系列)
+@mixin monospace {
+  font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-variant-ligatures: none;
+}
