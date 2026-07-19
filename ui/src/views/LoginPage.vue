@@ -50,6 +50,7 @@ async function onSubmit() {
   <div class="login-page">
     <el-card class="login-card" shadow="hover">
       <div class="brand">
+        <img class="brand-mark" src="/favicon.svg" alt="Mnemosync" />
         <h1>Mnemosync</h1>
         <p class="subtitle">管理面板</p>
       </div>
@@ -112,6 +113,14 @@ async function onSubmit() {
 .brand {
   text-align: center;
   margin-bottom: $space-6;
+
+  .brand-mark {
+    display: block;
+    width: 56px;
+    height: 56px;
+    margin: 0 auto $space-2;
+    border-radius: 12px;
+  }
 
   h1 {
     font-size: 24px;

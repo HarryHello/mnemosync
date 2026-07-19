@@ -86,7 +86,7 @@ function handleUserCommand(cmd: string) {
 <template>
   <aside class="app-sidebar">
     <div class="brand">
-      <span class="brand-mark">M</span>
+      <img class="brand-mark" src="/favicon.svg" alt="Mnemosync" />
       <span class="brand-text">Mnemosync</span>
       <span v-if="version" class="version">v{{ version }}</span>
     </div>
@@ -158,15 +158,11 @@ function handleUserCommand(cmd: string) {
 }
 
 .brand-mark {
-  @include flex-center;
-
   width: 28px;
   height: 28px;
   border-radius: $radius-sm;
-  background: linear-gradient(135deg, $brand-primary, $brand-primary-hover);
-  color: #fff;
-  font-family: 'JetBrains Mono', Menlo, monospace;
-  font-weight: 700;
+  display: block;
+  object-fit: contain;
 }
 
 .menu {
