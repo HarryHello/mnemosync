@@ -49,6 +49,26 @@ function levelText(v: number): string {
   return '陌生'
 }
 
+type TagType = 'primary' | 'success' | 'warning' | 'danger' | 'info'
+/** tag 颜色跟 levelText 分档一致 (5 档). */
+function levelType(v: number): TagType {
+  const p = clamp01(v)
+  if (p >= 0.65) return 'success'
+  if (p >= 0.4) return 'primary'
+  if (p >= 0.2) return 'warning'
+  return 'danger'
+}
+
+type ProgressStatus = '' | 'success' | 'warning' | 'exception'
+/** el-progress status 只有 4 档, 阈值和 levelType 对齐 (中等/极高共用 primary 蓝). */
+function levelStatus(v: number): ProgressStatus {
+  const p = clamp01(v)
+  if (p >= 0.65) return 'success'
+  if (p >= 0.4) return ''
+  if (p >= 0.2) return 'warning'
+  return 'exception'
+}
+
 function fmtDate(s: string | null): string {
   if (!s) return '—'
   const d = new Date(s)
@@ -226,14 +246,16 @@ onMounted(refresh)
           <template #header>
             <div class="metric-head">
               <span>亲密度</span>
-              <el-tag size="small" type="warning">{{ levelText(rel.intimacy) }}</el-tag>
+              <el-tag size="small" :type="levelType(rel.intimacy)">
+                {{ levelText(rel.intimacy) }}
+              </el-tag>
             </div>
           </template>
           <div class="metric-value mono">{{ rel.intimacy.toFixed(3) }}</div>
           <el-progress
             :percentage="intimacyPct"
             :stroke-width="10"
-            status="warning"
+            :status="levelStatus(rel.intimacy)"
           />
           <div class="metric-hint">
             与用户互动的亲密程度, 由对话行为与情感极性驱动累积。
@@ -244,14 +266,16 @@ onMounted(refresh)
           <template #header>
             <div class="metric-head">
               <span>信任度</span>
-              <el-tag size="small" type="success">{{ levelText(rel.trust) }}</el-tag>
+              <el-tag size="small" :type="levelType(rel.trust)">
+                {{ levelText(rel.trust) }}
+              </el-tag>
             </div>
           </template>
           <div class="metric-value mono">{{ rel.trust.toFixed(3) }}</div>
           <el-progress
             :percentage="trustPct"
             :stroke-width="10"
-            status="success"
+            :status="levelStatus(rel.trust)"
           />
           <div class="metric-hint">
             信任等级影响记忆可见性 (CONFIDENTIAL / FRIENDS_ONLY 门槛)。
