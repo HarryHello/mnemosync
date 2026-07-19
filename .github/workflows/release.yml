@@ -1,0 +1,61 @@
+name: Release
+
+# 触发条件: 推送形如 v0.2.11 / v1.0.0 的 tag
+# 产物: GitHub Release + ui-dist.tar.gz (预编译的前端静态资源)
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # 创建 Release 需要
+
+jobs:
+  build-ui:
+    name: Build UI and publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ui/package.json
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          test -f ui/dist/index.html || (echo "❌ ui/dist/index.html not found"; exit 1)
+          test -d ui/dist/assets       || (echo "❌ ui/dist/assets not found"; exit 1)
+          echo "✅ UI build ok, size:"
+          du -sh ui/dist
+
+      - name: Package ui-dist tarball
+        run: |
+          tar -czf ui-dist.tar.gz -C ui dist
+          ls -lh ui-dist.tar.gz
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG_NAME" \
+            --title "Mnemosync $TAG_NAME" \
+            --generate-notes \
+            ui-dist.tar.gz
