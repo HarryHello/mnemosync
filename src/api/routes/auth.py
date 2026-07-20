@@ -14,6 +14,8 @@ from ..schemas.auth import (
     LoginRequest,
     LoginResponse,
     MessageResponse,
+    SetupCredentialsRequest,
+    SetupCredentialsResponse,
     UserInfo,
     UserInfoResponse,
 )
@@ -68,6 +70,23 @@ async def get_current_user(
             detail="认证失败",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+async def require_password_settled(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """拦截首次登录未改凭证的用户.
+
+    在非 auth 路由 include 时统一注入; must_change_password=True 一律 403,
+    强制走 /panel/auth/setup-credentials 完成首次设置. 前端守卫是引导,
+    服务端此拦截才是硬保证 (即便 UI 被绕过).
+    """
+    if current_user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="password_change_required",
+        )
+    return current_user
 
 
 @router.post(
@@ -165,7 +184,7 @@ async def get_current_user_info(
     "/change-password",
     response_model=ChangePasswordResponse,
     summary="修改密码",
-    description="修改当前用户的密码，首次登录必须修改",
+    description="修改当前用户的密码; 若 must_change_password=True, 请改用 /auth/setup-credentials",
 )
 async def change_password(
     request: ChangePasswordRequest,
@@ -180,6 +199,40 @@ async def change_password(
             request.new_password,
         )
         return ChangePasswordResponse(success=True, message="密码已修改，请重新登录")
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.post(
+    "/setup-credentials",
+    response_model=SetupCredentialsResponse,
+    summary="首次登录设置账号密码",
+    description="仅当 must_change_password=True 时可用; 一次性设定新用户名与新密码, 完成后强制重新登录",
+)
+async def setup_credentials(
+    request: SetupCredentialsRequest,
+    current_user: User = Depends(get_current_user),
+    auth_store: SqliteAuthStore = Depends(get_auth_store),
+) -> SetupCredentialsResponse:
+    """首次登录设置账号密码 (用户名 + 密码同时改)."""
+    if not current_user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="账号已完成初始化, 请使用修改密码接口",
+        )
+    try:
+        await auth_store.change_username_and_password(
+            current_user.id,
+            request.old_password,
+            request.new_username,
+            request.new_password,
+        )
+        return SetupCredentialsResponse(
+            success=True, message="账号密码已设置, 请重新登录"
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

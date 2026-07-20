@@ -33,7 +33,7 @@ async function onSubmit() {
     ElMessage.success('登录成功')
     await authStore.fetchUser().catch(() => undefined)
     if (result.must_change_password) {
-      router.push('/settings')
+      router.push('/setup')
       return
     }
     const redirect = route.query.redirect
@@ -81,7 +81,6 @@ async function onSubmit() {
           :loading="submitting"
           native-type="submit"
           class="submit"
-          @click="onSubmit"
         >
           登录
         </el-button>

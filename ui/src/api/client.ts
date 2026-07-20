@@ -5,6 +5,8 @@ import type {
   LoginResponse,
   UserInfoResponse,
   ChangePasswordRequest,
+  SetupCredentialsRequest,
+  SetupCredentialsResponse,
   ApiKeyCreateRequest,
   ApiKeyCreateResponse,
   ApiKeyListResponse,
@@ -123,6 +125,15 @@ export async function getCurrentUser(): Promise<UserInfoResponse> {
 
 export async function changePassword(data: ChangePasswordRequest): Promise<{ success: boolean }> {
   return request(`${API_BASE}/auth/change-password`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function setupCredentials(
+  data: SetupCredentialsRequest,
+): Promise<SetupCredentialsResponse> {
+  return request<SetupCredentialsResponse>(`${API_BASE}/auth/setup-credentials`, {
     method: 'POST',
     body: JSON.stringify(data),
   })

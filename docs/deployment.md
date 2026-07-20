@@ -1,6 +1,6 @@
 # 部署指南 | Deployment
 
-> **系统版本**: v0.2.11
+> **系统版本**: v0.2.12
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
 > **最后更新**: 2026-07-19
@@ -303,3 +303,4 @@ rm -rf /opt/Mnemosync
 | v0.1.0 | 2026-03-25 | 初始部署文档: Docker Compose + 源码 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 移除虚构环境变量表 (`MNEMOSYNC_DB_PATH` 等), 补 `mnemosync upgrade` / `--debug` / `--daemon`, 补 SSE 反代要点, 移除未实现的 Redis 缓存/metrics 章节 |
 | v0.2.6 | 2026-07-18 | 与代码对齐: 目录/data 列表补 `conversation.db` (v0.2.6 短期记忆) / `http_logs.db` (v0.2.5) / `prompts/` (v0.2.1); 模型绑定改由 `role_bindings` + CLI `set-model` (v0.2.3+), 不再写 `[chat]/[embedding]/[rerank]`; 换嵌入模型走 `memory reindex` (v0.2.4) 而非手动清 Chroma |
+| v0.2.12 | 2026-07-20 | 面板首次登录强制改账号密码: 新增 `POST /panel/auth/setup-credentials` 与 `require_password_settled` dependency (面板非 auth 路由 include 时统一注入); `must_change_password=True` 时所有 `/panel/*` (除 `/panel/auth/*`) 返回 `403 password_change_required`; 面板新增 `/setup` 页面 (BlankLayout, 无侧栏), 全局路由守卫强制跳转; `/settings` 简化为改密, 用户名只读展示; CLI `mnemosync login` 仍是唯一修改用户名的入口 |

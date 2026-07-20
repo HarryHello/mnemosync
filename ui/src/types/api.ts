@@ -34,6 +34,17 @@ export interface ChangePasswordRequest {
   new_password: string
 }
 
+export interface SetupCredentialsRequest {
+  old_password: string
+  new_username: string
+  new_password: string
+}
+
+export interface SetupCredentialsResponse {
+  success: boolean
+  message: string
+}
+
 // ============================================================================
 // API Keys
 // ============================================================================

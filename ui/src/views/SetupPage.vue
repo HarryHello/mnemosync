@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { changePassword, setToken } from '@/api/client'
+import { setupCredentials, setToken } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -14,12 +14,17 @@ const submitting = ref(false)
 
 const form = reactive({
   old_password: '',
+  new_username: '',
   new_password: '',
   confirm: '',
 })
 
 const rules: FormRules = {
   old_password: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
+  new_username: [
+    { required: true, message: '请输入新用户名', trigger: 'blur' },
+    { min: 1, max: 50, message: '用户名长度 1-50 位', trigger: 'blur' },
+  ],
   new_password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
     { min: 6, message: '至少 6 位', trigger: 'blur' },
@@ -43,11 +48,13 @@ async function onSubmit() {
 
   submitting.value = true
   try {
-    await changePassword({
+    await setupCredentials({
       old_password: form.old_password,
+      new_username: form.new_username,
       new_password: form.new_password,
     })
-    ElMessage.success('密码已更新, 请重新登录')
+    ElMessage.success('账号密码已设置, 请重新登录')
+    await authStore.logout().catch(() => undefined)
     setToken(null)
     router.push('/login')
   } catch (err) {
@@ -59,44 +66,30 @@ async function onSubmit() {
 </script>
 
 <template>
-  <div class="page-container">
-    <h2 class="page-title">设置</h2>
-    <p class="page-subtitle">账户与偏好设置。更多配置项将陆续开放。</p>
+  <div class="setup-page">
+    <el-card class="setup-card" shadow="hover">
+      <div class="brand">
+        <img class="brand-mark" src="/favicon.svg" alt="Mnemosync" />
+        <h1>首次使用</h1>
+        <p class="subtitle">请设置你的账号和密码</p>
+      </div>
 
-    <el-card shadow="never" class="section">
-      <template #header>
-        <div class="card-header">
-          <span>账号信息</span>
-        </div>
-      </template>
-
-      <el-form label-width="120px" style="max-width: 480px">
-        <el-form-item label="当前用户名">
-          <el-input :model-value="authStore.user?.username ?? ''" disabled />
-        </el-form-item>
-      </el-form>
       <el-alert
-        type="info"
+        type="warning"
         :closable="false"
+        title="必须完成设置才能进入面板"
+        description="为了安全, 首次登录必须修改默认账号密码; 未完成前无法访问其他页面。"
         show-icon
-        title="如需修改用户名"
-        description="面板不支持修改用户名, 请在服务器本机运行 `mnemosync login` 进入交互式 CLI 修改。"
       />
-    </el-card>
-
-    <el-card shadow="never" class="section">
-      <template #header>
-        <div class="card-header">
-          <span>修改密码</span>
-        </div>
-      </template>
 
       <el-form
         ref="formRef"
         :model="form"
         :rules="rules"
-        label-width="120px"
-        style="max-width: 480px"
+        label-position="top"
+        size="large"
+        style="margin-top: 16px"
+        @submit.prevent="onSubmit"
       >
         <el-form-item label="当前密码" prop="old_password">
           <el-input
@@ -104,6 +97,14 @@ async function onSubmit() {
             type="password"
             show-password
             autocomplete="current-password"
+            placeholder="mnemosync"
+          />
+        </el-form-item>
+        <el-form-item label="新用户名" prop="new_username">
+          <el-input
+            v-model="form.new_username"
+            autocomplete="username"
+            placeholder="1-50 位"
           />
         </el-form-item>
         <el-form-item label="新密码" prop="new_password">
@@ -112,6 +113,7 @@ async function onSubmit() {
             type="password"
             show-password
             autocomplete="new-password"
+            placeholder="至少 6 位, 不能是默认密码"
           />
         </el-form-item>
         <el-form-item label="确认新密码" prop="confirm">
@@ -120,24 +122,65 @@ async function onSubmit() {
             type="password"
             show-password
             autocomplete="new-password"
+            @keyup.enter="onSubmit"
           />
         </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="submitting" @click="onSubmit">更新密码</el-button>
-        </el-form-item>
+        <el-button
+          type="primary"
+          :loading="submitting"
+          native-type="submit"
+          class="submit"
+        >
+          完成设置
+        </el-button>
       </el-form>
     </el-card>
   </div>
 </template>
 
 <style lang="scss" scoped>
-.section {
-  margin-bottom: $space-4;
+.setup-page {
+  min-height: 100vh;
+  @include flex-center;
+  padding: $space-5;
 }
 
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: $space-2;
+.setup-card {
+  width: 100%;
+  max-width: 460px;
+  padding: $space-3 $space-2;
+}
+
+.brand {
+  text-align: center;
+  margin-bottom: $space-4;
+
+  .brand-mark {
+    display: block;
+    width: 56px;
+    height: 56px;
+    margin: 0 auto $space-2;
+    border-radius: 12px;
+  }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 700;
+    background: linear-gradient(135deg, $brand-primary, $brand-primary-hover);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .subtitle {
+    color: var(--el-text-color-secondary);
+    margin-top: $space-1;
+    font-size: 13px;
+  }
+}
+
+.submit {
+  width: 100%;
+  margin-top: $space-2;
 }
 </style>

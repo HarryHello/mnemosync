@@ -34,6 +34,25 @@ class ChangePasswordResponse(BaseModel):
     message: str = Field(default="密码已修改", description="消息")
 
 
+class SetupCredentialsRequest(BaseModel):
+    """首次登录设置账号密码请求.
+
+    仅当 must_change_password=True 时可用. 一次性设定用户名与密码, 完成后
+    must_change_password 置 False, 后续改密走 /auth/change-password.
+    """
+
+    old_password: str = Field(..., min_length=1, max_length=128, description="原密码")
+    new_username: str = Field(..., min_length=1, max_length=50, description="新用户名")
+    new_password: str = Field(..., min_length=6, max_length=128, description="新密码")
+
+
+class SetupCredentialsResponse(BaseModel):
+    """首次设置账号密码响应."""
+
+    success: bool = Field(default=True, description="是否成功")
+    message: str = Field(default="账号密码已设置", description="消息")
+
+
 class UserInfo(BaseModel):
     """用户信息."""
 

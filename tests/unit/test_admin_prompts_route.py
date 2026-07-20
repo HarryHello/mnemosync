@@ -72,6 +72,7 @@ def app_auth() -> FastAPI:
             id="test",
             username="test",
             password_hash="",
+            must_change_password=False,
             is_active=True,
             created_at=None,
             updated_at=None,

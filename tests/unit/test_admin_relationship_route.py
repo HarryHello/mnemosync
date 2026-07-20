@@ -39,6 +39,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     app.state.memory_store = memory_store
     app.dependency_overrides[get_current_user] = lambda: User(
         id="test", username="test", password_hash="",
+        must_change_password=False,
         is_active=True, created_at=None, updated_at=None,
     )
 

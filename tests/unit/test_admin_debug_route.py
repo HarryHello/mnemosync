@@ -50,6 +50,7 @@ def app(api_key_store: SqliteApiKeyStore) -> FastAPI:
     def _user() -> User:
         return User(
             id="test", username="test", password_hash="",
+            must_change_password=False,
             is_active=True, created_at=None, updated_at=None,
         )
 
