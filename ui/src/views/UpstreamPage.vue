@@ -9,6 +9,7 @@ import {
   deleteUpstreamService,
 } from '@/api/client'
 import type { UpstreamService } from '@/types/api'
+import PageHeader from '@/components/common/PageHeader.vue'
 
 const services = ref<UpstreamService[]>([])
 const loading = ref(false)
@@ -133,16 +134,13 @@ onMounted(refresh)
 
 <template>
   <div class="page-container">
-    <div class="page-head">
-      <div>
-        <h2 class="page-title">上游 API</h2>
-        <p class="page-subtitle">
-          管理 Mnemosync 使用的 OpenAI 兼容上游服务商 (如 DashScope), 只维护凭证 (Base URL + API Key)。
-          API Key 存储时使用 Fernet 对称加密。要为具体角色 (主 / 辅助 / 嵌入 / 重排) 绑定模型,
-          请前往<router-link to="/models" class="inline-link">『模型管理』</router-link>。
-        </p>
-      </div>
-      <div class="head-actions">
+    <PageHeader title="上游 API">
+      <template #subtitle>
+        管理 Mnemosync 使用的 OpenAI 兼容上游服务商 (如 DashScope), 只维护凭证 (Base URL + API Key)。
+        API Key 存储时使用 Fernet 对称加密。要为具体角色 (主 / 辅助 / 嵌入 / 重排) 绑定模型,
+        请前往<router-link to="/models" class="inline-link">『模型管理』</router-link>。
+      </template>
+      <template #actions>
         <el-button :loading="loading" @click="refresh">
           <el-icon><Refresh /></el-icon>
           <span>刷新</span>
@@ -151,8 +149,8 @@ onMounted(refresh)
           <el-icon><Plus /></el-icon>
           <span>新增服务</span>
         </el-button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div v-loading="loading">
       <el-table v-if="services.length" :data="services" stripe>
@@ -264,20 +262,6 @@ onMounted(refresh)
 </template>
 
 <style lang="scss" scoped>
-.page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: $space-4;
-  margin-bottom: $space-4;
-  flex-wrap: wrap;
-}
-
-.head-actions {
-  display: flex;
-  gap: $space-2;
-}
-
 .muted {
   color: var(--el-text-color-secondary);
 }
