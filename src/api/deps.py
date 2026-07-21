@@ -12,6 +12,7 @@ from src.persistence.auth_store import SqliteAuthStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.notification_store import NotificationStore
 
 if TYPE_CHECKING:
     from src.core.memory.reindex import ReindexProgress
@@ -58,3 +59,7 @@ def get_reindex_progress(request: Request) -> "ReindexProgress":
 
 def get_conversation_store(request: Request) -> SqliteConversationStore:
     return request.app.state.conversation_store
+
+
+def get_notification_store(request: Request) -> NotificationStore:
+    return request.app.state.notification_store

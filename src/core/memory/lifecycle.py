@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from src.core.memory.reindex import ReindexProgress
     from src.infra.vector_store import VectorStore
     from src.persistence.memory_store import SqliteMemoryStore
+    from src.persistence.notification_store import NotificationStore
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +58,14 @@ class MemoryLifecycle:
         forwarder: MultiForwarder,
         resolver: RoleResolver | None = None,
         reindex_progress: "ReindexProgress | None" = None,
+        notification_store: "NotificationStore | None" = None,
     ):
         self.memory_store = memory_store
         self.vector_store = vector_store
         self.forwarder = forwarder
         self.resolver = resolver
         self.reindex_progress = reindex_progress
+        self.notification_store = notification_store
 
     async def store_candidate(
         self,
@@ -118,6 +121,11 @@ class MemoryLifecycle:
                 vecs = await self.forwarder.embed(entry.content)
         except Exception as e:
             logger.error("生成 embedding 失败, 记忆未入库: %s", e)
+            await self._notify_write_failure(
+                stage="embed",
+                error=e,
+                content=entry.content,
+            )
             return None
 
         # 校验向量库嵌入锁 (首次写入自动 lock; 换模型未走 reindex 会抛)
@@ -129,6 +137,11 @@ class MemoryLifecycle:
                 )
             except Exception as e:
                 logger.error("向量库嵌入锁校验失败, 记忆未入库: %s", e)
+                await self._notify_write_failure(
+                    stage="vector_lock",
+                    error=e,
+                    content=entry.content,
+                )
                 return None
 
         try:
@@ -137,6 +150,11 @@ class MemoryLifecycle:
                 self.vector_store.add(entry, vecs[0])
         except Exception as e:
             logger.error("记忆入库失败: %s", e)
+            await self._notify_write_failure(
+                stage="persist",
+                error=e,
+                content=entry.content,
+            )
             return None
 
         logger.info(
@@ -203,3 +221,33 @@ class MemoryLifecycle:
             self.vector_store.delete(memory_id)
         except Exception as e:
             logger.error("ChromaDB 删除记忆失败 %s: %s", memory_id, e)
+
+    async def _notify_write_failure(
+        self,
+        *,
+        stage: str,
+        error: Exception,
+        content: str,
+    ) -> None:
+        """记忆写入失败时向通知中心发一条 warning. 兜底: 通知本身失败只 log."""
+        if self.notification_store is None:
+            return
+        from src.infra.forwarder.forwarder import UpstreamError
+
+        meta: dict[str, object] = {
+            "stage": stage,
+            "content_preview": content[:200],
+            "error_type": type(error).__name__,
+        }
+        if isinstance(error, UpstreamError) and error.status_code is not None:
+            meta["upstream_status"] = error.status_code
+        try:
+            await self.notification_store.add(
+                level="warning",
+                category="memory_write_failed",
+                title="记忆入库失败",
+                message=str(error) or type(error).__name__,
+                meta=meta,
+            )
+        except Exception as notify_err:
+            logger.warning("写入通知中心失败: %s", notify_err)

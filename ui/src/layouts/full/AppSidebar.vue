@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { healthCheck } from '@/api/client'
 import { useDarkMode } from '@/composables/useDarkMode'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
+import NotificationDrawer from '@/components/notifications/NotificationDrawer.vue'
 
 interface MenuItem {
   path: string
@@ -16,17 +18,24 @@ const route = useRoute()
 const router = useRouter()
 const { isDark, toggle: toggleDark } = useDarkMode()
 const authStore = useAuthStore()
+const notificationsStore = useNotificationsStore()
 
 const version = ref<string | null>(null)
+const notificationsOpen = ref(false)
 
 onMounted(async () => {
   if (!authStore.user) void authStore.fetchUser().catch(() => undefined)
+  notificationsStore.startPolling()
   try {
     const h = await healthCheck()
     version.value = h.version
   } catch {
     version.value = null
   }
+})
+
+onUnmounted(() => {
+  notificationsStore.stopPolling()
 })
 
 const items: MenuItem[] = [
@@ -80,6 +89,7 @@ function handleUserCommand(cmd: string) {
   if (cmd === 'logout') void handleLogout()
   else if (cmd === 'change-password') router.push('/settings')
   else if (cmd === 'toggle-theme') toggleDark()
+  else if (cmd === 'notifications') notificationsOpen.value = true
 }
 </script>
 
@@ -109,12 +119,29 @@ function handleUserCommand(cmd: string) {
     <div class="footer">
       <el-dropdown trigger="hover" placement="top-start" popper-class="sidebar-user-popper" @command="handleUserCommand">
         <span class="user-trigger">
-          <el-avatar :size="28" class="avatar">{{ username.slice(0, 1).toUpperCase() }}</el-avatar>
+          <el-badge
+            :value="notificationsStore.unreadCount"
+            :hidden="notificationsStore.unreadCount === 0"
+            :max="99"
+            class="avatar-badge"
+          >
+            <el-avatar :size="28" class="avatar">{{ username.slice(0, 1).toUpperCase() }}</el-avatar>
+          </el-badge>
           <span class="user-name">{{ username }}</span>
           <el-icon><ArrowDown /></el-icon>
         </span>
         <template #dropdown>
           <el-dropdown-menu>
+            <el-dropdown-item command="notifications">
+              <el-icon><Bell /></el-icon>
+              <span>显示通知</span>
+              <el-badge
+                v-if="notificationsStore.unreadCount > 0"
+                :value="notificationsStore.unreadCount"
+                :max="99"
+                class="dropdown-badge"
+              />
+            </el-dropdown-item>
             <el-dropdown-item command="toggle-theme">
               <el-icon>
                 <component :is="isDark ? 'Sunny' : 'Moon'" />
@@ -133,6 +160,8 @@ function handleUserCommand(cmd: string) {
         </template>
       </el-dropdown>
     </div>
+
+    <NotificationDrawer v-model="notificationsOpen" />
   </aside>
 </template>
 
@@ -199,6 +228,15 @@ function handleUserCommand(cmd: string) {
   flex: 0 0 auto;
 }
 
+.avatar-badge {
+  flex: 0 0 auto;
+}
+
+.avatar-badge :deep(.el-badge__content) {
+  transform: translate(50%, -50%) scale(0.85);
+  transform-origin: 100% 0%;
+}
+
 .user-name {
   font-size: 13px;
   color: var(--el-text-color-primary);
@@ -224,5 +262,15 @@ function handleUserCommand(cmd: string) {
     color: var(--el-color-danger) !important;
     background: var(--el-color-danger-light-9);
   }
+}
+
+.sidebar-user-popper .dropdown-badge {
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+.sidebar-user-popper .dropdown-badge .el-badge__content {
+  position: static;
+  transform: none;
 }
 </style>

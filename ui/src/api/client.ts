@@ -47,6 +47,10 @@ import type {
   DebugEventListResponse,
   DebugEventDetailResponse,
   DebugStatusResponse,
+  Notification,
+  NotificationListResponse,
+  UnreadCountResponse,
+  MarkReadResponse,
 } from '@/types/api'
 
 // ============================================================================
@@ -571,6 +575,51 @@ export async function openDebugStream(signal: AbortSignal): Promise<Response> {
   }
   return resp
 }
+
+// ============================================================================
+// Admin API - Notifications (v0.2.13 通知中心)
+// ============================================================================
+
+export interface NotificationListParams {
+  page?: number
+  page_size?: number
+  unread_only?: boolean
+}
+
+export async function listNotifications(
+  params: NotificationListParams = {},
+): Promise<NotificationListResponse> {
+  const q = new URLSearchParams()
+  if (params.page) q.set('page', String(params.page))
+  if (params.page_size) q.set('page_size', String(params.page_size))
+  if (params.unread_only) q.set('unread_only', 'true')
+  const qs = q.toString()
+  return request<NotificationListResponse>(
+    `${API_BASE}/admin/notifications${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export async function getUnreadNotificationCount(): Promise<UnreadCountResponse> {
+  return request<UnreadCountResponse>(`${API_BASE}/admin/notifications/unread-count`)
+}
+
+export async function markNotificationRead(id: number): Promise<MarkReadResponse> {
+  return request<MarkReadResponse>(`${API_BASE}/admin/notifications/${id}/read`, {
+    method: 'POST',
+  })
+}
+
+export async function markAllNotificationsRead(): Promise<MarkReadResponse> {
+  return request<MarkReadResponse>(`${API_BASE}/admin/notifications/mark-all-read`, {
+    method: 'POST',
+  })
+}
+
+export async function deleteNotification(id: number): Promise<void> {
+  await request(`${API_BASE}/admin/notifications/${id}`, { method: 'DELETE' })
+}
+
+export type { Notification }
 
 // ============================================================================
 // Models (OpenAI Compatible)

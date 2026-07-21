@@ -27,6 +27,7 @@ from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.store import LLMServiceStore
 from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.notification_store import NotificationStore
 from src.tools import (
     MemoryRetriever,
     make_emotion_analyzer_tool,
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 # 与 src.api.lifespan 保持一致的默认路径 (相对项目根)
 _LLM_SERVICE_DB_PATH = "data/llm_service.db"
+_NOTIFICATION_DB_PATH = "data/notifications.db"
 
 
 def _resolve_addressing(rel, settings) -> tuple[str, str, str]:
@@ -270,6 +272,9 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
                      len(out.new_memories), len(out.decay_evaluations))
 
         lifecycle = MemoryLifecycle(memory_store, vector_store, forwarder, resolver=resolver)
+        notification_store = NotificationStore(_NOTIFICATION_DB_PATH)
+        await notification_store.init_db()
+        lifecycle.notification_store = notification_store
         for cand in out.new_memories:
             await lifecycle.store_candidate(cand, source_user=source_user)
         await lifecycle.apply_decay_evaluations(out.decay_evaluations)

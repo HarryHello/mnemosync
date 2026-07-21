@@ -21,6 +21,7 @@ from src.api.deps import (
     get_llm_service_store,
     get_memory_store,
     get_multi_forwarder,
+    get_notification_store,
     get_reindex_progress,
     get_resolver,
     get_vector_store,
@@ -32,6 +33,9 @@ from src.api.schemas.admin import (
     ConversationClearResponse,
     ConversationTurnItem,
     ConversationTurnListResponse,
+    MarkReadResponse,
+    NotificationItem,
+    NotificationListResponse,
     PersonaConfigRead,
     PersonaConfigRelation,
     PersonaConfigUpdateBody,
@@ -55,6 +59,7 @@ from src.api.schemas.admin import (
     RoleBindingListResponse,
     RoleBindingReorderBody,
     RoleBindingUpdateBody,
+    UnreadCountResponse,
 )
 from src.core.config import (
     _delete_persona_override,
@@ -76,6 +81,7 @@ from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.notification_store import NotificationStore
 
 logger = logging.getLogger(__name__)
 
@@ -1159,6 +1165,84 @@ async def clear_conversation_turns(
     else:
         deleted = await store.delete_all()
     return ConversationClearResponse(deleted=deleted)
+
+
+# ============================================================================
+# 通知中心 (v0.2.13) —— 通用面板通知
+# ============================================================================
+
+
+def _notification_to_item(n) -> NotificationItem:
+    return NotificationItem(
+        id=n.id or 0,
+        created_at=n.created_at.isoformat(),
+        level=n.level,
+        category=n.category,
+        title=n.title,
+        message=n.message,
+        meta=n.meta,
+        read_at=n.read_at.isoformat() if n.read_at else None,
+    )
+
+
+@router.get("/notifications", response_model=NotificationListResponse)
+async def list_notifications(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    unread_only: bool = Query(False),
+    store: NotificationStore = Depends(get_notification_store),
+):
+    """按 created_at 降序分页列出通知. unread_only=True 只返回未读."""
+    offset = (page - 1) * page_size
+    rows, total = await store.list_page(
+        limit=page_size, offset=offset, unread_only=unread_only,
+    )
+    unread = await store.count_unread()
+    return NotificationListResponse(
+        items=[_notification_to_item(r) for r in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
+        unread_count=unread,
+    )
+
+
+@router.get("/notifications/unread-count", response_model=UnreadCountResponse)
+async def get_notifications_unread_count(
+    store: NotificationStore = Depends(get_notification_store),
+):
+    """轻量端点, 供前端 60s 轮询."""
+    return UnreadCountResponse(unread_count=await store.count_unread())
+
+
+@router.post("/notifications/{notification_id}/read", response_model=MarkReadResponse)
+async def mark_notification_read(
+    notification_id: int,
+    store: NotificationStore = Depends(get_notification_store),
+):
+    """标记单条已读. 已经是已读状态时返回 marked=0 (幂等)."""
+    if await store.get(notification_id) is None:
+        raise HTTPException(status_code=404, detail="notification not found")
+    hit = await store.mark_read(notification_id)
+    return MarkReadResponse(marked=1 if hit else 0)
+
+
+@router.post("/notifications/mark-all-read", response_model=MarkReadResponse)
+async def mark_all_notifications_read(
+    store: NotificationStore = Depends(get_notification_store),
+):
+    return MarkReadResponse(marked=await store.mark_all_read())
+
+
+@router.delete("/notifications/{notification_id}")
+async def delete_notification(
+    notification_id: int,
+    store: NotificationStore = Depends(get_notification_store),
+):
+    ok = await store.delete_by_id(notification_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="notification not found")
+    return {"success": True, "id": notification_id}
 
 
 # ============================================================================

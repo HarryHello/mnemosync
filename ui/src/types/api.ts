@@ -448,6 +448,37 @@ export interface PersonaConfigUpdateBody {
   prompt?: string | null
   relation?: PersonaConfigRelation | null
 }
+
+// ============================================================================
+// Notifications (v0.2.13 通知中心)
+// ============================================================================
+
+export interface Notification {
+  id: number
+  created_at: string
+  level: 'info' | 'warning' | 'error' | string
+  category: string
+  title: string
+  message: string
+  meta: Record<string, unknown> | null
+  read_at: string | null
+}
+
+export interface NotificationListResponse {
+  items: Notification[]
+  total: number
+  page: number
+  page_size: number
+  unread_count: number
+}
+
+export interface UnreadCountResponse {
+  unread_count: number
+}
+
+export interface MarkReadResponse {
+  marked: number
+}
 // ============================================================================
 
 export interface ChatMessage {

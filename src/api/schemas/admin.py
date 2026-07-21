@@ -299,6 +299,38 @@ class PersonaConfigUpdateBody(BaseModel):
     relation: PersonaConfigRelation | None = None
 
 
+# ---- 通知中心 (v0.2.13) ---------------------------------------------------
+
+
+class NotificationItem(BaseModel):
+    """一条通知. level / category 都是自由字符串, UI 按 category 展开细节."""
+
+    id: int
+    created_at: str
+    level: str = Field(..., description="info | warning | error")
+    category: str
+    title: str
+    message: str
+    meta: dict | None = None
+    read_at: str | None = None
+
+
+class NotificationListResponse(BaseModel):
+    items: list[NotificationItem]
+    total: int
+    page: int
+    page_size: int
+    unread_count: int
+
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int
+
+
+class MarkReadResponse(BaseModel):
+    marked: int
+
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
@@ -331,4 +363,8 @@ __all__ = [
     "PersonaConfigRelation",
     "PersonaConfigRead",
     "PersonaConfigUpdateBody",
+    "NotificationItem",
+    "NotificationListResponse",
+    "UnreadCountResponse",
+    "MarkReadResponse",
 ]
