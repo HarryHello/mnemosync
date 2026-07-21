@@ -125,9 +125,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if os.path.exists(ui_dist):
         app.mount("/assets", StaticFiles(directory=os.path.join(ui_dist, "assets")), name="assets")
 
+        from fastapi import HTTPException as _HTTPException
+
         @app.get("/{full_path:path}")
         async def serve_spa(full_path: str):
-            """SPA 路由: 所有非 API 路径返回 index.html."""
+            """SPA 路由: 未注册的非 API 路径返回 index.html.
+
+            /panel/* 与 /v1/* 属于 API 命名空间, 若未命中已注册路由必须直接 404,
+            否则前端 fetch 拿到 HTML, response.json() 会抛 "Unexpected token '<'".
+            """
+            if full_path.startswith(("panel/", "v1/")) or full_path in ("panel", "v1"):
+                raise _HTTPException(status_code=404, detail="Not Found")
             file_path = os.path.join(ui_dist, full_path)
             if os.path.isfile(file_path):
                 return FileResponse(file_path)

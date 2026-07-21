@@ -103,6 +103,12 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
     throw new Error(error.detail || `HTTP ${response.status}`)
   }
 
+  const contentType = response.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) {
+    throw new Error(
+      `API 未返回 JSON (${response.status} ${contentType || '未知类型'}); 检查后端版本是否已重启`,
+    )
+  }
   return response.json()
 }
 
