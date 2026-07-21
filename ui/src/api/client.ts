@@ -34,6 +34,7 @@ import type {
   RoleBindingItem,
   RoleBindingListResponse,
   RoleBindingAddBody,
+  RoleBindingUpdateBody,
   ProbeDimensionBody,
   ProbeDimensionResponse,
   ReindexStartBody,
@@ -424,6 +425,20 @@ export async function deleteModelBinding(role: string, priority: number): Promis
   await request(
     `${API_BASE}/admin/model-bindings/${encodeURIComponent(role)}/${priority}`,
     { method: 'DELETE' },
+  )
+}
+
+export async function updateModelBinding(
+  role: string,
+  priority: number,
+  body: RoleBindingUpdateBody,
+): Promise<RoleBindingItem> {
+  return request<RoleBindingItem>(
+    `${API_BASE}/admin/model-bindings/${encodeURIComponent(role)}/${priority}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    },
   )
 }
 

@@ -291,6 +291,19 @@ export interface RoleBindingAddBody {
   send_dimensions?: boolean
 }
 
+/**
+ * v0.2.13: PATCH /model-bindings/{role}/{priority}.
+ * 语义: 键缺失 = 不改; 值为 null (仅 context_length / embedding_dim) = 清空;
+ * service_id / model 若下发则必须非空。
+ */
+export interface RoleBindingUpdateBody {
+  service_id?: string
+  model?: string
+  context_length?: number | null
+  embedding_dim?: number | null
+  send_dimensions?: boolean
+}
+
 export interface RoleBindingReorderBody {
   order: [string, string][]
 }

@@ -54,6 +54,7 @@ from src.api.schemas.admin import (
     RoleBindingItem,
     RoleBindingListResponse,
     RoleBindingReorderBody,
+    RoleBindingUpdateBody,
 )
 from src.core.config import (
     _delete_persona_override,
@@ -868,6 +869,63 @@ async def delete_model_binding(
         raise HTTPException(status_code=404, detail="binding not found")
     resolver.invalidate(role_enum)
     return {"success": True}
+
+
+@router.patch("/model-bindings/{role}/{priority}", response_model=RoleBindingItem)
+async def update_model_binding(
+    role: str,
+    priority: int,
+    body: RoleBindingUpdateBody,
+    store: LLMServiceStore = Depends(get_llm_service_store),
+    resolver: RoleResolver = Depends(get_resolver),
+):
+    """就地更新一条绑定的可编辑字段.
+
+    - role / priority 由 URL 定位, 不可改; 调整顺序请走 reorder
+    - 只有请求体里显式出现的字段会被覆盖 (exclude_unset)
+    - context_length / embedding_dim 显式传 null 表示清空
+    - service_id / model 非法或为空字符串会被拒绝
+    """
+    role_enum = _parse_role(role)
+    provided = body.model_dump(exclude_unset=True)
+
+    kwargs: dict = {}
+    if "service_id" in provided:
+        sid = provided["service_id"]
+        if sid is None or not sid.strip():
+            raise HTTPException(status_code=400, detail="service_id 不可为空")
+        kwargs["service_id"] = sid.strip()
+    if "model" in provided:
+        m = provided["model"]
+        if m is None or not m.strip():
+            raise HTTPException(status_code=400, detail="model 不可为空")
+        kwargs["model"] = m.strip()
+    if "context_length" in provided:
+        cl = provided["context_length"]
+        if cl is None:
+            kwargs["clear_context_length"] = True
+        else:
+            kwargs["context_length"] = cl
+    if "embedding_dim" in provided:
+        ed = provided["embedding_dim"]
+        if ed is None:
+            kwargs["clear_embedding_dim"] = True
+        else:
+            kwargs["embedding_dim"] = ed
+    if "send_dimensions" in provided:
+        kwargs["send_dimensions"] = bool(provided["send_dimensions"])
+
+    if not kwargs:
+        raise HTTPException(status_code=400, detail="没有可更新的字段")
+
+    try:
+        binding = await store.update_role_binding(role_enum, priority, **kwargs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if binding is None:
+        raise HTTPException(status_code=404, detail="binding not found")
+    resolver.invalidate(role_enum)
+    return _binding_to_item(binding)
 
 
 @router.put("/model-bindings/{role}/reorder", response_model=RoleBindingListResponse)

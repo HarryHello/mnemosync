@@ -399,6 +399,94 @@ class LLMServiceStore:
             send_dimensions=send_dimensions,
         )
 
+    async def update_role_binding(
+        self,
+        role: ModelType,
+        priority: int,
+        *,
+        service_id: Optional[str] = None,
+        model: Optional[str] = None,
+        context_length: Optional[int] = None,
+        embedding_dim: Optional[int] = None,
+        send_dimensions: Optional[bool] = None,
+        clear_context_length: bool = False,
+        clear_embedding_dim: bool = False,
+    ) -> Optional[RoleBinding]:
+        """就地更新一条角色绑定的可编辑字段. role/priority 由主键定位, 不可改.
+
+        清空整型字段需显式传对应 clear_* 标志 (None 语义为 "不修改").
+        service_id 若变更, 校验目标服务存在.
+        找不到目标绑定时返回 None.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT role, priority, service_id, model, created_at, "
+                "context_length, embedding_dim, send_dimensions "
+                "FROM role_bindings WHERE role = ? AND priority = ?",
+                (role.value, priority),
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row is None:
+                    return None
+
+            if service_id is not None:
+                async with db.execute(
+                    "SELECT COUNT(*) FROM llm_services WHERE id = ?", (service_id,)
+                ) as cursor:
+                    svc_row = await cursor.fetchone()
+                    if not svc_row or svc_row[0] == 0:
+                        raise ValueError(f"服务 '{service_id}' 不存在")
+
+            sets: list[str] = []
+            params: list = []
+            if service_id is not None:
+                sets.append("service_id = ?")
+                params.append(service_id)
+            if model is not None:
+                sets.append("model = ?")
+                params.append(model)
+            if clear_context_length:
+                sets.append("context_length = NULL")
+            elif context_length is not None:
+                sets.append("context_length = ?")
+                params.append(context_length)
+            if clear_embedding_dim:
+                sets.append("embedding_dim = NULL")
+            elif embedding_dim is not None:
+                sets.append("embedding_dim = ?")
+                params.append(embedding_dim)
+            if send_dimensions is not None:
+                sets.append("send_dimensions = ?")
+                params.append(1 if send_dimensions else 0)
+
+            if sets:
+                params.extend([role.value, priority])
+                await db.execute(
+                    f"UPDATE role_bindings SET {', '.join(sets)} "
+                    "WHERE role = ? AND priority = ?",
+                    tuple(params),
+                )
+                await db.commit()
+
+            async with db.execute(
+                "SELECT role, priority, service_id, model, created_at, "
+                "context_length, embedding_dim, send_dimensions "
+                "FROM role_bindings WHERE role = ? AND priority = ?",
+                (role.value, priority),
+            ) as cursor:
+                r = await cursor.fetchone()
+                assert r is not None
+                return RoleBinding(
+                    role=ModelType(r[0]),
+                    priority=r[1],
+                    service_id=r[2],
+                    model=r[3],
+                    created_at=self._parse_dt(r[4]),
+                    context_length=r[5],
+                    embedding_dim=r[6],
+                    send_dimensions=bool(r[7]),
+                )
+
     async def delete_role_binding(self, role: ModelType, priority: int) -> bool:
         """删除某条绑定, 并将其后所有条目的 priority 前移一位, 保持连续."""
         async with aiosqlite.connect(self.db_path) as db:

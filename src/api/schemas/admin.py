@@ -120,6 +120,24 @@ class RoleBindingReorderBody(BaseModel):
     order: list[tuple[str, str]] = Field(..., description="[[service_id, model], ...]")
 
 
+class RoleBindingUpdateBody(BaseModel):
+    """就地更新一条绑定的可编辑字段. role / priority 由 URL 定位, 不在此改.
+
+    整型字段的三态语义:
+    - 键缺失 (不下发): 保持原值
+    - 键为 null: 清空为 NULL
+    - 键为整数: 覆盖
+    """
+
+    service_id: str | None = None
+    model: str | None = None
+    context_length: int | None = Field(default=None, ge=1)
+    embedding_dim: int | None = Field(default=None, ge=1)
+    send_dimensions: bool | None = None
+
+    model_config = {"protected_namespaces": ()}
+
+
 class ProbeDimensionBody(BaseModel):
     """探测嵌入模型的真实输出维度 (不落库)."""
 
@@ -292,6 +310,7 @@ __all__ = [
     "RoleBindingListResponse",
     "RoleBindingAddBody",
     "RoleBindingReorderBody",
+    "RoleBindingUpdateBody",
     "ProbeDimensionBody",
     "ProbeDimensionResponse",
     "ReindexStartBody",
