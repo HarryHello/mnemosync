@@ -11,6 +11,7 @@ import { computed, onScopeDispose, ref } from 'vue'
 import type { Notification, NotificationListResponse } from '@/types/api'
 import {
   deleteNotification as apiDelete,
+  deleteReadNotifications as apiDeleteRead,
   getToken,
   getUnreadNotificationCount,
   listNotifications,
@@ -30,6 +31,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
   const pageSize = ref(DEFAULT_PAGE_SIZE)
 
   const hasUnread = computed(() => unreadCount.value > 0)
+  const readCount = computed(() => items.value.filter((n) => !!n.read_at).length)
 
   let timer: ReturnType<typeof setInterval> | null = null
   let visibilityListenerAttached = false
@@ -92,6 +94,15 @@ export const useNotificationsStore = defineStore('notifications', () => {
     }
   }
 
+  async function removeRead() {
+    const r = await apiDeleteRead()
+    if (r.deleted > 0) {
+      items.value = items.value.filter((n) => !n.read_at)
+      total.value = Math.max(0, total.value - r.deleted)
+    }
+    return r.deleted
+  }
+
   function _onVisibility() {
     if (document.visibilityState === 'visible') fetchUnreadCount()
   }
@@ -129,11 +140,13 @@ export const useNotificationsStore = defineStore('notifications', () => {
     page,
     pageSize,
     hasUnread,
+    readCount,
     fetchUnreadCount,
     fetchList,
     markRead,
     markAllRead,
     remove,
+    removeRead,
     startPolling,
     stopPolling,
   }

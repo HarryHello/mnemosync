@@ -188,6 +188,13 @@ class NotificationStore:
             await db.commit()
             return (cur.rowcount or 0) > 0
 
+    async def delete_read(self) -> int:
+        """清空所有已读通知, 返回被删条数."""
+        async with self._conn() as db:
+            cur = await db.execute("DELETE FROM notifications WHERE read_at IS NOT NULL")
+            await db.commit()
+            return cur.rowcount or 0
+
     async def get(self, notification_id: int) -> Notification | None:
         async with self._conn() as db:
             async with db.execute(

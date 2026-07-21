@@ -1234,6 +1234,14 @@ async def mark_all_notifications_read(
     return MarkReadResponse(marked=await store.mark_all_read())
 
 
+@router.delete("/notifications/read")
+async def delete_read_notifications(
+    store: NotificationStore = Depends(get_notification_store),
+):
+    """删除全部已读通知. 未读不受影响."""
+    return {"deleted": await store.delete_read()}
+
+
 @router.delete("/notifications/{notification_id}")
 async def delete_notification(
     notification_id: int,

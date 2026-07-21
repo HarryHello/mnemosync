@@ -41,13 +41,12 @@ function formatTime(iso: string): string {
   }
 }
 
-async function onItemClick(n: Notification) {
-  if (!n.read_at) {
-    try {
-      await store.markRead(n.id)
-    } catch (err) {
-      ElMessage.error(err instanceof Error ? err.message : String(err))
-    }
+async function onMarkOne(n: Notification) {
+  if (n.read_at) return
+  try {
+    await store.markRead(n.id)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -60,18 +59,20 @@ async function onMarkAll() {
   }
 }
 
-async function onDelete(n: Notification) {
+async function onDeleteRead() {
+  if (store.readCount === 0) return
   try {
-    await ElMessageBox.confirm('删除这条通知？', '确认', {
-      type: 'warning',
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-    })
+    await ElMessageBox.confirm(
+      `将删除 ${store.readCount} 条已读通知, 未读不受影响。`,
+      '删除已读',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
   } catch {
     return
   }
   try {
-    await store.remove(n.id)
+    const n = await store.removeRead()
+    ElMessage.success(`已删除 ${n} 条`)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   }
@@ -91,7 +92,7 @@ async function onRefresh() {
     v-model="visible"
     title="通知中心"
     direction="rtl"
-    size="380px"
+    size="480px"
     :append-to-body="true"
   >
     <template #header>
@@ -110,6 +111,13 @@ async function onRefresh() {
         :disabled="store.unreadCount === 0"
         @click="onMarkAll"
       >全部已读</el-button>
+      <el-button
+        size="small"
+        type="danger"
+        plain
+        :disabled="store.readCount === 0"
+        @click="onDeleteRead"
+      >删除已读</el-button>
     </div>
 
     <div v-loading="store.loading" class="drawer-body">
@@ -123,29 +131,33 @@ async function onRefresh() {
           :key="n.id"
           class="notif-item"
           :class="{ 'is-read': !!n.read_at }"
-          @click="onItemClick(n)"
         >
+          <span class="time">{{ formatTime(n.created_at) }}</span>
+
           <div class="row-top">
             <span v-if="!n.read_at" class="dot" aria-hidden="true" />
             <el-tag :type="levelTagType(n.level)" size="small" effect="light">
               {{ LEVEL_LABEL[n.level] ?? n.level }}
             </el-tag>
             <span class="cat">{{ n.category }}</span>
-            <span class="time">{{ formatTime(n.created_at) }}</span>
-            <el-button
-              class="del-btn"
-              size="small"
-              text
-              type="danger"
-              @click.stop="onDelete(n)"
-            >删除</el-button>
           </div>
+
           <div class="title-line">{{ n.title }}</div>
           <div v-if="n.message" class="message">{{ n.message }}</div>
           <div v-if="n.meta" class="meta">
             <span v-for="(v, k) in n.meta" :key="k" class="meta-pair">
               <b>{{ k }}</b>: {{ typeof v === 'object' ? JSON.stringify(v) : String(v) }}
             </span>
+          </div>
+
+          <div class="row-actions">
+            <el-button
+              v-if="!n.read_at"
+              size="small"
+              type="primary"
+              plain
+              @click.stop="onMarkOne(n)"
+            >标为已读</el-button>
           </div>
         </li>
       </ul>
@@ -192,10 +204,12 @@ async function onRefresh() {
 }
 
 .notif-item {
+  position: relative;
   padding: $space-2 $space-3;
+  padding-right: 150px; /* 让出右上角时间戳的空间 */
+  padding-bottom: 36px; /* 让出右下角已读按钮的空间 */
   border-radius: $radius-sm;
   background: var(--el-fill-color-lighter);
-  cursor: pointer;
   transition: background 0.15s ease;
 
   &:hover {
@@ -205,6 +219,7 @@ async function onRefresh() {
   &.is-read {
     color: var(--el-text-color-placeholder);
     background: var(--el-fill-color-blank);
+    padding-bottom: $space-2; /* 已读时不再有按钮, 恢复紧凑 */
 
     .title-line,
     .message,
@@ -243,12 +258,18 @@ async function onRefresh() {
 }
 
 .time {
-  margin-left: auto;
+  position: absolute;
+  top: $space-2;
+  right: $space-3;
   font-size: 11px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
 }
 
-.del-btn {
-  padding: 0 $space-1;
+.row-actions {
+  position: absolute;
+  right: $space-3;
+  bottom: $space-2;
 }
 
 .title-line {

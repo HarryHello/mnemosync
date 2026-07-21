@@ -625,6 +625,12 @@ export async function deleteNotification(id: number): Promise<void> {
   await request(`${API_BASE}/admin/notifications/${id}`, { method: 'DELETE' })
 }
 
+export async function deleteReadNotifications(): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>(`${API_BASE}/admin/notifications/read`, {
+    method: 'DELETE',
+  })
+}
+
 export type { Notification }
 
 // ============================================================================

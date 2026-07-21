@@ -230,11 +230,15 @@ function handleUserCommand(cmd: string) {
 
 .avatar-badge {
   flex: 0 0 auto;
+  line-height: 0;
 }
 
 .avatar-badge :deep(.el-badge__content) {
-  transform: translate(50%, -50%) scale(0.85);
-  transform-origin: 100% 0%;
+  font-size: 10px;
+  height: 16px;
+  line-height: 16px;
+  padding: 0 4px;
+  min-width: 16px;
 }
 
 .user-name {
