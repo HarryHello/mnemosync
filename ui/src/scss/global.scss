@@ -96,3 +96,10 @@ a {
 .mono {
   @include monospace;
 }
+
+// 页面级 tabs 样式：给卡片阴影留空间
+.page-tabs {
+  :deep(.el-tabs__content) {
+    padding: 0 $space-2 $space-2;
+  }
+}
