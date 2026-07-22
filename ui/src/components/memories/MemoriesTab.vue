@@ -209,7 +209,7 @@ watch(() => props.active, (active) => {
         :default-sort="{ prop: sortBy, order: toElOrder(sortOrder) }"
         @sort-change="onSortChange"
         @filter-change="onFilterChange"
-        max-height="calc(100vh - 320px)"
+        max-height="calc(100vh - 340px)"
       >
         <el-table-column label="内容" min-width="360">
           <template #default="{ row }">

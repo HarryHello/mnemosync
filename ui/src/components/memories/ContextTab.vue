@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { ElTable } from 'element-plus'
 import {
   listConversationTurnSources,
   listConversationTurns,
@@ -17,7 +16,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{}>()
 
-const tableRef = ref<InstanceType<typeof ElTable>>()
+
+
 const turns = ref<ConversationTurn[]>([])
 const loading = ref(false)
 const deleting = ref(false)
@@ -267,7 +267,6 @@ watch(() => props.active, (active) => {
         </div>
       </template>
       <el-table
-        ref="tableRef"
         v-loading="loading"
         :data="turns"
         stripe
@@ -276,7 +275,7 @@ watch(() => props.active, (active) => {
         :default-sort="{ prop: sortBy, order: toElOrder(sortOrder) }"
         @sort-change="onSortChange"
         @filter-change="onFilterChange"
-        max-height="calc(100vh - 320px)"
+        max-height="calc(100vh - 340px)"
       >
         <el-table-column
           label="角色"
