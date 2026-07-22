@@ -282,6 +282,13 @@ export async function deleteConversationTurn(turnId: number): Promise<void> {
   })
 }
 
+export async function deleteConversationTurns(turnIds: number[]): Promise<{ deleted: number }> {
+  return request(`${API_BASE}/admin/conversation-turns/batch-delete`, {
+    method: 'POST',
+    body: JSON.stringify({ ids: turnIds }),
+  })
+}
+
 export async function clearConversationTurns(since?: string): Promise<{ deleted: number }> {
   const qs = since ? `?since=${encodeURIComponent(since)}` : ''
   return request<{ deleted: number }>(
