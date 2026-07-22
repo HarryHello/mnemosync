@@ -110,7 +110,6 @@ function clearConversation() {
   flex-direction: column;
   gap: $space-2;
   height: 100%;
-  min-height: 0;
 }
 
 .system-editor {
@@ -125,8 +124,7 @@ function clearConversation() {
 }
 
 .messages {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1;
   overflow-y: auto;
   padding: $space-2;
   background: var(--el-fill-color-lighter);

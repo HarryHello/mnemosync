@@ -283,7 +283,7 @@ async function clearAllEvents() {
   display: flex;
   flex-direction: column;
   gap: $space-3;
-  min-height: calc(100vh - #{$header-height} - #{$space-5} * 2);
+  height: calc(100vh - #{$header-height} - #{$space-5} * 2);
 }
 
 .params-bar {
@@ -295,6 +295,7 @@ async function clearAllEvents() {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: $radius-sm;
   background: var(--el-fill-color-lighter);
+  flex-shrink: 0;
 }
 
 .params-label {
@@ -304,33 +305,32 @@ async function clearAllEvents() {
 
 .split {
   flex: 1 1 auto;
-  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: $space-3;
+  min-height: 0;
 }
 
 .chat-half {
   flex: 1 1 40%;
-  min-height: 320px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: $radius-md;
   background: var(--el-bg-color);
   padding: $space-3;
+  min-height: 0;
 }
 
 .split-chat-only .chat-half {
   flex: 1 1 auto;
-  min-height: 480px;
 }
 
 .debug-half {
   flex: 1 1 60%;
-  min-height: 320px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: $radius-md;
   background: var(--el-bg-color);
   padding: $space-3;
+  min-height: 0;
 }
 
 .switch-container {
