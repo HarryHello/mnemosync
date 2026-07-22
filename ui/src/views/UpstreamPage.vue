@@ -153,40 +153,42 @@ onMounted(refresh)
     </PageHeader>
 
     <div v-loading="loading">
-      <el-table v-if="services.length" :data="services" stripe>
-        <el-table-column label="服务 ID" prop="id" min-width="160">
-          <template #default="{ row }: { row: UpstreamService }">
-            <span class="mono">{{ row.id }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="Base URL" prop="base_url" min-width="320">
-          <template #default="{ row }: { row: UpstreamService }">
-            <span class="mono">{{ row.base_url }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="API Key" min-width="180">
-          <template #default="{ row }: { row: UpstreamService }">
-            <span class="mono muted">{{ row.api_key_masked }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="创建时间" min-width="180">
-          <template #default="{ row }: { row: UpstreamService }">
-            <span class="mono muted">{{ fmtDate(row.created_at) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
-          <template #default="{ row }: { row: UpstreamService }">
-            <el-button link type="primary" @click="openEdit(row)">
-              <el-icon><Edit /></el-icon>
-              <span>编辑</span>
-            </el-button>
-            <el-button link type="danger" @click="onDelete(row)">
-              <el-icon><Delete /></el-icon>
-              <span>删除</span>
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-card v-if="services.length">
+        <el-table :data="services" stripe>
+          <el-table-column label="服务 ID" prop="id" min-width="160">
+            <template #default="{ row }: { row: UpstreamService }">
+              <span class="mono">{{ row.id }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="Base URL" prop="base_url" min-width="320">
+            <template #default="{ row }: { row: UpstreamService }">
+              <span class="mono">{{ row.base_url }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="API Key" min-width="180">
+            <template #default="{ row }: { row: UpstreamService }">
+              <span class="mono muted">{{ row.api_key_masked }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="创建时间" min-width="180">
+            <template #default="{ row }: { row: UpstreamService }">
+              <span class="mono muted">{{ fmtDate(row.created_at) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="180" fixed="right">
+            <template #default="{ row }: { row: UpstreamService }">
+              <el-button link type="primary" @click="openEdit(row)">
+                <el-icon><Edit /></el-icon>
+                <span>编辑</span>
+              </el-button>
+              <el-button link type="danger" @click="onDelete(row)">
+                <el-icon><Delete /></el-icon>
+                <span>删除</span>
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
 
       <el-empty
         v-else-if="!loading"
