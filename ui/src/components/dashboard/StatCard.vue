@@ -22,7 +22,7 @@ function go() {
 </script>
 
 <template>
-  <el-card v-loading="props.loading" shadow="hover" class="stat-card">
+  <el-card v-loading="props.loading" class="stat-card">
     <div class="stat">
       <div :class="['stat-icon', tone]">
         <slot name="icon" />
