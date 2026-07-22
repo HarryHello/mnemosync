@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import type { ChatMessage } from '@/types/api'
 
 const props = defineProps<{
@@ -13,7 +13,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'update:conversation': [value: ChatMessage[]]
   'update:systemPrompt': [value: string]
   'update:useSystem': [value: boolean]
   'update:modelName': [value: string]
@@ -22,8 +21,25 @@ const emit = defineEmits<{
   clear: []
 }>()
 
+// 本地状态
+const localSystemPrompt = ref(props.systemPrompt)
+const localUseSystem = ref(props.useSystem)
+const localModelName = ref(props.modelName)
+const localStreaming = ref(props.streaming)
 const input = ref<string>('')
 const messagesEl = ref<HTMLElement | null>(null)
+
+// 监听 prop 变化更新本地状态
+watch(() => props.systemPrompt, (v) => { localSystemPrompt.value = v })
+watch(() => props.useSystem, (v) => { localUseSystem.value = v })
+watch(() => props.modelName, (v) => { localModelName.value = v })
+watch(() => props.streaming, (v) => { localStreaming.value = v })
+
+// 监听本地状态变化 emit 更新
+watch(localSystemPrompt, (v) => emit('update:systemPrompt', v))
+watch(localUseSystem, (v) => emit('update:useSystem', v))
+watch(localModelName, (v) => emit('update:modelName', v))
+watch(localStreaming, (v) => emit('update:streaming', v))
 
 async function scrollBottom() {
   await nextTick()
@@ -51,14 +67,13 @@ function clearConversation() {
 
 <template>
   <div class="chat-area">
-    <div v-if="useSystem" class="system-editor">
+    <div v-if="localUseSystem" class="system-editor">
       <div class="section-label">客户端 system prompt (测试服务器人格清洗)</div>
       <el-input
-        v-model="systemPrompt"
+        v-model="localSystemPrompt"
         type="textarea"
         :rows="2"
         placeholder="e.g. 你是一个海盗风格的助手"
-        @update:model-value="(v) => emit('update:systemPrompt', v)"
       />
     </div>
 
