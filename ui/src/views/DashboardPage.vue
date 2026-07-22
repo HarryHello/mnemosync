@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { getDashboardStats } from '@/api/client'
-import type { HealthResponse } from '@/types/api'
+import { getDashboardStats, getRelationship } from '@/api/client'
+import type { HealthResponse, Relationship } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
 import StatGrid from '@/components/dashboard/StatGrid.vue'
 import SystemHealthCard from '@/components/dashboard/SystemHealthCard.vue'
+import RelationshipCard from '@/components/dashboard/RelationshipCard.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 
 const authStore = useAuthStore()
 
 const health = ref<HealthResponse | null>(null)
 const healthErr = ref<string | null>(null)
+const relationship = ref<Relationship | null>(null)
+const relationshipLoading = ref(false)
 
 const apiKeyCount = ref<number | null>(null)
 const memoryCount = ref<number | null>(null)
@@ -23,6 +26,7 @@ const username = computed(() => authStore.user?.username ?? '未知用户')
 
 async function refresh() {
   loading.value = true
+  relationshipLoading.value = true
   try {
     const stats = await getDashboardStats()
     health.value = stats.health
@@ -41,6 +45,15 @@ async function refresh() {
     promptOverriddenCount.value = null
   } finally {
     loading.value = false
+  }
+
+  try {
+    relationship.value = await getRelationship()
+  } catch (err) {
+    console.warn('Failed to load relationship:', err)
+    relationship.value = null
+  } finally {
+    relationshipLoading.value = false
   }
 }
 
@@ -71,12 +84,18 @@ onMounted(refresh)
       :prompt-total-count="promptTotalCount"
     />
 
+    <RelationshipCard class="relationship-card-block" :relationship="relationship" :loading="relationshipLoading" />
+
     <SystemHealthCard :health="health" :error="healthErr" />
   </div>
 </template>
 
 <style lang="scss" scoped>
 .stat-grid-block {
+  margin-bottom: $space-5;
+}
+
+.relationship-card-block {
   margin-bottom: $space-5;
 }
 </style>
