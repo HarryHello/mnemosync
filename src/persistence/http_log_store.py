@@ -178,9 +178,11 @@ class HttpLogStore:
         method: str | None = None,
         path: str | None = None,
         status: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> int:
         assert self._db is not None
-        conditions, params = self._build_filter(method, path, status)
+        conditions, params = self._build_filter(method, path, status, since, until)
         where = " AND ".join(conditions) if conditions else "1=1"
         async with self._db.execute(
             f"SELECT COUNT(*) FROM http_logs WHERE {where}", params
@@ -195,9 +197,11 @@ class HttpLogStore:
         method: str | None = None,
         path: str | None = None,
         status: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> list[tuple]:
         assert self._db is not None
-        conditions, params = self._build_filter(method, path, status)
+        conditions, params = self._build_filter(method, path, status, since, until)
         where = " AND ".join(conditions) if conditions else "1=1"
         offset = (page - 1) * page_size
         async with self._db.execute(
@@ -234,7 +238,11 @@ class HttpLogStore:
 
     @staticmethod
     def _build_filter(
-        method: str | None, path: str | None, status: int | None
+        method: str | None,
+        path: str | None,
+        status: int | None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> tuple[list[str], list[Any]]:
         conditions: list[str] = []
         params: list[Any] = []
@@ -247,4 +255,10 @@ class HttpLogStore:
         if status is not None:
             conditions.append("response_status = ?")
             params.append(status)
+        if since:
+            conditions.append("created_at >= ?")
+            params.append(since)
+        if until:
+            conditions.append("created_at <= ?")
+            params.append(until)
         return conditions, params

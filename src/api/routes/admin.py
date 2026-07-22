@@ -315,12 +315,14 @@ async def list_logs(
     method: Optional[str] = None,
     path: Optional[str] = None,
     status: Optional[int] = None,
+    since: Optional[str] = Query(None, description="ISO 8601 时间, 只返回 >= 该时间的记录"),
+    until: Optional[str] = Query(None, description="ISO 8601 时间, 只返回 <= 该时间的记录"),
     store: HttpLogStore = Depends(get_http_log_store),
 ):
     """查询 HTTP 日志."""
-    total = await store.count(method=method, path=path, status=status)
+    total = await store.count(method=method, path=path, status=status, since=since, until=until)
     rows = await store.list_paginated(
-        page=page, page_size=page_size, method=method, path=path, status=status
+        page=page, page_size=page_size, method=method, path=path, status=status, since=since, until=until
     )
     items = [_row_to_log(r) for r in rows]
     return HttpLogListResponse(

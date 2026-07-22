@@ -183,6 +183,8 @@ export interface LogListParams {
   method?: string
   path?: string
   status?: number
+  since?: string
+  until?: string
 }
 
 export async function listLogs(params: LogListParams = {}): Promise<HttpLogListResponse> {
@@ -192,6 +194,8 @@ export async function listLogs(params: LogListParams = {}): Promise<HttpLogListR
   if (params.method) searchParams.set('method', params.method)
   if (params.path) searchParams.set('path', params.path)
   if (params.status) searchParams.set('status', String(params.status))
+  if (params.since) searchParams.set('since', params.since)
+  if (params.until) searchParams.set('until', params.until)
 
   const query = searchParams.toString()
   return request<HttpLogListResponse>(`${API_BASE}/admin/logs${query ? `?${query}` : ''}`)
