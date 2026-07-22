@@ -25,6 +25,22 @@ const emit = defineEmits<{
   selectAll: [selected: boolean]
 }>()
 
+function handleSortChange(evt: { prop: string | null; order: string | null }) {
+  emit('sortChange', evt)
+}
+
+function handleFilterChange(filters: Record<string, unknown[]>) {
+  emit('filterChange', filters)
+}
+
+function handleSelectAll(val: boolean | string | number) {
+  emit('selectAll', !!val)
+}
+
+function handleSelect(id: number, val: boolean | string | number) {
+  emit('select', id, !!val)
+}
+
 const TURN_ROLE_FILTERS = [
   { text: '用户', value: 'user' },
   { text: '助手', value: 'assistant' },
@@ -77,9 +93,9 @@ function contentPreview(content: string): string {
     row-key="id"
     empty-text="暂无对话流水"
     :default-sort="{ prop: sortBy, order: toElOrder(sortOrder || 'desc') }"
-    @sort-change="(evt) => emit('sortChange', evt)"
-    @filter-change="(filters) => emit('filterChange', filters)"
-    max-height="calc(100vh - 340px)"
+    @sort-change="handleSortChange"
+    @filter-change="handleFilterChange"
+    max-height="calc(100vh - 350px)"
   >
     <el-table-column
       label="角色"
@@ -154,13 +170,13 @@ function contentPreview(content: string): string {
         <el-checkbox
           :model-value="selectedIds && selectedIds.length === items.length && items.length > 0"
           :indeterminate="selectedIds && selectedIds.length > 0 && selectedIds.length < items.length"
-          @change="(val) => emit('selectAll', val)"
+          @change="handleSelectAll"
         />
       </template>
       <template #default="{ row }">
         <el-checkbox
           :model-value="selectedIds?.includes(row.id)"
-          @change="(val) => emit('select', row.id, val)"
+          @change="(val: boolean | string | number) => handleSelect(row.id, val)"
         />
       </template>
     </el-table-column>
