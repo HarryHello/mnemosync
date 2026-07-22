@@ -18,7 +18,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <el-card shadow="hover" class="section equal-card">
+  <el-card shadow="hover" class="equal-card">
     <template #header>
       <div class="sec-head">
         <span class="sec-title">清理低价值记忆 (Prune)</span>
@@ -79,6 +79,16 @@ const emit = defineEmits<{
 </template>
 
 <style lang="scss" scoped>
+.equal-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+
+  :deep(.el-card__body) {
+    flex: 1;
+  }
+}
+
 .sec-head {
   display: flex;
   justify-content: space-between;

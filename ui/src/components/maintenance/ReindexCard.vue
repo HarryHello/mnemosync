@@ -34,7 +34,7 @@ function fmtTime(s: string | null): string {
 </script>
 
 <template>
-  <el-card shadow="hover" class="section equal-card">
+  <el-card shadow="hover" class="equal-card">
     <template #header>
       <div class="sec-head">
         <span class="sec-title">重建记忆向量库 (Reindex)</span>
@@ -103,6 +103,20 @@ function fmtTime(s: string | null): string {
 </template>
 
 <style lang="scss" scoped>
+.section {
+  margin-bottom: $space-4;
+}
+
+.equal-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+
+  :deep(.el-card__body) {
+    flex: 1;
+  }
+}
+
 .sec-head {
   display: flex;
   justify-content: space-between;

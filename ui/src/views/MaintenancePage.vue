@@ -255,14 +255,16 @@ watch(
       Reindex 进行中: 新记忆写入会被临时拒绝, 检索也可能报锁定错误。等完成后再操作。
     </el-alert>
 
-    <ResetCard
-      :reset-preview="resetPreview"
-      :reset-preview-loading="resetPreviewLoading"
-      :reset-running="resetRunning"
-      :is-running="isRunning"
-      @preview-reset="onPreviewReset"
-      @run-reset="onRunReset"
-    />
+    <div class="reset-card-wrapper">
+      <ResetCard
+        :reset-preview="resetPreview"
+        :reset-preview-loading="resetPreviewLoading"
+        :reset-running="resetRunning"
+        :is-running="isRunning"
+        @preview-reset="onPreviewReset"
+        @run-reset="onRunReset"
+      />
+    </div>
   </div>
 </template>
 
@@ -274,5 +276,9 @@ watch(
 
 .equal-col {
   display: flex;
+}
+
+.reset-card-wrapper {
+  margin-top: 16px;
 }
 </style>
