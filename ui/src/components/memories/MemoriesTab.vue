@@ -4,12 +4,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { listMemories, deleteMemory } from '@/api/client'
 import type { Memory } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
+import MemoryTable from './MemoryTable.vue'
+import MemoryDetailDrawer from './MemoryDetailDrawer.vue'
 
 const props = defineProps<{
   active?: boolean
 }>()
-
-const emit = defineEmits<{}>()
 
 const memories = ref<Memory[]>([])
 const loading = ref(false)
@@ -23,21 +23,6 @@ const sourceUser = ref('default')
 const loaded = ref(false)
 const detailDrawerVisible = ref(false)
 const currentDetailRow = ref<Memory | null>(null)
-
-const MEMORY_TYPE_FILTERS = [
-  { text: '普通', value: 'normal' },
-  { text: '永久', value: 'permanent' },
-]
-
-function normalizeOrder(order: string | null | undefined): 'asc' | 'desc' | null {
-  if (order === 'ascending') return 'asc'
-  if (order === 'descending') return 'desc'
-  return null
-}
-
-function toElOrder(o: 'asc' | 'desc'): 'ascending' | 'descending' {
-  return o === 'asc' ? 'ascending' : 'descending'
-}
 
 async function refresh() {
   loading.value = true
@@ -98,6 +83,11 @@ function onSourceApply() {
 }
 
 function onSortChange(evt: { prop: string | null; order: string | null }) {
+  function normalizeOrder(order: string | null | undefined): 'asc' | 'desc' | null {
+    if (order === 'ascending') return 'asc'
+    if (order === 'descending') return 'desc'
+    return null
+  }
   const order = normalizeOrder(evt.order)
   if (!evt.prop || !order) {
     sortBy.value = 'created_at'
@@ -117,35 +107,7 @@ function onFilterChange(filters: Record<string, unknown[]>) {
   refresh()
 }
 
-function typeTag(t: string): 'success' | 'primary' | 'info' {
-  if (t === 'permanent') return 'success'
-  if (t === 'normal') return 'primary'
-  return 'info'
-}
-
-function typeLabel(t: string): string {
-  if (t === 'permanent') return '永久'
-  if (t === 'normal') return '普通'
-  return t
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
-}
-
-function contentPreview(content: string): string {
-  const firstLine = content.split('\n')[0] || ''
-  if (firstLine.length > 100) {
-    return firstLine.slice(0, 100) + '…'
-  }
-  if (content.includes('\n')) {
-    return firstLine + '…'
-  }
-  return content
-}
-
-function openDetail(row: Memory): void {
+function openDetail(row: Memory) {
   currentDetailRow.value = row
   detailDrawerVisible.value = true
 }
@@ -200,114 +162,17 @@ watch(() => props.active, (active) => {
           </div>
         </div>
       </template>
-      <el-table
-        v-loading="loading"
-        :data="memories"
-        stripe
-        row-key="id"
-        empty-text="暂无记忆"
-        :default-sort="{ prop: sortBy, order: toElOrder(sortOrder) }"
+      <MemoryTable
+        :items="memories"
+        :loading="loading"
+        :sort-by="sortBy"
+        :sort-order="sortOrder"
+        :type-filter="typeFilter"
+        @delete="onDelete"
+        @open-detail="openDetail"
         @sort-change="onSortChange"
         @filter-change="onFilterChange"
-        max-height="calc(100vh - 340px)"
-      >
-        <el-table-column label="内容" min-width="360">
-          <template #default="{ row }">
-            <el-tooltip :content="row.content" placement="top" :disabled="!row.content">
-              <div class="mem-content-preview" @click="openDetail(row)">
-                {{ contentPreview(row.content) }}
-              </div>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column
-          label="类型"
-          width="120"
-          align="center"
-          prop="memory_type"
-          column-key="memory_type"
-          sortable="custom"
-          :filters="MEMORY_TYPE_FILTERS"
-          :filter-multiple="false"
-          :filtered-value="typeFilter"
-        >
-          <template #default="{ row }">
-            <el-tag :type="typeTag(row.memory_type)" size="small">
-              {{ typeLabel(row.memory_type) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column
-          label="重要度"
-          width="120"
-          align="center"
-          prop="importance"
-          sortable="custom"
-        >
-          <template #default="{ row }">
-            <el-progress
-              :percentage="Math.round(row.importance * 100)"
-              :stroke-width="6"
-              :show-text="false"
-            />
-            <div class="mono mini">{{ row.importance.toFixed(2) }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column
-          label="衰减率"
-          width="100"
-          align="center"
-          prop="decay_rate"
-          sortable="custom"
-        >
-          <template #default="{ row }">
-            <span class="mono">{{ row.decay_rate.toFixed(2) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          prop="access_count"
-          label="访问次数"
-          width="110"
-          align="center"
-          sortable="custom"
-        />
-        <el-table-column
-          label="来源"
-          width="120"
-          prop="source_user"
-          sortable="custom"
-        >
-          <template #default="{ row }">
-            <span class="mono muted">{{ row.source_user || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          label="创建时间"
-          width="180"
-          prop="created_at"
-          sortable="custom"
-        >
-          <template #default="{ row }">
-            <span class="mono muted">{{ fmtDate(row.created_at) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          label="最近访问"
-          width="180"
-          prop="last_accessed_at"
-          sortable="custom"
-        >
-          <template #default="{ row }">
-            <span class="mono muted">{{ fmtDate(row.last_accessed_at) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" align="right" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
+      />
       <div class="pager">
         <el-pagination
           :current-page="page"
@@ -322,45 +187,7 @@ watch(() => props.active, (active) => {
       </div>
     </el-card>
 
-    <el-drawer
-      v-model="detailDrawerVisible"
-      :title="currentDetailRow ? `记忆 #${currentDetailRow.id}` : '详情'"
-      size="50%"
-    >
-      <div v-if="currentDetailRow" class="detail-content">
-        <div class="detail-meta">
-          <el-descriptions :column="2" border>
-            <el-descriptions-item label="类型">
-              <el-tag :type="typeTag(currentDetailRow.memory_type)" size="small">
-                {{ typeLabel(currentDetailRow.memory_type) }}
-              </el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="来源">
-              <span class="mono muted">{{ currentDetailRow.source_user || '—' }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="重要度">
-              {{ (currentDetailRow.importance * 100).toFixed(0) }}%
-            </el-descriptions-item>
-            <el-descriptions-item label="衰减率">
-              {{ currentDetailRow.decay_rate.toFixed(2) }}
-            </el-descriptions-item>
-            <el-descriptions-item label="访问次数">
-              {{ currentDetailRow.access_count }}
-            </el-descriptions-item>
-            <el-descriptions-item label="创建时间">
-              <span class="mono muted">{{ fmtDate(currentDetailRow.created_at) }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="最近访问" :span="2">
-              <span class="mono muted">{{ fmtDate(currentDetailRow.last_accessed_at) }}</span>
-            </el-descriptions-item>
-          </el-descriptions>
-        </div>
-        <div class="detail-text">
-          <div class="detail-text-label">内容</div>
-          <pre class="detail-pre">{{ currentDetailRow.content }}</pre>
-        </div>
-      </div>
-    </el-drawer>
+    <MemoryDetailDrawer v-model="detailDrawerVisible" :item="currentDetailRow" />
   </div>
 </template>
 
@@ -385,65 +212,9 @@ watch(() => props.active, (active) => {
   }
 }
 
-.mem-content-preview {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  color: var(--el-text-color-regular);
-  line-height: 1.5;
-
-  &:hover {
-    color: var(--el-color-primary);
-  }
-}
-
-.muted {
-  color: var(--el-text-color-secondary);
-}
-
-.mini {
-  font-size: 11px;
-  margin-top: 2px;
-  color: var(--el-text-color-secondary);
-}
-
 .pager {
   display: flex;
   justify-content: flex-end;
   padding-top: $space-3;
-}
-
-.detail-content {
-  display: flex;
-  flex-direction: column;
-  gap: $space-4;
-}
-
-.detail-text {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: $space-2;
-}
-
-.detail-text-label {
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.detail-pre {
-  margin: 0;
-  padding: $space-3;
-  background: var(--el-fill-color-lighter);
-  border-radius: $radius-md;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.6;
-  font-family: inherit;
-  font-size: 14px;
-  color: var(--el-text-color-primary);
-  max-height: 60vh;
-  overflow-y: auto;
 }
 </style>

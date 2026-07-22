@@ -9,14 +9,12 @@ import {
 } from '@/api/client'
 import type { ConversationTurn } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
+import ContextTable from './ContextTable.vue'
+import ContextDetailDrawer from './ContextDetailDrawer.vue'
 
 const props = defineProps<{
   active?: boolean
 }>()
-
-const emit = defineEmits<{}>()
-
-
 
 const turns = ref<ConversationTurn[]>([])
 const loading = ref(false)
@@ -33,41 +31,6 @@ const selectedIds = ref<number[]>([])
 const loaded = ref(false)
 const detailDrawerVisible = ref(false)
 const currentDetailRow = ref<ConversationTurn | null>(null)
-
-const TURN_ROLE_FILTERS = [
-  { text: '用户', value: 'user' },
-  { text: '助手', value: 'assistant' },
-]
-
-function normalizeOrder(order: string | null | undefined): 'asc' | 'desc' | null {
-  if (order === 'ascending') return 'asc'
-  if (order === 'descending') return 'desc'
-  return null
-}
-
-function toElOrder(o: 'asc' | 'desc'): 'ascending' | 'descending' {
-  return o === 'asc' ? 'ascending' : 'descending'
-}
-
-function toggleSelect(id: number, selected: boolean): void {
-  if (selected) {
-    selectedIds.value = [...selectedIds.value, id]
-  } else {
-    selectedIds.value = selectedIds.value.filter((i) => i !== id)
-  }
-}
-
-function toggleSelectAll(selected: boolean): void {
-  if (selected) {
-    selectedIds.value = turns.value.map((t) => t.id)
-  } else {
-    selectedIds.value = []
-  }
-}
-
-function onSelectionChange(selection: ConversationTurn[]) {
-  selectedIds.value = selection.map((item) => item.id)
-}
 
 async function refreshSources() {
   try {
@@ -162,6 +125,11 @@ function onPageSizeChange(s: number) {
 }
 
 function onSortChange(evt: { prop: string | null; order: string | null }) {
+  function normalizeOrder(order: string | null | undefined): 'asc' | 'desc' | null {
+    if (order === 'ascending') return 'asc'
+    if (order === 'descending') return 'desc'
+    return null
+  }
   const order = normalizeOrder(evt.order)
   if (!evt.prop || !order) {
     sortBy.value = 'ts'
@@ -183,32 +151,20 @@ function onFilterChange(filters: Record<string, unknown[]>) {
   refresh()
 }
 
-function roleTag(r: string): 'primary' | 'success' | 'info' {
-  if (r === 'user') return 'primary'
-  if (r === 'assistant') return 'success'
-  return 'info'
-}
-
-function roleLabel(r: string): string {
-  if (r === 'user') return '用户'
-  if (r === 'assistant') return '助手'
-  return r
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
-}
-
-function contentPreview(content: string): string {
-  const firstLine = content.split('\n')[0] || ''
-  if (firstLine.length > 100) {
-    return firstLine.slice(0, 100) + '…'
+function toggleSelect(id: number, selected: boolean): void {
+  if (selected) {
+    selectedIds.value = [...selectedIds.value, id]
+  } else {
+    selectedIds.value = selectedIds.value.filter((i) => i !== id)
   }
-  if (content.includes('\n')) {
-    return firstLine + '…'
+}
+
+function toggleSelectAll(selected: boolean): void {
+  if (selected) {
+    selectedIds.value = turns.value.map((t) => t.id)
+  } else {
+    selectedIds.value = []
   }
-  return content
 }
 
 function openDetail(row: ConversationTurn): void {
@@ -266,102 +222,22 @@ watch(() => props.active, (active) => {
           </div>
         </div>
       </template>
-      <el-table
-        v-loading="loading"
-        :data="turns"
-        stripe
-        row-key="id"
-        empty-text="暂无对话流水"
-        :default-sort="{ prop: sortBy, order: toElOrder(sortOrder) }"
+      <ContextTable
+        :items="turns"
+        :loading="loading"
+        :sort-by="sortBy"
+        :sort-order="sortOrder"
+        :role-filter="roleFilter"
+        :source-filter="sourceFilter"
+        :selected-ids="selectedIds"
+        :sources="sources"
+        @delete="onDelete"
+        @open-detail="openDetail"
         @sort-change="onSortChange"
         @filter-change="onFilterChange"
-        max-height="calc(100vh - 340px)"
-      >
-        <el-table-column
-          label="角色"
-          width="120"
-          align="center"
-          prop="role"
-          column-key="role"
-          sortable="custom"
-          :filters="TURN_ROLE_FILTERS"
-          :filter-multiple="false"
-          :filtered-value="roleFilter"
-        >
-          <template #default="{ row }">
-            <el-tag :type="roleTag(row.role)" size="small">
-              {{ roleLabel(row.role) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="内容" min-width="360">
-          <template #default="{ row }">
-            <el-tooltip :content="row.content" placement="top" :disabled="!row.content">
-              <div class="mem-content-preview" @click="openDetail(row)">
-                {{ contentPreview(row.content) }}
-              </div>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column
-          prop="token_count"
-          label="token"
-          width="100"
-          align="center"
-          sortable="custom"
-        />
-        <el-table-column
-          label="来源"
-          width="140"
-          prop="source_frontend"
-          column-key="source_frontend"
-          sortable="custom"
-          :filters="sources"
-          :filter-multiple="false"
-          :filtered-value="sourceFilter"
-        >
-          <template #default="{ row }">
-            <span class="mono muted">{{ row.source_frontend || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          label="时间"
-          width="180"
-          prop="ts"
-          sortable="custom"
-        >
-          <template #default="{ row }">
-            <span class="mono muted">{{ fmtDate(row.ts) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          label="ID"
-          width="90"
-          align="center"
-          prop="id"
-          sortable="custom"
-        >
-          <template #default="{ row }">
-            <span class="mono mini">#{{ row.id }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column width="55" align="center" fixed="right">
-          <template #header>
-            <el-checkbox
-              :model-value="selectedIds.length === turns.length && turns.length > 0"
-              :indeterminate="selectedIds.length > 0 && selectedIds.length < turns.length"
-              @change="toggleSelectAll"
-            />
-          </template>
-          <template #default="{ row }">
-            <el-checkbox
-              :model-value="selectedIds.includes(row.id)"
-              @change="(val: boolean) => toggleSelect(row.id, val)"
-            />
-          </template>
-        </el-table-column>
-      </el-table>
-
+        @select="toggleSelect"
+        @select-all="toggleSelectAll"
+      />
       <div class="pager">
         <el-pagination
           :current-page="page"
@@ -376,36 +252,7 @@ watch(() => props.active, (active) => {
       </div>
     </el-card>
 
-    <el-drawer
-      v-model="detailDrawerVisible"
-      :title="currentDetailRow ? `${roleLabel(currentDetailRow.role)} 消息 #${currentDetailRow.id}` : '详情'"
-      size="50%"
-    >
-      <div v-if="currentDetailRow" class="detail-content">
-        <div class="detail-meta">
-          <el-descriptions :column="2" border>
-            <el-descriptions-item label="角色">
-              <el-tag :type="roleTag(currentDetailRow.role)" size="small">
-                {{ roleLabel(currentDetailRow.role) }}
-              </el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="来源">
-              <span class="mono muted">{{ currentDetailRow.source_frontend || '—' }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="时间">
-              <span class="mono muted">{{ fmtDate(currentDetailRow.ts) }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="token">
-              {{ currentDetailRow.token_count }}
-            </el-descriptions-item>
-          </el-descriptions>
-        </div>
-        <div class="detail-text">
-          <div class="detail-text-label">内容</div>
-          <pre class="detail-pre">{{ currentDetailRow.content }}</pre>
-        </div>
-      </div>
-    </el-drawer>
+    <ContextDetailDrawer v-model="detailDrawerVisible" :item="currentDetailRow" />
   </div>
 </template>
 
@@ -436,65 +283,9 @@ watch(() => props.active, (active) => {
   color: var(--el-text-color-secondary);
 }
 
-.mem-content-preview {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  color: var(--el-text-color-regular);
-  line-height: 1.5;
-
-  &:hover {
-    color: var(--el-color-primary);
-  }
-}
-
-.muted {
-  color: var(--el-text-color-secondary);
-}
-
-.mini {
-  font-size: 11px;
-  margin-top: 2px;
-  color: var(--el-text-color-secondary);
-}
-
 .pager {
   display: flex;
   justify-content: flex-end;
   padding-top: $space-3;
-}
-
-.detail-content {
-  display: flex;
-  flex-direction: column;
-  gap: $space-4;
-}
-
-.detail-text {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: $space-2;
-}
-
-.detail-text-label {
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.detail-pre {
-  margin: 0;
-  padding: $space-3;
-  background: var(--el-fill-color-lighter);
-  border-radius: $radius-md;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.6;
-  font-family: inherit;
-  font-size: 14px;
-  color: var(--el-text-color-primary);
-  max-height: 60vh;
-  overflow-y: auto;
 }
 </style>
