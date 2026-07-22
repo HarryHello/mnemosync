@@ -18,7 +18,7 @@ function onEdit(name: string) {
       <el-tab-pane label="提示词" name="prompts">
         <PromptListTab @edit="onEdit" />
       </el-tab-pane>
-      <el-tab-pane label="人格编辑" name="persona">
+      <el-tab-pane label="人格" name="persona">
         <PersonaEditorTab :active="activeTab === 'persona'" />
       </el-tab-pane>
     </el-tabs>
