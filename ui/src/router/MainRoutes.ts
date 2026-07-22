@@ -38,11 +38,6 @@ const MainRoutes: RouteRecordRaw = {
       component: () => import('@/views/MemoriesPage.vue'),
     },
     {
-      path: 'maintenance',
-      name: 'maintenance',
-      component: () => import('@/views/MaintenancePage.vue'),
-    },
-    {
       path: 'relationships',
       name: 'relationships',
       component: () => import('@/views/RelationshipsPage.vue'),
