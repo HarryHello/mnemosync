@@ -214,6 +214,19 @@ class SqliteConversationStore:
             await db.commit()
             return (cur.rowcount or 0) > 0
 
+    async def delete_by_ids(self, turn_ids: list[int]) -> int:
+        """批量删除指定 id 的对话轮次, 返回删除条数."""
+        if not turn_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in turn_ids)
+        async with self._conn() as db:
+            cur = await db.execute(
+                f"DELETE FROM conversation_turns WHERE id IN ({placeholders})",
+                tuple(turn_ids),
+            )
+            await db.commit()
+            return cur.rowcount or 0
+
     async def delete_before(self, cutoff: datetime) -> int:
         """删除 cutoff 之前的所有记录, 返回删除数."""
         async with self._conn() as db:

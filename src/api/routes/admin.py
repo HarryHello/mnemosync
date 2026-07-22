@@ -1145,6 +1145,20 @@ async def delete_conversation_turn(
     return {"success": True, "id": turn_id}
 
 
+class ConversationDeleteBatchBody(BaseModel):
+    ids: list[int]
+
+
+@router.post("/conversation-turns/batch-delete")
+async def batch_delete_conversation_turns(
+    body: ConversationDeleteBatchBody,
+    store: SqliteConversationStore = Depends(get_conversation_store),
+):
+    """批量删除指定 id 的对话轮次."""
+    deleted = await store.delete_by_ids(body.ids)
+    return {"success": True, "deleted": deleted}
+
+
 @router.delete("/conversation-turns", response_model=ConversationClearResponse)
 async def clear_conversation_turns(
     since_iso: str | None = Query(None, alias="since", description="ISO 时间, 只清早于该时间的记录 (省略则全清)"),
