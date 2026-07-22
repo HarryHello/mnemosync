@@ -11,6 +11,9 @@ import type {
   RelationshipAuditEntry,
   RelationshipUpdateBody,
 } from '@/types/api'
+import PageHeader from '@/components/common/PageHeader.vue'
+import RelationshipEditDialog from '@/components/relationships/RelationshipEditDialog.vue'
+import RelationshipAuditTable from '@/components/relationships/RelationshipAuditTable.vue'
 
 const rel = ref<Relationship | null>(null)
 const audit = ref<RelationshipAuditEntry[]>([])
@@ -21,12 +24,6 @@ const userId = ref('default')
 
 const editDialogVisible = ref(false)
 const editSaving = ref(false)
-const editForm = reactive({
-  persona_addressing: '',
-  user_addressing: '',
-  context: '',
-  reason: '',
-})
 
 const intimacyPct = computed(() =>
   rel.value ? Math.round(clamp01(rel.value.intimacy) * 100) : 0,
@@ -50,7 +47,6 @@ function levelText(v: number): string {
 }
 
 type TagType = 'primary' | 'success' | 'warning' | 'danger' | 'info'
-/** tag 颜色跟 levelText 分档一致 (5 档). */
 function levelType(v: number): TagType {
   const p = clamp01(v)
   if (p >= 0.65) return 'success'
@@ -60,7 +56,6 @@ function levelType(v: number): TagType {
 }
 
 type ProgressStatus = '' | 'success' | 'warning' | 'exception'
-/** el-progress status 只有 4 档, 阈值和 levelType 对齐 (中等/极高共用 primary 蓝). */
 function levelStatus(v: number): ProgressStatus {
   const p = clamp01(v)
   if (p >= 0.65) return 'success'
@@ -80,12 +75,6 @@ const fieldLabels: Record<string, string> = {
   persona_addressing: '人格自称',
   user_addressing: '用户称呼',
   context: '关系背景',
-}
-
-function sourceTagType(src: string): 'primary' | 'success' | 'info' {
-  if (src === 'agent') return 'primary'
-  if (src === 'manual') return 'success'
-  return 'info'
 }
 
 async function refresh() {
@@ -109,7 +98,6 @@ async function refreshAudit() {
     audit.value = resp.items
   } catch (err) {
     audit.value = []
-    // 静默失败, 不覆盖 rel 错误提示
     console.warn('audit load failed', err)
   } finally {
     auditLoading.value = false
@@ -118,38 +106,12 @@ async function refreshAudit() {
 
 function openEditDialog() {
   if (!rel.value) return
-  editForm.persona_addressing = rel.value.persona_addressing
-  editForm.user_addressing = rel.value.user_addressing
-  editForm.context = rel.value.context
-  editForm.reason = ''
   editDialogVisible.value = true
 }
 
-async function submitEdit() {
+async function submitEdit(payload: any) {
   if (!rel.value) return
-  const reason = editForm.reason.trim()
-  if (reason.length < 5) {
-    ElMessage.warning('原因至少 5 字')
-    return
-  }
-  const body: RelationshipUpdateBody = { reason, user_id: userId.value || 'default' }
-  let changed = false
-  if (editForm.persona_addressing !== rel.value.persona_addressing) {
-    body.persona_addressing = editForm.persona_addressing
-    changed = true
-  }
-  if (editForm.user_addressing !== rel.value.user_addressing) {
-    body.user_addressing = editForm.user_addressing
-    changed = true
-  }
-  if (editForm.context !== rel.value.context) {
-    body.context = editForm.context
-    changed = true
-  }
-  if (!changed) {
-    ElMessage.info('没有可保存的变更')
-    return
-  }
+  const body: RelationshipUpdateBody = { ...payload, user_id: userId.value || 'default' }
   editSaving.value = true
   try {
     rel.value = await updateRelationship(body)
@@ -194,15 +156,11 @@ onMounted(refresh)
 
 <template>
   <div class="page-container">
-    <div class="page-head">
-      <div>
-        <h2 class="page-title">关系状态</h2>
-        <p class="page-subtitle">
-          Mnemosync 与用户之间的亲密度、信任度、称呼与关系背景。
-          单人格版本 <span class="mono">persona_id=default</span>, 后续多人格再扩展。
-        </p>
-      </div>
-      <div class="head-actions">
+    <PageHeader
+      title="关系状态"
+      subtitle="Mnemosync 与用户之间的亲密度、信任度、称呼与关系背景。单人格版本 persona_id=default, 后续多人格再扩展。"
+    >
+      <template #actions>
         <el-input
           v-model="userId"
           placeholder="user_id (默认 default)"
@@ -218,8 +176,8 @@ onMounted(refresh)
           <el-icon><Refresh /></el-icon>
           <span>加载</span>
         </el-button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <el-alert
       v-if="errMsg"
@@ -346,49 +304,12 @@ onMounted(refresh)
               </el-button>
             </div>
           </template>
-          <el-empty
-            v-if="!auditLoading && audit.length === 0"
-            description="暂无变更"
-            :image-size="60"
+          <RelationshipAuditTable
+            :items="audit"
+            :loading="auditLoading"
+            @refresh="refreshAudit"
+            @revert="revertToAudit"
           />
-          <el-table v-else :data="audit" size="small" stripe>
-            <el-table-column label="时间" width="170">
-              <template #default="{ row }">
-                <span class="mono">{{ fmtDate(row.changed_at) }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="来源" width="80">
-              <template #default="{ row }">
-                <el-tag size="small" :type="sourceTagType(row.source)">
-                  {{ row.source }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="字段" width="100">
-              <template #default="{ row }">
-                {{ fieldLabels[row.field_name] ?? row.field_name }}
-              </template>
-            </el-table-column>
-            <el-table-column label="旧值 → 新值">
-              <template #default="{ row }">
-                <span class="muted">{{ row.old_value ?? '(空)' }}</span>
-                <span class="arrow"> → </span>
-                <span>{{ row.new_value ?? '(空)' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="原因" min-width="180">
-              <template #default="{ row }">
-                <span class="reason">{{ row.reason }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="90" align="right">
-              <template #default="{ row }">
-                <el-button size="small" text type="warning" @click="revertToAudit(row)">
-                  回退到此
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
         </el-card>
       </div>
 
@@ -398,60 +319,16 @@ onMounted(refresh)
       />
     </div>
 
-    <el-dialog
+    <RelationshipEditDialog
       v-model="editDialogVisible"
-      title="编辑称呼与关系背景"
-      width="520px"
-      :close-on-click-modal="false"
-    >
-      <el-form label-position="top" size="default">
-        <el-form-item label="人格自称 (persona_addressing)">
-          <el-input v-model="editForm.persona_addressing" placeholder="例如: 我 / 人家" />
-        </el-form-item>
-        <el-form-item label="用户称呼 (user_addressing)">
-          <el-input v-model="editForm.user_addressing" placeholder="例如: 你 / 小哥 / 亲爱的" />
-        </el-form-item>
-        <el-form-item label="关系背景 (context)">
-          <el-input
-            v-model="editForm.context"
-            type="textarea"
-            :autosize="{ minRows: 2, maxRows: 5 }"
-            placeholder="例如: 同住兄妹 / 恋人 / 主治医生"
-          />
-        </el-form-item>
-        <el-form-item label="修改原因 (至少 5 字, 会写入审计日志)">
-          <el-input
-            v-model="editForm.reason"
-            type="textarea"
-            :autosize="{ minRows: 2, maxRows: 4 }"
-            placeholder="记录本次修改的背景, 便于事后回顾"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="editDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="editSaving" @click="submitEdit">保存</el-button>
-      </template>
-    </el-dialog>
+      :submitting="editSaving"
+      :relationship="rel"
+      @submit="submitEdit"
+    />
   </div>
 </template>
 
 <style lang="scss" scoped>
-.page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: $space-4;
-  margin-bottom: $space-4;
-  flex-wrap: wrap;
-}
-
-.head-actions {
-  display: flex;
-  gap: $space-2;
-  align-items: center;
-}
-
 .mb {
   margin-bottom: $space-4;
 }
@@ -506,16 +383,6 @@ onMounted(refresh)
 .notes,
 .context {
   white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.arrow {
-  color: var(--el-text-color-secondary);
-  margin: 0 4px;
-}
-
-.reason {
-  color: var(--el-text-color-regular);
   word-break: break-word;
 }
 </style>
