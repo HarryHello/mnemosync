@@ -119,7 +119,7 @@ function fmtDate(s: string | null): string {
 </script>
 
 <template>
-  <el-card shadow="never">
+  <el-card>
     <el-table
       v-loading="loading"
       :data="items"

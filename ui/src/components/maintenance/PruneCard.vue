@@ -18,7 +18,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <el-card shadow="hover" class="equal-card">
+  <el-card class="equal-card">
     <template #header>
       <div class="sec-head">
         <span class="sec-title">清理低价值记忆 (Prune)</span>

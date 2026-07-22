@@ -8,7 +8,7 @@ defineProps<{
 </script>
 
 <template>
-  <el-card shadow="hover" class="role-card">
+  <el-card class="role-card">
     <template #header>
       <div class="role-head">
         <div class="role-title">

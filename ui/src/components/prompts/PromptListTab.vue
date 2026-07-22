@@ -88,7 +88,7 @@ defineExpose({ refresh })
       </div>
     </div>
 
-    <el-card shadow="never">
+    <el-card>
       <el-table
         v-loading="loading"
         :data="filtered"

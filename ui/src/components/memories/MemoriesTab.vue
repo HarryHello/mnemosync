@@ -134,7 +134,7 @@ watch(() => props.active, (active) => {
       </template>
     </PageHeader>
 
-    <el-card shadow="never">
+    <el-card>
       <template #header>
         <div class="card-header">
           <div class="header-left">

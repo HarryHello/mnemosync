@@ -120,7 +120,7 @@ watch(
       </div>
     </div>
 
-    <el-card v-loading="loading" shadow="never">
+    <el-card v-loading="loading">
       <el-form label-width="140px" class="persona-form">
         <el-form-item label="人格名称">
           <el-input v-model="editName" placeholder="绫音" />

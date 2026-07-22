@@ -63,7 +63,7 @@ async function onSubmit() {
     <h2 class="page-title">设置</h2>
     <p class="page-subtitle">账户与偏好设置。更多配置项将陆续开放。</p>
 
-    <el-card shadow="never" class="section">
+    <el-card class="section">
       <template #header>
         <div class="card-header">
           <span>账号信息</span>
@@ -84,7 +84,7 @@ async function onSubmit() {
       />
     </el-card>
 
-    <el-card shadow="never" class="section">
+    <el-card class="section">
       <template #header>
         <div class="card-header">
           <span>修改密码</span>

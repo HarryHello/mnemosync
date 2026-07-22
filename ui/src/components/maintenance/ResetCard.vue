@@ -15,7 +15,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <el-card shadow="hover" class="section danger-section">
+  <el-card class="section danger-section">
     <template #header>
       <div class="sec-head">
         <span class="sec-title">重置人格状态 (Persona Reset)</span>

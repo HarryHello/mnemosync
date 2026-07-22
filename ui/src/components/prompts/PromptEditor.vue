@@ -203,7 +203,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-loading="loading" class="editor-grid" :class="{ 'single-pane': !showDefault }">
-      <el-card shadow="never" class="pane current-pane">
+      <el-card class="pane current-pane">
         <template #header>
           <div class="pane-head">
             <span>当前版本 (可编辑)</span>
@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
         />
       </el-card>
 
-      <el-card v-if="showDefault" shadow="never" class="pane">
+      <el-card v-if="showDefault" class="pane">
         <template #header>
           <div class="pane-head">
             <span>默认版本 (只读)</span>

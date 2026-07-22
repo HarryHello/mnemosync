@@ -8,7 +8,7 @@ const props = defineProps<{
 </script>
 
 <template>
-  <el-card shadow="never" class="health-card">
+  <el-card class="health-card">
     <template #header>
       <div class="card-header">
         <span>系统健康</span>

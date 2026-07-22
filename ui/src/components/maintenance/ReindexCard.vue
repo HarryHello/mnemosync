@@ -34,7 +34,7 @@ function fmtTime(s: string | null): string {
 </script>
 
 <template>
-  <el-card shadow="hover" class="equal-card">
+  <el-card class="equal-card">
     <template #header>
       <div class="sec-head">
         <span class="sec-title">重建记忆向量库 (Reindex)</span>

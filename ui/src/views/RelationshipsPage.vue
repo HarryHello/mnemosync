@@ -200,7 +200,7 @@ onMounted(refresh)
 
     <div v-loading="loading">
       <div v-if="rel" class="grid">
-        <el-card shadow="hover" class="metric">
+        <el-card class="metric">
           <template #header>
             <div class="metric-head">
               <span>亲密度</span>
@@ -220,7 +220,7 @@ onMounted(refresh)
           </div>
         </el-card>
 
-        <el-card shadow="hover" class="metric">
+        <el-card class="metric">
           <template #header>
             <div class="metric-head">
               <span>信任度</span>
@@ -240,7 +240,7 @@ onMounted(refresh)
           </div>
         </el-card>
 
-        <el-card shadow="never" class="addressing">
+        <el-card class="addressing">
           <template #header>
             <div class="addressing-head">
               <span>当前称呼与关系背景</span>
@@ -267,7 +267,7 @@ onMounted(refresh)
           </div>
         </el-card>
 
-        <el-card shadow="never" class="info">
+        <el-card class="info">
           <template #header>
             <span>关系元数据</span>
           </template>
@@ -294,7 +294,7 @@ onMounted(refresh)
           </el-descriptions>
         </el-card>
 
-        <el-card shadow="never" class="audit">
+        <el-card class="audit">
           <template #header>
             <div class="addressing-head">
               <span>变更历史 (最近 20 条)</span>

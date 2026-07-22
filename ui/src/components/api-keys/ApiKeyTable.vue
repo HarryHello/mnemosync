@@ -28,7 +28,7 @@ function formatDate(value: string | null): string {
 </script>
 
 <template>
-  <el-card shadow="never">
+  <el-card>
     <template #header>
       <div class="card-header">
         <span>密钥列表</span>

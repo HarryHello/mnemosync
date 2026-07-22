@@ -67,7 +67,7 @@ async function onSubmit() {
 
 <template>
   <div class="setup-page">
-    <el-card class="setup-card" shadow="hover">
+    <el-card class="setup-card">
       <div class="brand">
         <img class="brand-mark" src="/favicon.svg" alt="Mnemosync" />
         <h1>首次使用</h1>
