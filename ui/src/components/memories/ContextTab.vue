@@ -198,7 +198,7 @@ watch(() => props.active, (active) => {
       </template>
     </PageHeader>
 
-    <el-card>
+    <el-card class="context-card">
       <template #header>
         <div class="card-header">
           <div class="header-left">

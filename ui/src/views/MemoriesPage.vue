@@ -8,7 +8,7 @@ const activeTab = ref<'memories' | 'context'>('memories')
 
 <template>
   <div class="page-container">
-    <el-tabs v-model="activeTab">
+    <el-tabs v-model="activeTab" class="memories-tabs">
       <el-tab-pane label="长期记忆" name="memories">
         <MemoriesTab :active="activeTab === 'memories'" />
       </el-tab-pane>
@@ -18,3 +18,11 @@ const activeTab = ref<'memories' | 'context'>('memories')
     </el-tabs>
   </div>
 </template>
+
+<style lang="scss" scoped>
+.memories-tabs {
+  :deep(.el-tabs__content) {
+    padding: 0 $space-2 $space-2;
+  }
+}
+</style>

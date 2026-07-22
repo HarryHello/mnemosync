@@ -14,7 +14,7 @@ function onEdit(name: string) {
 
 <template>
   <div class="page-container">
-    <el-tabs v-model="activeTab">
+    <el-tabs v-model="activeTab" class="prompts-tabs">
       <el-tab-pane label="提示词" name="prompts">
         <PromptListTab @edit="onEdit" />
       </el-tab-pane>
@@ -24,3 +24,11 @@ function onEdit(name: string) {
     </el-tabs>
   </div>
 </template>
+
+<style lang="scss" scoped>
+.prompts-tabs {
+  :deep(.el-tabs__content) {
+    padding: 0 $space-2 $space-2;
+  }
+}
+</style>
