@@ -128,6 +128,7 @@ function fmtDate(s: string | null): string {
       empty-text="暂无日志"
       @row-click="onOpen"
       @filter-change="onFilterChange"
+      max-height="calc(100vh - 210px)"
     >
       <el-table-column label="时间" width="190">
         <template #header>

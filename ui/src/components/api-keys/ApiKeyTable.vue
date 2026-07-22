@@ -42,6 +42,7 @@ function formatDate(value: string | null): string {
       stripe
       row-key="id"
       empty-text="暂无 API Key"
+      max-height="calc(100vh - 210px)"
     >
       <el-table-column label="Key" min-width="220">
         <template #default="{ row }">
