@@ -242,7 +242,7 @@ watch(() => props.active, (active) => {
       </template>
     </PageHeader>
 
-    <el-card shadow="never" class="scroll-card">
+    <el-card shadow="never">
       <template #header>
         <div class="card-header">
           <div class="header-left">
@@ -266,18 +266,18 @@ watch(() => props.active, (active) => {
           </div>
         </div>
       </template>
-      <div class="card-body-scroll">
-        <el-table
-          ref="tableRef"
-          v-loading="loading"
-          :data="turns"
-          stripe
-          row-key="id"
-          empty-text="暂无对话流水"
-          :default-sort="{ prop: sortBy, order: toElOrder(sortOrder) }"
-          @sort-change="onSortChange"
-          @filter-change="onFilterChange"
-        >
+      <el-table
+        ref="tableRef"
+        v-loading="loading"
+        :data="turns"
+        stripe
+        row-key="id"
+        empty-text="暂无对话流水"
+        :default-sort="{ prop: sortBy, order: toElOrder(sortOrder) }"
+        @sort-change="onSortChange"
+        @filter-change="onFilterChange"
+        max-height="calc(100vh - 320px)"
+      >
         <el-table-column
           label="角色"
           width="120"
@@ -375,7 +375,6 @@ watch(() => props.active, (active) => {
           @size-change="onPageSizeChange"
         />
       </div>
-      </div>
     </el-card>
 
     <el-drawer
@@ -412,35 +411,6 @@ watch(() => props.active, (active) => {
 </template>
 
 <style lang="scss" scoped>
-.context-tab {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.scroll-card {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-
-  :deep(.el-card__body) {
-    flex: 1;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-}
-
-.card-body-scroll {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: $space-4 $space-4 0 $space-4;
-}
-
 .card-header {
   display: flex;
   align-items: center;
@@ -490,26 +460,10 @@ watch(() => props.active, (active) => {
   color: var(--el-text-color-secondary);
 }
 
-:deep(.el-table) {
-  flex: 1;
-
-  .el-table__inner-wrapper {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-
-    .el-table__body-wrapper {
-      flex: 1;
-      overflow-y: auto;
-    }
-  }
-}
-
 .pager {
   display: flex;
   justify-content: flex-end;
-  padding: $space-3 0;
-  flex-shrink: 0;
+  padding-top: $space-3;
 }
 
 .detail-content {
