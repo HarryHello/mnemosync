@@ -110,9 +110,13 @@ function clearConversation() {
   flex-direction: column;
   gap: $space-2;
   height: 100%;
+  min-height: 0;
 }
 
-.system-editor { margin-bottom: $space-2; }
+.system-editor {
+  flex-shrink: 0;
+  margin-bottom: $space-2;
+}
 
 .section-label {
   font-size: 12px;
@@ -121,7 +125,8 @@ function clearConversation() {
 }
 
 .messages {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: $space-2;
   background: var(--el-fill-color-lighter);
@@ -136,6 +141,7 @@ function clearConversation() {
   border-radius: $radius-sm;
   background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-lighter);
+  flex-shrink: 0;
 
   &.role-user { border-color: var(--el-color-primary-light-7); }
   &.role-assistant { border-color: var(--el-color-success-light-7); }
@@ -151,12 +157,18 @@ function clearConversation() {
 
 .msg-content { white-space: pre-wrap; word-break: break-word; }
 
-.composer { display: flex; flex-direction: column; gap: $space-2; }
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  flex-shrink: 0;
+}
 .composer-btns { display: flex; justify-content: flex-end; gap: $space-2; }
 
 .empty {
   color: var(--el-text-color-secondary);
   padding: $space-4;
   text-align: center;
+  flex-shrink: 0;
 }
 </style>
