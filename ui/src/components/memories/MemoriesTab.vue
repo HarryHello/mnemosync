@@ -21,6 +21,8 @@ const sortOrder = ref<'asc' | 'desc'>('desc')
 const typeFilter = ref<string[]>([])
 const sourceUser = ref('default')
 const loaded = ref(false)
+const detailDrawerVisible = ref(false)
+const currentDetailRow = ref<Memory | null>(null)
 
 const MEMORY_TYPE_FILTERS = [
   { text: '普通', value: 'normal' },
@@ -132,6 +134,22 @@ function fmtDate(s: string | null): string {
   return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 
+function contentPreview(content: string): string {
+  const firstLine = content.split('\n')[0] || ''
+  if (firstLine.length > 100) {
+    return firstLine.slice(0, 100) + '…'
+  }
+  if (content.includes('\n')) {
+    return firstLine + '…'
+  }
+  return content
+}
+
+function openDetail(row: Memory): void {
+  currentDetailRow.value = row
+  detailDrawerVisible.value = true
+}
+
 watch(() => props.active, (active) => {
   if (active && !loaded.value) {
     refresh()
@@ -194,7 +212,11 @@ watch(() => props.active, (active) => {
       >
         <el-table-column label="内容" min-width="360">
           <template #default="{ row }">
-            <div class="mem-content">{{ row.content }}</div>
+            <el-tooltip :content="row.content" placement="top" :disabled="!row.content">
+              <div class="mem-content-preview" @click="openDetail(row)">
+                {{ contentPreview(row.content) }}
+              </div>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column
@@ -298,6 +320,46 @@ watch(() => props.active, (active) => {
         />
       </div>
     </el-card>
+
+    <el-drawer
+      v-model="detailDrawerVisible"
+      :title="currentDetailRow ? `记忆 #${currentDetailRow.id}` : '详情'"
+      size="50%"
+    >
+      <div v-if="currentDetailRow" class="detail-content">
+        <div class="detail-meta">
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="类型">
+              <el-tag :type="typeTag(currentDetailRow.memory_type)" size="small">
+                {{ typeLabel(currentDetailRow.memory_type) }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="来源">
+              <span class="mono muted">{{ currentDetailRow.source_user || '—' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="重要度">
+              {{ (currentDetailRow.importance * 100).toFixed(0) }}%
+            </el-descriptions-item>
+            <el-descriptions-item label="衰减率">
+              {{ currentDetailRow.decay_rate.toFixed(2) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="访问次数">
+              {{ currentDetailRow.access_count }}
+            </el-descriptions-item>
+            <el-descriptions-item label="创建时间">
+              <span class="mono muted">{{ fmtDate(currentDetailRow.created_at) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="最近访问" :span="2">
+              <span class="mono muted">{{ fmtDate(currentDetailRow.last_accessed_at) }}</span>
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+        <div class="detail-text">
+          <div class="detail-text-label">内容</div>
+          <pre class="detail-pre">{{ currentDetailRow.content }}</pre>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -322,10 +384,17 @@ watch(() => props.active, (active) => {
   }
 }
 
-.mem-content {
-  white-space: pre-wrap;
-  word-break: break-word;
+.mem-content-preview {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  color: var(--el-text-color-regular);
   line-height: 1.5;
+
+  &:hover {
+    color: var(--el-color-primary);
+  }
 }
 
 .muted {
@@ -342,5 +411,38 @@ watch(() => props.active, (active) => {
   display: flex;
   justify-content: flex-end;
   margin-top: $space-3;
+}
+
+.detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: $space-4;
+}
+
+.detail-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.detail-text-label {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.detail-pre {
+  margin: 0;
+  padding: $space-3;
+  background: var(--el-fill-color-lighter);
+  border-radius: $radius-md;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+  max-height: 60vh;
+  overflow-y: auto;
 }
 </style>

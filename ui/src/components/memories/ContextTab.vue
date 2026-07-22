@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { ElTable } from 'element-plus'
 import {
@@ -31,6 +31,8 @@ const sourceFilter = ref<string[]>([])
 const sources = ref<Array<{ text: string; value: string }>>([])
 const selectedIds = ref<number[]>([])
 const loaded = ref(false)
+const detailDrawerVisible = ref(false)
+const currentDetailRow = ref<ConversationTurn | null>(null)
 
 const TURN_ROLE_FILTERS = [
   { text: '用户', value: 'user' },
@@ -198,6 +200,22 @@ function fmtDate(s: string | null): string {
   return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 
+function contentPreview(content: string): string {
+  const firstLine = content.split('\n')[0] || ''
+  if (firstLine.length > 100) {
+    return firstLine.slice(0, 100) + '…'
+  }
+  if (content.includes('\n')) {
+    return firstLine + '…'
+  }
+  return content
+}
+
+function openDetail(row: ConversationTurn): void {
+  currentDetailRow.value = row
+  detailDrawerVisible.value = true
+}
+
 watch(() => props.active, (active) => {
   if (active && !loaded.value) {
     refreshSources()
@@ -278,7 +296,11 @@ watch(() => props.active, (active) => {
         </el-table-column>
         <el-table-column label="内容" min-width="360">
           <template #default="{ row }">
-            <div class="mem-content">{{ row.content }}</div>
+            <el-tooltip :content="row.content" placement="top" :disabled="!row.content">
+              <div class="mem-content-preview" @click="openDetail(row)">
+                {{ contentPreview(row.content) }}
+              </div>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column
@@ -353,6 +375,37 @@ watch(() => props.active, (active) => {
         />
       </div>
     </el-card>
+
+    <el-drawer
+      v-model="detailDrawerVisible"
+      :title="currentDetailRow ? `${roleLabel(currentDetailRow.role)} 消息 #${currentDetailRow.id}` : '详情'"
+      size="50%"
+    >
+      <div v-if="currentDetailRow" class="detail-content">
+        <div class="detail-meta">
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="角色">
+              <el-tag :type="roleTag(currentDetailRow.role)" size="small">
+                {{ roleLabel(currentDetailRow.role) }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="来源">
+              <span class="mono muted">{{ currentDetailRow.source_frontend || '—' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="时间">
+              <span class="mono muted">{{ fmtDate(currentDetailRow.ts) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="token">
+              {{ currentDetailRow.token_count }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+        <div class="detail-text">
+          <div class="detail-text-label">内容</div>
+          <pre class="detail-pre">{{ currentDetailRow.content }}</pre>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -383,10 +436,17 @@ watch(() => props.active, (active) => {
   color: var(--el-text-color-secondary);
 }
 
-.mem-content {
-  white-space: pre-wrap;
-  word-break: break-word;
+.mem-content-preview {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  color: var(--el-text-color-regular);
   line-height: 1.5;
+
+  &:hover {
+    color: var(--el-color-primary);
+  }
 }
 
 .muted {
@@ -403,5 +463,38 @@ watch(() => props.active, (active) => {
   display: flex;
   justify-content: flex-end;
   margin-top: $space-3;
+}
+
+.detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: $space-4;
+}
+
+.detail-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.detail-text-label {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.detail-pre {
+  margin: 0;
+  padding: $space-3;
+  background: var(--el-fill-color-lighter);
+  border-radius: $radius-md;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+  max-height: 60vh;
+  overflow-y: auto;
 }
 </style>
