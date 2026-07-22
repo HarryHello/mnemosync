@@ -222,10 +222,6 @@ async function clearAllEvents() {
         <el-tag v-if="debugStore.sessionKey" size="small">
           key: {{ debugStore.sessionKey.key.slice(0, 12) }}…
         </el-tag>
-        <div class="switch-container">
-          <span class="switch-label">调试模式</span>
-          <el-switch v-model="debugMode" inline-prompt />
-        </div>
       </template>
     </PageHeader>
 
@@ -258,10 +254,12 @@ async function clearAllEvents() {
           :available-models="availableModels"
           :streaming="streaming"
           :sending="sending"
+          :debug-mode="debugMode"
           @update:system-prompt="(v) => systemPrompt = v"
           @update:use-system="(v) => useSystem = v"
           @update:model-name="(v) => modelName = v"
           @update:streaming="(v) => streaming = v"
+          @update:debug-mode="(v) => debugMode = v"
           @send="sendMessage"
           @clear="clearConversation"
         />
@@ -331,16 +329,6 @@ async function clearAllEvents() {
   background: var(--el-bg-color);
   padding: $space-3;
   min-height: 0;
-}
-
-.switch-container {
-  display: flex;
-  align-items: center;
-  gap: $space-1;
-  .switch-label {
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-  }
 }
 
 :deep(.page-subtitle code) {

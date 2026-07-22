@@ -10,6 +10,7 @@ const props = defineProps<{
   availableModels: string[]
   streaming: boolean
   sending: boolean
+  debugMode: boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,6 +18,7 @@ const emit = defineEmits<{
   'update:useSystem': [value: boolean]
   'update:modelName': [value: string]
   'update:streaming': [value: boolean]
+  'update:debugMode': [value: boolean]
   send: [text: string]
   clear: []
 }>()
@@ -96,9 +98,15 @@ function clearConversation() {
         @keydown.meta.enter="send"
         @keydown.ctrl.enter="send"
       />
-      <div class="composer-btns">
-        <el-button size="small" @click="clearConversation">清空对话</el-button>
-        <el-button type="primary" size="small" :loading="sending" @click="send">发送</el-button>
+      <div class="composer-bottom">
+        <div class="debug-switch">
+          <span class="switch-label">调试模式</span>
+          <el-switch :model-value="debugMode" @update:model-value="(v: boolean) => emit('update:debugMode', v)" inline-prompt />
+        </div>
+        <div class="composer-btns">
+          <el-button size="small" @click="clearConversation">清空对话</el-button>
+          <el-button type="primary" size="small" :loading="sending" @click="send">发送</el-button>
+        </div>
       </div>
     </div>
   </div>
@@ -160,6 +168,20 @@ function clearConversation() {
   flex-direction: column;
   gap: $space-2;
   flex-shrink: 0;
+}
+.composer-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.debug-switch {
+  display: flex;
+  align-items: center;
+  gap: $space-1;
+}
+.switch-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 .composer-btns { display: flex; justify-content: flex-end; gap: $space-2; }
 
