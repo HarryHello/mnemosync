@@ -17,6 +17,7 @@ import { useDebugStore } from '@/stores/debug'
 import { getDebugEventDetail, listV1Models } from '@/api/client'
 import type { ChatMessage, DebugEventDetailResponse } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
+import MySplitter from '@/components/common/MySplitter.vue'
 import ChatArea from '@/components/debug-chat/ChatArea.vue'
 import DebugEventList from '@/components/debug-chat/DebugEventList.vue'
 
@@ -117,7 +118,8 @@ async function sendMessage(text: string) {
 
   // 预先塞一个空 assistant 消息, 流式填充
   const assistantIdx =
-    conversation.value.push({ role: 'assistant', content: streaming.value ? '' : '(等待中...)' }) - 1
+    conversation.value.push({ role: 'assistant', content: streaming.value ? '' : '(等待中...)' }) -
+    1
 
   try {
     const body = {
@@ -210,14 +212,15 @@ async function clearAllEvents() {
 
 <template>
   <div class="page-container debug-chat">
-    <PageHeader
-      title="调试聊天"
-    >
+    <PageHeader title="调试聊天">
       <template #subtitle>
-        模拟真实客户端调 Mnemosync <code>/v1/chat/completions</code>; 打开"调试模式"实时观察每一跳 HTTP (客户端 ↔ Mnemosync ↔ 上游), 按 correlation_id 分组
+        模拟真实客户端调 Mnemosync <code>/v1/chat/completions</code>; 打开"调试模式"实时观察每一跳
+        HTTP (客户端 ↔ Mnemosync ↔ 上游), 按 correlation_id 分组
       </template>
       <template #actions>
-        <el-tag v-if="debugMode && debugStore.connected" type="success" size="small">SSE 已订阅</el-tag>
+        <el-tag v-if="debugMode && debugStore.connected" type="success" size="small"
+          >SSE 已订阅</el-tag
+        >
         <el-tag v-else-if="debugMode" type="warning" size="small">SSE 连接中…</el-tag>
         <el-tag v-if="debugStore.sessionKey" size="small">
           key: {{ debugStore.sessionKey.key.slice(0, 12) }}…
@@ -244,35 +247,38 @@ async function clearAllEvents() {
       </el-select>
     </div>
 
-    <div class="split" :class="{ 'split-chat-only': !debugMode }">
-      <div class="chat-half">
-        <ChatArea
-          :conversation="conversation"
-          :system-prompt="systemPrompt"
-          :use-system="useSystem"
-          :model-name="modelName"
-          :available-models="availableModels"
-          :streaming="streaming"
-          :sending="sending"
-          :debug-mode="debugMode"
-          @update:system-prompt="(v) => systemPrompt = v"
-          @update:use-system="(v) => useSystem = v"
-          @update:model-name="(v) => modelName = v"
-          @update:streaming="(v) => streaming = v"
-          @update:debug-mode="(v) => debugMode = v"
-          @send="sendMessage"
-          @clear="clearConversation"
-        />
-      </div>
-
-      <div v-if="debugMode" class="debug-half">
-        <DebugEventList
-          :events-by-correlation="debugStore.eventsByCorrelation"
-          :on-load-detail="loadEventDetail"
-          @clear-all="clearAllEvents"
-        />
-      </div>
-    </div>
+    <MySplitter class="content-splitter" layout="vertical" gap-size="12px">
+      <el-splitter-panel size="40%" :min="180" resizable>
+        <div class="content-panel">
+          <ChatArea
+            :conversation="conversation"
+            :system-prompt="systemPrompt"
+            :use-system="useSystem"
+            :model-name="modelName"
+            :available-models="availableModels"
+            :streaming="streaming"
+            :sending="sending"
+            :debug-mode="debugMode"
+            @update:system-prompt="(v) => (systemPrompt = v)"
+            @update:use-system="(v) => (useSystem = v)"
+            @update:model-name="(v) => (modelName = v)"
+            @update:streaming="(v) => (streaming = v)"
+            @update:debug-mode="(v) => (debugMode = v)"
+            @send="sendMessage"
+            @clear="clearConversation"
+          />
+        </div>
+      </el-splitter-panel>
+      <el-splitter-panel v-if="debugMode" size="60%" :min="180" resizable>
+        <div class="content-panel">
+          <DebugEventList
+            :events-by-correlation="debugStore.eventsByCorrelation"
+            :on-load-detail="loadEventDetail"
+            @clear-all="clearAllEvents"
+          />
+        </div>
+      </el-splitter-panel>
+    </MySplitter>
   </div>
 </template>
 
@@ -281,7 +287,8 @@ async function clearAllEvents() {
   display: flex;
   flex-direction: column;
   gap: $space-3;
-  height: calc(100vh - #{$header-height} - #{$space-5} * 2);
+  height: 100%;
+  min-height: 0;
 }
 
 .params-bar {
@@ -301,34 +308,21 @@ async function clearAllEvents() {
   color: var(--el-text-color-secondary);
 }
 
-.split {
-  flex: 1 1 auto;
+.content-splitter {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.content-panel {
+  height: 100%;
+  min-height: 0;
+  padding: $space-3;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: $radius-md;
+  background: var(--el-bg-color);
   display: flex;
   flex-direction: column;
-  gap: $space-3;
-  min-height: 0;
-}
-
-.chat-half {
-  flex: 1 1 40%;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: $radius-md;
-  background: var(--el-bg-color);
-  padding: $space-3;
-  min-height: 0;
-}
-
-.split-chat-only .chat-half {
-  flex: 1 1 auto;
-}
-
-.debug-half {
-  flex: 1 1 60%;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: $radius-md;
-  background: var(--el-bg-color);
-  padding: $space-3;
-  min-height: 0;
+  overflow: hidden;
 }
 
 :deep(.page-subtitle code) {

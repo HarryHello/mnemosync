@@ -81,7 +81,6 @@ function clearConversation() {
 
     <div ref="messagesEl" class="messages">
       <div v-for="(m, i) in conversation" :key="i" class="msg" :class="`role-${m.role}`">
-        <div class="msg-role">{{ m.role }}</div>
         <div class="msg-content">{{ m.content }}</div>
       </div>
       <div v-if="!conversation.length" class="empty">发一句话看看流水线在跑什么。</div>
@@ -146,12 +145,26 @@ function clearConversation() {
   padding: $space-2 $space-3;
   border-radius: $radius-sm;
   background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid transparent;
   flex-shrink: 0;
 
-  &.role-user { border-color: var(--el-color-primary-light-7); }
-  &.role-assistant { border-color: var(--el-color-success-light-7); }
-  &.role-system { border-color: var(--el-color-warning-light-7); }
+  &.role-user {
+    background: var(--el-color-primary-light-7);
+    max-width: 80%;
+    align-self: flex-end;
+  }
+
+  &.role-assistant {
+    background: var(--el-color-success-light-7);
+    max-width: 80%;
+    align-self: flex-start;
+  }
+
+  &.role-system {
+    border-color: var(--el-color-warning-light-7);
+    max-width: 80%;
+    align-self: center;
+  }
 }
 
 .msg-role {

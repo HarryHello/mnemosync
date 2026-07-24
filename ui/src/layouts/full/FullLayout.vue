@@ -20,7 +20,9 @@ import AppSidebar from './AppSidebar.vue'
 <style lang="scss" scoped>
 .full-layout {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   background: var(--el-bg-color-page);
 }
 
