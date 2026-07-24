@@ -681,3 +681,23 @@ export async function chatCompletion(data: ChatCompletionRequest): Promise<ChatC
     }),
   })
 }
+
+/** 流式聊天 / 调试面板用: 接受外部 API Key, 返回原始 Response,
+ *  调用方自行处理流式读取或 JSON 解析. */
+export async function chatCompletionRaw(
+  apiKey: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const resp = await fetch(`${CHAT_BASE}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'mnemosync-any',
+      ...body,
+    }),
+  })
+  return resp
+}

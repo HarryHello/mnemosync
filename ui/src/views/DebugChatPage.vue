@@ -14,7 +14,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useDebugStore } from '@/stores/debug'
-import { getDebugEventDetail, listV1Models } from '@/api/client'
+import { chatCompletionRaw, getDebugEventDetail, listV1Models } from '@/api/client'
 import type { ChatMessage, DebugEventDetailResponse } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
 import MySplitter from '@/components/common/MySplitter.vue'
@@ -127,14 +127,7 @@ async function sendMessage(text: string) {
       messages,
       stream: streaming.value,
     }
-    const resp = await fetch('/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify(body),
-    })
+    const resp = await chatCompletionRaw(key, body)
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '')
       throw new Error(`HTTP ${resp.status}: ${errText || resp.statusText}`)
