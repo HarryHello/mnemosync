@@ -139,6 +139,15 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
 
 async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
     """主对话 Agent: 加载记忆 + 拼装上下文 + 生成回复."""
+    # 流式模式下 _run_memory_graph 已预填充 response: 直接返回, 不重复调用 LLM
+    if "response" in state and state["response"] is not None:
+        logger.debug("=" * 60)
+        logger.debug("🤖 [main_dialogue] 检测到预填充 response: 跳过 LLM 调用")
+        result: dict[str, Any] = {"response": state["response"]}
+        if "upstream_usage" in state and state["upstream_usage"] is not None:
+            result["upstream_usage"] = state["upstream_usage"]
+        return result
+
     settings = get_settings()
     source_user = state["source_user"]
     forwarder = _make_multi_forwarder()
