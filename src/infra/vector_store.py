@@ -161,13 +161,22 @@ class VectorStore:
         query_vector: list[float],
         top_k: int = 10,
         source_user: str | None = None,
+        where: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """向量相似度检索（粗筛）.
+
+        Args:
+            query_vector: 查询向量
+            top_k: 返回条数
+            source_user: 限定来源用户 (v0.2.x 单用户路径)
+            where: ChromaDB 复合 where 子句 (v0.3.0 受众粗筛, 支持 $or);
+                显式传入时优先于 source_user
 
         Returns:
             list of {id, content, similarity, metadata}
         """
-        where = {"source_user": source_user} if source_user else None
+        if where is None and source_user:
+            where = {"source_user": source_user}
         result = self._collection.query(
             query_embeddings=[query_vector],
             n_results=top_k,
@@ -206,6 +215,7 @@ class VectorStore:
             "is_forgotten": bool(entry.is_forgotten),
             "emotional_tags": "|".join(entry.emotional_tags),
             "visibility": entry.visibility.value,
+            "space_id": entry.space_id or "",
             "created_at": entry.created_at.isoformat(),
         }
 
