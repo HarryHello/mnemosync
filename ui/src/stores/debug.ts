@@ -127,6 +127,12 @@ export const useDebugStore = defineStore('debug', () => {
       } catch (e) {
         connected.value = false
         if (!active.value) return
+        // 认证失败 (401) 不重试 — 停止重连循环, 避免持续打 401 日志
+        if ((e as Error).message?.includes('HTTP 401')) {
+          error.value = '调试会话认证已失效，请刷新页面重新获取 Key'
+          deactivate()
+          return
+        }
         error.value = `SSE 断开: ${(e as Error).message}`
       }
       if (!active.value) return

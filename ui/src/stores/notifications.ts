@@ -41,8 +41,12 @@ export const useNotificationsStore = defineStore('notifications', () => {
     try {
       const r = await getUnreadNotificationCount()
       unreadCount.value = r.unread_count
-    } catch {
-      // 静默失败, 不打扰 UI
+    } catch (e) {
+      // 401: token 已失效, 停止轮询避免持续打 401
+      if ((e as Error).message?.includes('401')) {
+        stopPolling()
+      }
+      // 其他错误静默失败, 不打扰 UI
     }
   }
 
