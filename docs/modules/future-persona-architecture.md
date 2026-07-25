@@ -54,12 +54,12 @@
 │                              │                                       │
 │  ┌───────────────────────────▼───────────────────────────────────┐  │
 │  │  Layer 4: Social Decision                                      │  │
-│  │  是否发言 · 回复谁 · 引用/@ · 主动触发 · 沉默决策 · 节奏控制  │  │
+│  │  可选被动沉默（超时/空响应）· 回复内容的参与度自然变化         │  │
 │  └───────────────────────────┬───────────────────────────────────┘  │
 │                              │                                       │
 │  ┌───────────────────────────▼───────────────────────────────────┐  │
-│  │  Layer 5: Response Action                                      │  │
-│  │  文本 · 引用 · @ · 表情 · 语音 · 图片 · 分段 · 发送策略       │  │
+│  │  Layer 5: Response Content                                     │  │
+│  │  遵从平台格式的文本回复 · 人格在 Prompt 引导下的自然表达      │  │
 │  └───────────────────────────┬───────────────────────────────────┘  │
 │                              │                                       │
 └──────────────────────────────┼──────────────────────────────────────┘
@@ -190,35 +190,35 @@ SillyTavern Character Card (PNG/JSON)
 
 ### 3.6 Social Policy — 按空间的行为策略
 
+Social Policy 是人格对不同空间类型的**表达倾向**，通过 Prompt 引导实现，不依赖平台适配器做特殊处理。
+
 ```text
 SocialPolicy(space_type)
-├── trigger
-│   ├── respond_to_mention  是否响应 @
-│   ├── respond_to_keyword  是否响应关键词
-│   ├── proactive_chance    主动发言概率
-│   └── idle_trigger        空闲触发策略
 ├── participation
-│   ├── max_frequency       最大发言频率
-│   ├── cooldown_seconds    冷却时间
-│   └── burst_limit         短时间爆发上限
+│   ├── verbosity             回复详细程度 (brief / normal / detailed)
+│   ├── initiation            主动程度 (responsive_only / moderate / proactive)
+│   └── formality             正式程度 (casual / normal / formal)
 ├── expression
-│   ├── use_emoji           是否使用表情
-│   ├── use_quote           是否引用消息
-│   ├── use_at               是否 @ 用户
-│   └── split_long_messages 是否分段发送
+│   ├── emoji_style           表情风格偏好 (frequent / occasional / never)
+│   ├── quote_style           引用风格 (natural / minimal)
+│   └── length_preference     篇幅偏好 (short / medium / long)
+├── boundaries
+│   ├── mute_topics[]         回避的话题
+│   └── require_context       需要多少上下文才充分回应
 └── silence
-    ├── mute_keywords        静默关键词
-    └── require_context      需要多少上下文才发言
+    └── passive_silence_enabled  是否启用可选被动沉默（超时/空响应）
 ```
 
 示例：
 
 ```text
-好友小群: 活跃、会插话、使用表情、小概率主动发言
-工作群: 克制、只在被问时回答、不使用表情、不主动
-公共大群: 极少主动、仅响应明确 @、不引用
-私聊: 允许主动关心、可以使用表情、支持分段发送
+好友小群: 活跃、casual、偶尔表情、natural 引用
+工作群: responsive_only、normal 正式度、minimal 表情
+公共大群: responsive_only、极简回应
+私聊: 允许 proactive、casual、可分段
 ```
+
+**关键约束**：Social Policy 通过 Prompt 自然引导模型行为，不要求平台适配器识别任何自定义格式或协议。
 
 ---
 
@@ -487,7 +487,7 @@ POST /v1/chat/completions
 
 ### 6.4 沉默决策
 
-沉默不是 Mnemosync 的独立功能，而是**平台触发策略的自然结果**：u
+沉默不是 Mnemosync 的独立功能，而是**平台触发策略的自然结果**：
 
 - 平台不触发 → Mnemosync 不收到请求 → 人格不发言
 - 平台触发 → Mnemosync 收到请求 → 人格回复（默认模式）
@@ -497,7 +497,7 @@ POST /v1/chat/completions
 
 ---
 
-## 7. Layer 5: Response Action — 回复内容层
+## 7. Layer 5: Response Content — 回复内容层
 
 ### 7.1 核心约束
 
@@ -769,15 +769,12 @@ Hermes 的 MemoryProvider 接口和 ChatLuna 的插件系统共同表明：
 
 **不改变**：仍是单用户，但预留多用户字段
 
-### Phase 3: 社交运行时
+### Phase 3: 社交风格
 
-**目标**：人格可以主动参与社交
+**目标**：人格在回复中自然表达社交风格
 
 - [ ] 定义 `SocialPolicy` 模型
-- [ ] 实现发言决策流水线
-- [ ] 实现结构化回复动作
 - [ ] 实现沉默和冷却机制（可选增强模式）
-- [ ] 实现沉默和冷却机制
 
 **不改变**：仍是单空间，但准备好空间抽象
 
@@ -842,13 +839,13 @@ Mnemosync 的未来架构应该是一个六层模型：
 Persona Definition  →  人格是谁、怎样表达
 Memory & Relationship → 人格记得什么、与谁什么关系
 Social State        →  当前在做什么、在等谁
-Social Decision     →  是否发言、回复谁
-Response Action     →  以什么形式发出
-Platform Adapter    →  平台事件与发送
+Social Decision     →  可选被动沉默（超时/空响应）
+Response Content    →  遵从平台格式的文本回复
+Platform Adapter    →  平台事件、触发决策与发送
 ```
 
-前三层半属于 Mnemosync 核心，后两层半属于平台适配器。
+前三层属于 Mnemosync 核心，后三层属于平台适配器。Layer 4 的被动沉默是 Mnemosync 内部可选功能，不依赖平台配合。
 
-角色卡让人格可以被携带，Lorebook 让静态知识可以按需注入，长期记忆让动态事实可以跨会话持续，社交状态让人格知道当前在做什么，社交决策让人格合理参与社会互动，回复动作让人格以自然方式表达。
+角色卡让人格可以被携带，Lorebook 让静态知识可以按需注入，长期记忆让动态事实可以跨会话持续，社交状态让人格知道当前在做什么，人格 Prompt 引导模型在回复中自然表达其社交风格。
 
 **当这六层完整时，Mnemosync 就不再只是一个"带记忆的问答接口"，而是一个真正持续存在、可以出门社交的人格。**
