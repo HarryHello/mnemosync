@@ -20,7 +20,6 @@ from src.core.agents.prompts import (
     build_prompt_cleaning_user_prompt,
     build_proxy_thinking_prompt,
     build_relationship_analysis_prompt,
-    load_decay_targets_header,
     load_prompt_cleaning_system,
 )
 from src.core.memory.models import CandidateMemory, DecayEvaluation, DecayState, MemoryType

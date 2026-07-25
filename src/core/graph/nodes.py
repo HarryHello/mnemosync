@@ -293,7 +293,6 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             relation_context=rel_ctx,
             emotion_analysis=emotion_text,
         )
-        )
 
         logger.debug("  ✅ 记忆分析完成: 新记忆 %d 条", len(out.new_memories))
 
