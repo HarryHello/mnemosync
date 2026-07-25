@@ -12,6 +12,7 @@ from src.persistence.auth_store import SqliteAuthStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.identity_store import SqliteIdentityStore
+from src.persistence.idempotency_store import SqliteIdempotencyStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 
@@ -68,3 +69,7 @@ def get_notification_store(request: Request) -> NotificationStore:
 
 def get_identity_store(request: Request) -> SqliteIdentityStore:
     return request.app.state.identity_store
+
+
+def get_idempotency_store(request: Request) -> SqliteIdempotencyStore:
+    return request.app.state.idempotency_store

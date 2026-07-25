@@ -23,6 +23,7 @@ from src.persistence.api_key_store import (
 from src.persistence.auth_store import SqliteAuthStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
+from src.persistence.idempotency_store import SqliteIdempotencyStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 from src.persistence.identity_store import SqliteIdentityStore
@@ -37,6 +38,7 @@ HTTP_LOG_DB_PATH = "data/http_logs.db"
 LLM_SERVICE_DB_PATH = "data/llm_service.db"
 NOTIFICATION_DB_PATH = "data/notifications.db"
 IDENTITY_DB_PATH = "data/identity.db"
+IDEMPOTENCY_DB_PATH = "data/idempotency.db"
 
 
 def _memory_db_path() -> str:
@@ -103,6 +105,7 @@ async def app_lifespan(app: FastAPI):
     conversation_store = SqliteConversationStore(_conversation_db_path())
     notification_store = NotificationStore(NOTIFICATION_DB_PATH)
     identity_store = SqliteIdentityStore(IDENTITY_DB_PATH)
+    idempotency_store = SqliteIdempotencyStore(IDEMPOTENCY_DB_PATH)
 
     await auth_store.connect()
     await api_key_store.connect()
@@ -112,6 +115,7 @@ async def app_lifespan(app: FastAPI):
     await conversation_store.connect()
     await notification_store.connect()
     await identity_store.connect()
+    await idempotency_store.connect()
 
     resolver = RoleResolver(llm_service_store)
     multi_forwarder = MultiForwarder(resolver)
@@ -156,6 +160,7 @@ async def app_lifespan(app: FastAPI):
     app.state.conversation_store = conversation_store
     app.state.notification_store = notification_store
     app.state.identity_store = identity_store
+    app.state.idempotency_store = idempotency_store
 
     # 后台任务: 每 24h 清理窗外对话流水
     from src.core.config import get_settings as _gs
@@ -191,7 +196,7 @@ async def app_lifespan(app: FastAPI):
             await api_key_store.delete_by_source(API_KEY_SOURCE_PANEL_DEBUG)
         except Exception as e:
             logger.warning("Error cleaning panel-debug keys on shutdown: %s", e)
-        for store in (conversation_store, notification_store, identity_store, http_log_store, memory_store, api_key_store, auth_store):
+        for store in (conversation_store, notification_store, identity_store, idempotency_store, http_log_store, memory_store, api_key_store, auth_store):
             try:
                 await store.close()
             except Exception as e:

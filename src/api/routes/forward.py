@@ -58,6 +58,7 @@ from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.identity_store import SqliteIdentityStore
+from src.persistence.idempotency_store import IdempotencyRecord, SqliteIdempotencyStore
 from src.core.identity import IdentityResolver, IdentityContext
 from src.persistence.memory_store import SqliteMemoryStore
 from src.tools import MemoryRetriever
@@ -97,6 +98,107 @@ def _get_conversation_store(http_request: Request) -> SqliteConversationStore:
 def _get_identity_store(http_request: Request) -> SqliteIdentityStore | None:
     """从 app.state 取共享 SqliteIdentityStore (由 lifespan 建立)."""
     return getattr(http_request.app.state, "identity_store", None)
+
+
+def _get_idempotency_store(http_request: Request) -> SqliteIdempotencyStore | None:
+    """从 app.state 取共享 SqliteIdempotencyStore (由 lifespan 建立)."""
+    return getattr(http_request.app.state, "idempotency_store", None)
+
+
+async def _lookup_idempotency(
+    http_request: Request,
+    api_key_id: str | None,
+    external_event_id: str | None,
+) -> IdempotencyRecord | None:
+    """查询幂等缓存. 未命中/未配置/查询失败都返回 None (退化为正常流程).
+
+    群聊平台重发同一条消息时, 命中首次响应并原样重放 — 避免重复的
+    上游 LLM 调用与重复记忆写入。
+    """
+    if not external_event_id:
+        return None
+    store = _get_idempotency_store(http_request)
+    if store is None:
+        return None
+    integration_id = api_key_id or "anonymous"
+    try:
+        return await store.get(integration_id, external_event_id)
+    except Exception as e:
+        logger.warning("幂等查询失败, 退化为正常流程: %s", e)
+        return None
+
+
+async def _record_idempotency(
+    http_request: Request,
+    api_key_id: str | None,
+    external_event_id: str | None,
+    event_id: str,
+    response_text: str,
+) -> None:
+    """写入幂等缓存 (首次成功响应). 失败仅告警, 不影响响应."""
+    if not external_event_id or not response_text:
+        return
+    store = _get_idempotency_store(http_request)
+    if store is None:
+        return
+    integration_id = api_key_id or "anonymous"
+    try:
+        await store.record(integration_id, external_event_id, event_id, response_text)
+    except Exception as e:
+        logger.warning("幂等记录写入失败 (不影响响应): %s", e)
+
+
+def _replay_json_response(record: IdempotencyRecord, model: str) -> JSONResponse:
+    """非流式幂等重放: 原样返回首次响应 (同一 id, usage 归零)."""
+    return JSONResponse(
+        content=ChatCompletionResponse(
+            id=record.event_id,
+            model=model,
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=ChatMessage(
+                        role="assistant",
+                        content=record.response_text or "",
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+        ).model_dump(exclude_none=True)
+    )
+
+
+def _replay_stream_response(record: IdempotencyRecord, model: str) -> StreamingResponse:
+    """流式幂等重放: 把缓存文本拼成标准 SSE 序列 (单内容帧 + stop 帧 + [DONE])."""
+
+    async def replay_generator():
+        created = int(datetime.now(timezone.utc).timestamp())
+        content_chunk = {
+            "id": record.event_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": record.response_text or ""},
+                    "finish_reason": None,
+                }
+            ],
+        }
+        yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n".encode("utf-8")
+        stop_chunk = {
+            "id": record.event_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n".encode("utf-8")
+        yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(replay_generator(), media_type="text/event-stream")
 
 
 async def _resolve_main_candidate(http_request: Request):
@@ -261,6 +363,21 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     source_user = identity_ctx.effective_user_id if identity_ctx else (request.user or None)
     space_id = identity_ctx.space_id if identity_ctx else None
     channel_type = identity_ctx.channel_type if identity_ctx else None
+    external_event_id = identity_ctx.external_event_id if identity_ctx else None
+    if not external_event_id:
+        # 可选兜底: 客户端主动带 Idempotency-Key 头时也接受 (不要求客户端适配)
+        external_event_id = http_request.headers.get("Idempotency-Key") or None
+
+    # 幂等: 平台重发同一事件 → 直接重放首次响应 (在提示词清洗/上游调用之前,
+    # 重复请求不产生任何 LLM 开销与记忆副作用)
+    if external_event_id:
+        replay = await _lookup_idempotency(http_request, api_key_id, external_event_id)
+        if replay is not None:
+            logger.info("🔁 幂等命中 (%s), 重放缓存响应", external_event_id)
+            replay_model = await _resolve_main_model(http_request)
+            if request.stream:
+                return _replay_stream_response(replay, replay_model)
+            return _replay_json_response(replay, replay_model)
 
     # 服务器优先人格: 从配置加载, 不从客户端 system 消息提取
     settings = get_settings()
@@ -314,6 +431,8 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "source_frontend": source_frontend,
         "space_id": space_id,
         "channel_type": channel_type,
+        "external_event_id": external_event_id,
+        "api_key_id": api_key_id,
     }
     if prompt_cleaning_result:
         initial_state["prompt_cleaning_result"] = prompt_cleaning_result
@@ -341,6 +460,8 @@ async def _handle_non_stream(
     source_frontend = initial_state.get("source_frontend")
     actor_id = initial_state.get("actor_id")
     space_id = initial_state.get("space_id")
+    external_event_id = initial_state.get("external_event_id")
+    api_key_id = initial_state.get("api_key_id")
 
     main_candidate = await _resolve_main_candidate(http_request)
     main_ctx_length = main_candidate.context_length if main_candidate else None
@@ -368,6 +489,7 @@ async def _handle_non_stream(
         system_text=system_estimate,
         new_user_text=new_user_content,
         max_tokens_hint=request.max_tokens,
+        space_id=space_id,
     )
     logger.debug(
         "  🧵 短期对话装填 (non-stream): %d/%d 条 (预算 %d tok)",
@@ -410,6 +532,7 @@ async def _handle_non_stream(
                 source_frontend=source_frontend,
                 actor_id=actor_id,
                 space_id=space_id,
+                external_event_id=external_event_id,
             )
         if response_text:
             await conversation_store.append(
@@ -422,6 +545,11 @@ async def _handle_non_stream(
             )
     except Exception as e:
         logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
+
+    # 幂等缓存: 首次成功响应落库, 平台重发时原样重放
+    await _record_idempotency(
+        http_request, api_key_id, external_event_id, response_id, response_text,
+    )
 
     usage_info = UsageInfo(
         prompt_tokens=int(upstream_usage.get("prompt_tokens", 0)),
@@ -468,6 +596,8 @@ async def _handle_stream(
     source_frontend = initial_state.get("source_frontend")
     actor_id = initial_state.get("actor_id")
     space_id = initial_state.get("space_id")
+    external_event_id = initial_state.get("external_event_id")
+    api_key_id = initial_state.get("api_key_id")
     main_candidate = await _resolve_main_candidate(http_request)
     main_model = main_candidate.model if main_candidate else "mnemosync-any"
     main_ctx_length = main_candidate.context_length if main_candidate else None
@@ -550,6 +680,7 @@ async def _handle_stream(
         system_text=system_text,
         new_user_text=new_user_content,
         max_tokens_hint=request.max_tokens,
+        space_id=space_id,
     )
     logger.debug(
         "  🧵 短期对话装填: %d/%d 条 (预算 %d tok, 已用 %d, 因预算丢弃 %d)",
@@ -645,6 +776,9 @@ async def _handle_stream(
                     content=new_user_content,
                     token_count=token_count_for_storage(new_user_content),
                     source_frontend=source_frontend,
+                    actor_id=actor_id,
+                    space_id=space_id,
+                    external_event_id=external_event_id,
                 )
             if assistant_text:
                 await conversation_store.append(
@@ -652,9 +786,16 @@ async def _handle_stream(
                     content=assistant_text,
                     token_count=token_count_for_storage(assistant_text),
                     source_frontend=source_frontend,
+                    actor_id=actor_id,
+                    space_id=space_id,
                 )
         except Exception as e:
             logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
+
+        # 幂等缓存: 首次成功响应落库
+        await _record_idempotency(
+            http_request, api_key_id, external_event_id, chatcmpl_id, assistant_text,
+        )
 
         logger.debug("🔄 触发后台记忆图...")
         initial_state["proxy_thinking_enabled"] = False
