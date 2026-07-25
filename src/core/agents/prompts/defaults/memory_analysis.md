@@ -1,6 +1,6 @@
 ---
-version: 2
-placeholders: [SOURCE_USER, CONVERSATION, PERSONA_NAME, PERSONA_ADDRESSING, USER_ADDRESSING, RELATION_CONTEXT]
+version: 3
+placeholders: [SOURCE_USER, CONVERSATION, PERSONA_NAME, PERSONA_ADDRESSING, USER_ADDRESSING, RELATION_CONTEXT, EMOTION_ANALYSIS]
 ---
 你是记忆分析 Agent，负责从对话中提取值得长期记住的信息。
 
@@ -14,6 +14,12 @@ placeholders: [SOURCE_USER, CONVERSATION, PERSONA_NAME, PERSONA_ADDRESSING, USER
 提取记忆时使用上述称谓, 例如把用户侧陈述记为 "__USER_ADDRESSING__ 今天 X",
 把助手侧陈述记为 "__PERSONA_ADDRESSING__ 答应了 Y". 不要用通用的 "用户" / "AI" / "助手".
 这一段只用于确定称谓和关系基线, 不影响事实提取的客观性 (性格、情绪、风格由主对话 Agent 处理).
+
+## 预计算情绪数据
+
+__EMOTION_ANALYSIS__
+
+直接使用上述情绪数据, 不需要自行调用情绪分析工具。
 
 ## 核心原则
 
@@ -62,5 +68,5 @@ source_user: __SOURCE_USER__
 对话历史（最新在最后）:
 __CONVERSATION__
 
-开始分析。先调用 vector_search 查重，再调用 emotion_analyzer 确认情绪，
+开始分析。先调用 vector_search 查重，再结合情绪数据判断，
 最后输出 JSON。

@@ -32,6 +32,9 @@ class AgentState(TypedDict, total=False):
     # === 检索结果（main_dialogue 内部, 不必入 state） ===
     # retrieved_memories / permanent_memories 由 main_dialogue 节点内部处理
 
+    # === 情绪分析（main_dialogue 计算, 供 memory_analysis + relationship_analysis 共享） ===
+    emotion_analysis: dict[str, Any]           # 预计算的情绪分析结果, 含 emotion/intensity/category/keywords/summary
+
     # === 主对话输出（main_dialogue 写入） ===
     response: str                           # 生成的回复
     response_chunks: list[bytes]            # 流式响应收集的 chunks（供异步存储）

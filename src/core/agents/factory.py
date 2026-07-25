@@ -164,10 +164,12 @@ async def run_memory_analysis(
     persona_addressing: str,
     user_addressing: str,
     relation_context: str,
+    emotion_analysis: str = "",
 ) -> MemoryAnalysisOutput:
     """记忆分析 Agent: ReAct 循环, 提取候选记忆.
 
     衰减评估已从此 Agent 移除 —— 由 MemoryLifecycle.run_deterministic_decay() 用确定性公式处理。
+    emotion_analysis 由 graph 层预计算, 供 Agent 直接使用。
 
     persona_name / persona_addressing / user_addressing / relation_context: v0.2.9 起
     透传给 prompt, 让 Agent 用 "哥哥 X" 而不是 "用户 X" 提取记忆.
@@ -178,6 +180,7 @@ async def run_memory_analysis(
         persona_addressing=persona_addressing,
         user_addressing=user_addressing,
         relation_context=relation_context,
+        emotion_analysis=emotion_analysis,
     )
     with use_agent("memory_analysis"):
         result = await run_react_loop(
@@ -214,12 +217,13 @@ async def run_relationship_analysis(
     current_relationship: str,
     conversation: str,
     tools: list,
-    max_iterations: int = 3,
+    max_iterations: int = 2,
     *,
     persona_name: str,
     persona_addressing: str,
     user_addressing: str,
     relation_context: str,
+    emotion_analysis: str = "",
 ) -> RelationshipAnalysisOutput:
     """关系分析 Agent: CoT, 调用 emotion_analyzer 后输出亲密度增量.
 
@@ -232,12 +236,13 @@ async def run_relationship_analysis(
         persona_addressing=persona_addressing,
         user_addressing=user_addressing,
         relation_context=relation_context,
+        emotion_analysis=emotion_analysis,
     )
     try:
         with use_agent("relationship_analysis"):
             result = await run_react_loop(
                 forwarder=forwarder, role=ModelType.ASSIST,
-                system_prompt="你是关系分析 Agent。调用 emotion_analyzer 后输出 JSON。",
+                system_prompt="你是关系分析 Agent。读取情绪数据后分析关系信号并输出 JSON。",
                 user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
                 temperature=0.2,
             )

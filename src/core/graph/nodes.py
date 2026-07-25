@@ -30,10 +30,10 @@ from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 from src.tools import (
     MemoryRetriever,
-    make_emotion_analyzer_tool,
     make_update_addressing_tool,
     make_vector_search_tool,
 )
+from src.tools.emotion_analyzer import analyze_emotion
 
 from .state import AgentState
 
@@ -76,6 +76,27 @@ def _make_multi_forwarder() -> MultiForwarder:
     """
     fwd, _ = _make_multi_forwarder_with_resolver()
     return fwd
+
+
+async def _compute_emotion(
+    forwarder: MultiForwarder,
+    extracted: list[dict],
+) -> dict:
+    """预计算情绪分析，供多个 Agent 共享."""
+    text = ""
+    for m in reversed(extracted):
+        if m.get("role") == "user":
+            text = m.get("content", "")
+            break
+    if not text:
+        return {"emotion": "neutral", "intensity": 0.0, "category": "other", "keywords": [], "summary": ""}
+    try:
+        from src.tools.emotion_analyzer import analyze_emotion
+        result = await analyze_emotion(forwarder, text)
+        return result.to_dict()
+    except Exception as e:
+        logger.warning("情绪分析失败: %s", e)
+        return {"emotion": "neutral", "intensity": 0.0, "category": "other", "keywords": [], "summary": ""}
 
 
 async def parse_request_node(state: AgentState) -> dict[str, Any]:
@@ -192,6 +213,10 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
         rel = await memory_store.get_relationship("default", source_user)
         logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
 
+        # 情绪分析: 预计算一次, 供 memory_analysis + relationship_analysis 共享
+        emotion_analysis = await _compute_emotion(forwarder, extracted)
+        logger.debug("  💭 情绪分析: %s (强度=%.2f)", emotion_analysis.get("emotion", "?"), emotion_analysis.get("intensity", 0))
+
         conversation_history = state.get("messages", [])
         conversation_history = [m for m in conversation_history if m.get("role") != "system"]
 
@@ -210,7 +235,7 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
         logger.debug("  🚀 调用 LLM 生成回复...")
         response, usage = await run_main_dialogue(forwarder, messages)
         logger.debug("  ✅ 生成完成, 长度: %d", len(response) if response else 0)
-        result: dict[str, Any] = {"response": response}
+        result: dict[str, Any] = {"response": response, "emotion_analysis": emotion_analysis}
         if usage:
             result["upstream_usage"] = usage
         return result
@@ -234,7 +259,6 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         retriever = MemoryRetriever(forwarder, vector_store, memory_store)
         tools = [
             make_vector_search_tool(retriever),
-            make_emotion_analyzer_tool(forwarder),
         ]
 
         extracted = state.get("extracted_new", [])
@@ -248,6 +272,14 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         rel_for_addressing = await memory_store.get_relationship("default", source_user)
         persona_addr, user_addr, rel_ctx = _resolve_addressing(rel_for_addressing, settings)
 
+        # 从 state 获取预计算的情绪分析
+        emotion_analysis = state.get("emotion_analysis", {})
+        emotion_text = (
+            f"情绪: {emotion_analysis.get('emotion', 'neutral')}, "
+            f"强度: {emotion_analysis.get('intensity', 0.0):.2f}, "
+            f"类别: {emotion_analysis.get('category', 'other')}"
+        )
+
         logger.debug("  🚀 调用记忆分析 Agent...")
         out = await run_memory_analysis(
             forwarder=forwarder,
@@ -259,6 +291,8 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             persona_addressing=persona_addr,
             user_addressing=user_addr,
             relation_context=rel_ctx,
+            emotion_analysis=emotion_text,
+        )
         )
 
         logger.debug("  ✅ 记忆分析完成: 新记忆 %d 条", len(out.new_memories))
@@ -316,13 +350,20 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
 
         persona_addr, user_addr, rel_ctx = _resolve_addressing(rel, settings)
 
+        # 从 state 获取预计算的情绪分析
+        emotion_analysis = state.get("emotion_analysis", {})
+        emotion_text = (
+            f"情绪: {emotion_analysis.get('emotion', 'neutral')}, "
+            f"强度: {emotion_analysis.get('intensity', 0.0):.2f}, "
+            f"类别: {emotion_analysis.get('category', 'other')}"
+        )
+
         logger.debug("  🚀 调用关系分析 Agent...")
         out = await run_relationship_analysis(
             forwarder=forwarder,
             current_relationship=current_rel_str,
             conversation=conversation,
             tools=[
-                make_emotion_analyzer_tool(forwarder),
                 make_update_addressing_tool(memory_store, "default", source_user),
             ],
             max_iterations=2,
@@ -330,6 +371,7 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
             persona_addressing=persona_addr,
             user_addressing=user_addr,
             relation_context=rel_ctx,
+            emotion_analysis=emotion_text,
         )
 
         logger.debug("  ✅ 关系分析完成: 亲密 %+.2f, 信任 %+.2f",
