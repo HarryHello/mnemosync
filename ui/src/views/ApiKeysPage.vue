@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listApiKeys, createApiKey, deleteApiKey } from '@/api/client'
-import type { ApiKeyCreateResponse, ApiKeyInfo } from '@/types/api'
+import { listApiKeys, createApiKey, deleteApiKey, listIdentityStrategies } from '@/api/client'
+import type { ApiKeyCreateResponse, ApiKeyInfo, IdentityStrategy } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
 import ApiKeyTable from '@/components/api-keys/ApiKeyTable.vue'
 import ApiKeyCreateDialog from '@/components/api-keys/ApiKeyCreateDialog.vue'
@@ -14,12 +14,21 @@ const createDialog = ref(false)
 const createSubmitting = ref(false)
 const secretDialog = ref(false)
 const newKey = ref<ApiKeyCreateResponse | null>(null)
+const strategies = ref<IdentityStrategy[]>([])
+
+const strategyNames = computed(() =>
+  Object.fromEntries(strategies.value.map((s) => [s.id, s.name])),
+)
 
 async function refresh() {
   loading.value = true
   try {
-    const res = await listApiKeys()
+    const [res, stratRes] = await Promise.all([
+      listApiKeys(),
+      listIdentityStrategies().catch(() => ({ items: [], total: 0 })),
+    ])
     keys.value = res.items
+    strategies.value = stratRes.items
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   } finally {
@@ -27,10 +36,10 @@ async function refresh() {
   }
 }
 
-async function onCreate(note: string) {
+async function onCreate(note: string, strategyId: string | null) {
   createSubmitting.value = true
   try {
-    const created = await createApiKey({ note })
+    const created = await createApiKey({ note, strategy_id: strategyId })
     createDialog.value = false
     newKey.value = created
     secretDialog.value = true
@@ -107,6 +116,7 @@ onMounted(refresh)
     <ApiKeyTable
       :items="keys"
       :loading="loading"
+      :strategy-names="strategyNames"
       @copy="onCopyRow"
       @revoke="onRevoke"
     />
@@ -114,6 +124,7 @@ onMounted(refresh)
     <ApiKeyCreateDialog
       v-model="createDialog"
       :submitting="createSubmitting"
+      :strategies="strategies"
       @submit="onCreate"
     />
 

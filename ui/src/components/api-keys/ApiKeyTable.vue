@@ -5,6 +5,8 @@ import type { ApiKeyInfo } from '@/types/api'
 const props = defineProps<{
   items: ApiKeyInfo[]
   loading: boolean
+  /** strategy_id → 策略名 (身份管理页数据, 展示用) */
+  strategyNames?: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -13,6 +15,12 @@ const emit = defineEmits<{
 }>()
 
 const total = computed(() => props.items.length)
+
+function strategyLabel(item: ApiKeyInfo): string {
+  if (!item.strategy_id) return '不归属'
+  const names = props.strategyNames ?? {}
+  return names[item.strategy_id] ?? `${item.strategy_id.slice(0, 12)}…`
+}
 
 function maskKey(item: ApiKeyInfo): string {
   if (item.key && item.key.length >= 10) {
@@ -62,6 +70,18 @@ function formatDate(value: string | null): string {
         </template>
       </el-table-column>
       <el-table-column prop="note" label="备注" min-width="220" show-overflow-tooltip />
+      <el-table-column label="身份策略" width="150">
+        <template #default="{ row }">
+          <el-tooltip
+            v-if="row.strategy_id"
+            :content="row.strategy_id"
+            placement="top"
+          >
+            <el-tag size="small">{{ strategyLabel(row) }}</el-tag>
+          </el-tooltip>
+          <el-tag v-else size="small" type="info">{{ strategyLabel(row) }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="100" align="center">
         <template #default="{ row }">
           <el-tag v-if="row.is_active" type="success" size="small">启用</el-tag>
