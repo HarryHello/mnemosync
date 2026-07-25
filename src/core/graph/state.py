@@ -17,11 +17,15 @@ class AgentState(TypedDict, total=False):
     # === 请求上下文（parse_request 写入） ===
     messages: list[dict[str, Any]]          # 原始 messages（OpenAI 格式）
     extracted_new: list[dict[str, Any]]     # 提取出的新内容
-    source_user: str                        # 来源用户标识
+    source_user: str                        # 有效用户 ID (effective_user_id)
+    actor_id: str | None                    # 当前 Actor ID (v0.3.0)
     persona: str                            # 人格 system prompt
     persona_name: str                       # 人格名称
+    persona_id: str                         # 人格标识 (v0.3.0 仍为 "default", 不再硬编码)
     thread_id: str                          # 会话 ID（checkpoint 用）
     proxy_thinking_enabled: bool            # 是否启用代理思考
+    space_id: str | None                    # 会话空间 ID (v0.3.0)
+    channel_type: str | None                # "direct" | "group" | None
 
     # === 代理推理 (proxy_thinking 写入) ===
     proxy_thinking_result: str | None

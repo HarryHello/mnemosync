@@ -102,7 +102,7 @@ async def _compute_emotion(
 async def parse_request_node(state: AgentState) -> dict[str, Any]:
     """消息提取 + 用户标识解析."""
     messages = state.get("messages", [])
-    source_user = state.get("source_user", "default")
+    source_user = state.get("source_user") or ""
 
     extracted = state.get("extracted_new")
     if extracted is None:
@@ -124,7 +124,14 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
     try:
         memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
         await memory_store.init_db()
-        perms = await memory_store.list_permanent(state["source_user"], limit=5)
+
+        source_user = state["source_user"]
+        if source_user:
+            perms = await memory_store.list_permanent(source_user, limit=5)
+            rel = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
+        else:
+            perms = []
+            rel = None
         memories_text = "\n".join(f"- {e.content}" for e in perms) or "（无）"
         logger.debug("  📚 参考记忆: %d 条", len(perms))
 
@@ -137,7 +144,7 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
 
         logger.debug("  💬 用户消息: %s", user_msg[:100] if user_msg else "(空)")
 
-        rel = await memory_store.get_relationship("default", state["source_user"])
+        rel = await memory_store.get_relationship(state.get("persona_id", "default"), state["source_user"])
         logger.debug("  🚀 调用代理思考 Agent...")
         result = await run_proxy_thinking(
             forwarder=forwarder,
@@ -210,7 +217,7 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
                 if entry:
                     retrieved_entries.append(entry)
 
-        rel = await memory_store.get_relationship("default", source_user)
+        rel = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
         logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
 
         # 情绪分析: 预计算一次, 供 memory_analysis + relationship_analysis 共享
@@ -247,6 +254,11 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
     """记忆分析 Agent: ReAct, 提取候选记忆. 衰减由确定性公式处理."""
     settings = get_settings()
     source_user = state["source_user"]
+    # 非归属模式: 无有效用户, 不写入任何私有记忆
+    if not source_user:
+        logger.debug("🧠 [memory_analysis] 非归属模式, 跳过")
+        return {"new_memories": [], "decay_evaluations": []}
+
     forwarder, resolver = _make_multi_forwarder_with_resolver()
     memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
     await memory_store.init_db()
@@ -269,7 +281,7 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             logger.debug("  ⚠️ 无对话内容, 跳过")
             return {"new_memories": [], "decay_evaluations": []}
 
-        rel_for_addressing = await memory_store.get_relationship("default", source_user)
+        rel_for_addressing = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
         persona_addr, user_addr, rel_ctx = _resolve_addressing(rel_for_addressing, settings)
 
         # 从 state 获取预计算的情绪分析
@@ -326,6 +338,12 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
 async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
     """关系分析 Agent: CoT, 计算亲密度增量."""
     settings = get_settings()
+    source_user = state["source_user"]
+    # 非归属模式: 无有效用户, 不更新关系
+    if not source_user:
+        logger.debug("💝 [relationship_analysis] 非归属模式, 跳过")
+        return {"relationship_delta": {}}
+
     forwarder = _make_multi_forwarder()
     memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
     await memory_store.init_db()
@@ -334,8 +352,7 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
     logger.debug("💝 [relationship_analysis] 开始处理")
 
     try:
-        source_user = state["source_user"]
-        rel = await memory_store.get_relationship("default", source_user)
+        rel = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
         current_rel_str = format_relationship(rel)
         logger.debug("  当前关系: %s", current_rel_str if current_rel_str else "(无)")
 
@@ -363,7 +380,7 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
             current_relationship=current_rel_str,
             conversation=conversation,
             tools=[
-                make_update_addressing_tool(memory_store, "default", source_user),
+                make_update_addressing_tool(memory_store, state.get("persona_id", "default"), source_user),
             ],
             max_iterations=2,
             persona_name=settings.persona.name,
@@ -378,7 +395,7 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
 
         lifecycle = MemoryLifecycle(memory_store, None, forwarder)  # type: ignore[arg-type]
         await lifecycle.apply_relationship_update(
-            persona_id="default",
+            persona_id=state.get("persona_id", "default"),
             user_id=source_user,
             intimacy_delta=out.intimacy_delta,
             trust_delta=out.trust_delta,
