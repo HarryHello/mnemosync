@@ -28,6 +28,11 @@ const MainRoutes: RouteRecordRaw = {
       component: () => import('@/views/ApiKeysPage.vue'),
     },
     {
+      path: 'identity',
+      name: 'identity',
+      component: () => import('@/views/IdentityPage.vue'),
+    },
+    {
       path: 'logs',
       name: 'logs',
       component: () => import('@/views/LogsPage.vue'),

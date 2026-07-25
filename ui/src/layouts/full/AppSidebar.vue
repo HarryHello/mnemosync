@@ -44,6 +44,7 @@ const items: MenuItem[] = [
   { path: '/upstream', title: '上游 API', icon: 'Link' },
   { path: '/models', title: '模型管理', icon: 'Rank' },
   { path: '/api-keys', title: 'API Key', icon: 'Key' },
+  { path: '/identity', title: '身份管理', icon: 'UserFilled' },
   { path: '/logs', title: '请求日志', icon: 'Document' },
   { path: '/memories', title: '记忆管理', icon: 'Cpu' },
   { path: '/relationships', title: '关系状态', icon: 'Connection' },
