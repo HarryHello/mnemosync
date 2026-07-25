@@ -1,5 +1,9 @@
 """记忆领域核心数据模型."""
 
+from .audience import (
+    AudienceFilter,
+    RetrievalContext,
+)
 from .context import (
     build_main_dialogue_messages,
     format_permanent_memories,
@@ -33,6 +37,8 @@ from .models import (
 )
 
 __all__ = [
+    "AudienceFilter",
+    "RetrievalContext",
     "MemoryType",
     "Visibility",
     "DecayState",

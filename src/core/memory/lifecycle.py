@@ -71,11 +71,15 @@ class MemoryLifecycle:
         self,
         candidate: CandidateMemory,
         source_user: str,
+        space_id: str | None = None,
     ) -> MemoryEntry | None:
         """将一条候选记忆转为 MemoryEntry 并入库.
 
         处理永久记忆限额: 若超出, 尝试覆盖 candidate.overrides 指定的记忆.
         若无 overrides 且超限, 降级为普通记忆.
+
+        space_id (v0.3.0): 群聊中诞生的记忆标记诞生空间, 受众过滤据此把
+        非 SOURCE_RESTRICTED 的空间记忆对本空间成员可见。
 
         Returns:
             入库的 MemoryEntry, 若失败返回 None
@@ -113,6 +117,7 @@ class MemoryLifecycle:
         entry.emotional_tags = candidate.emotional_tags
         entry.expires_at = candidate.expires_at
         entry.related_memories = candidate.related_to
+        entry.space_id = space_id
 
         # 生成 embedding 并入库
         try:

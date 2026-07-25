@@ -147,6 +147,7 @@ class MemoryEntry:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_accessed: datetime | None = None
     expires_at: datetime | None = None
+    space_id: str | None = None  # v0.3.0: 诞生空间 (非空 = 空间共享记忆, 受众过滤用)
 
     @staticmethod
     def create(
