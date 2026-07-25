@@ -115,6 +115,41 @@ async def test_build_short_term_history_time_and_model_windows(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_build_short_term_history_space_isolation(tmp_path: Path) -> None:
+    """v0.3.0: space_id 非空时只装填本空间流水, 不泄入其他空间对话."""
+    store = SqliteConversationStore(str(tmp_path / "c3.db"))
+    await store.connect()
+    try:
+        now = datetime.now(timezone.utc)
+        await store.append("user", "群A的话", token_count=10, space_id="group-a",
+                           ts=now - timedelta(hours=2))
+        await store.append("assistant", "群A回复", token_count=10, space_id="group-a",
+                           ts=now - timedelta(hours=1))
+        await store.append("user", "群B的话", token_count=10, space_id="group-b",
+                           ts=now - timedelta(minutes=30))
+        await store.append("user", "私聊的话", token_count=10, ts=now - timedelta(minutes=10))
+
+        # 指定 group-a: 只看到群A的两条
+        built = await build_short_term_history(
+            store=store, now=now, window_days=7,
+            context_length=32_000, system_text="sys", new_user_text="q",
+            max_tokens_hint=1024,
+            space_id="group-a",
+        )
+        assert [m["content"] for m in built.conversation_history] == ["群A的话", "群A回复"]
+
+        # 不指定 space: 退化为全局流水 (单用户私聊场景, 四条全见)
+        built_all = await build_short_term_history(
+            store=store, now=now, window_days=7,
+            context_length=32_000, system_text="sys", new_user_text="q",
+            max_tokens_hint=1024,
+        )
+        assert built_all.total_candidates == 4
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_build_short_term_history_context_length_fallback(tmp_path: Path) -> None:
     """context_length=None 时走兜底 (8192), 不该崩."""
     store = SqliteConversationStore(str(tmp_path / "c2.db"))
