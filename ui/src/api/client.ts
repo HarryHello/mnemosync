@@ -51,6 +51,15 @@ import type {
   NotificationListResponse,
   UnreadCountResponse,
   MarkReadResponse,
+  Actor,
+  ActorListResponse,
+  UserGroup,
+  UserGroupListResponse,
+  UserGroupCreateBody,
+  IdentityStrategy,
+  IdentityStrategyListResponse,
+  IdentityStrategyCreateBody,
+  IdentityStrategyUpdateBody,
 } from '@/types/api'
 
 // ============================================================================
@@ -647,6 +656,105 @@ export async function deleteReadNotifications(): Promise<{ deleted: number }> {
 }
 
 export type { Notification }
+
+// ============================================================================
+// Admin API - Identity (v0.3.0 多用户身份)
+// ============================================================================
+
+// ── 身份识别策略 ──
+
+export async function listIdentityStrategies(): Promise<IdentityStrategyListResponse> {
+  return request<IdentityStrategyListResponse>(`${API_BASE}/admin/identity/strategies`)
+}
+
+export async function createIdentityStrategy(
+  body: IdentityStrategyCreateBody,
+): Promise<IdentityStrategy> {
+  return request<IdentityStrategy>(`${API_BASE}/admin/identity/strategies`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getIdentityStrategy(strategyId: string): Promise<IdentityStrategy> {
+  return request<IdentityStrategy>(
+    `${API_BASE}/admin/identity/strategies/${encodeURIComponent(strategyId)}`,
+  )
+}
+
+export async function updateIdentityStrategy(
+  strategyId: string,
+  body: IdentityStrategyUpdateBody,
+): Promise<IdentityStrategy> {
+  return request<IdentityStrategy>(
+    `${API_BASE}/admin/identity/strategies/${encodeURIComponent(strategyId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+export async function deleteIdentityStrategy(strategyId: string): Promise<void> {
+  await request(`${API_BASE}/admin/identity/strategies/${encodeURIComponent(strategyId)}`, {
+    method: 'DELETE',
+  })
+}
+
+// ── 参与者 (Actor) ──
+
+export async function listActors(): Promise<ActorListResponse> {
+  return request<ActorListResponse>(`${API_BASE}/admin/identity/actors`)
+}
+
+export async function getActor(actorId: string): Promise<Actor> {
+  return request<Actor>(`${API_BASE}/admin/identity/actors/${encodeURIComponent(actorId)}`)
+}
+
+export async function listActorGroups(actorId: string): Promise<UserGroupListResponse> {
+  return request<UserGroupListResponse>(
+    `${API_BASE}/admin/identity/actors/${encodeURIComponent(actorId)}/groups`,
+  )
+}
+
+// ── 用户组 (UserGroup, 一个真实人) ──
+
+export async function listUserGroups(): Promise<UserGroupListResponse> {
+  return request<UserGroupListResponse>(`${API_BASE}/admin/identity/groups`)
+}
+
+export async function createUserGroup(body: UserGroupCreateBody = {}): Promise<UserGroup> {
+  return request<UserGroup>(`${API_BASE}/admin/identity/groups`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getUserGroup(groupId: string): Promise<UserGroup> {
+  return request<UserGroup>(`${API_BASE}/admin/identity/groups/${encodeURIComponent(groupId)}`)
+}
+
+export async function listGroupMembers(groupId: string): Promise<ActorListResponse> {
+  return request<ActorListResponse>(
+    `${API_BASE}/admin/identity/groups/${encodeURIComponent(groupId)}/members`,
+  )
+}
+
+// ── 绑定 / 解绑 ──
+
+export async function bindActorToGroup(actorId: string, groupId: string): Promise<void> {
+  await request(
+    `${API_BASE}/admin/identity/actors/${encodeURIComponent(actorId)}/groups/${encodeURIComponent(groupId)}`,
+    { method: 'POST', body: JSON.stringify({ actor_id: actorId, group_id: groupId }) },
+  )
+}
+
+export async function unbindActorFromGroup(actorId: string, groupId: string): Promise<void> {
+  await request(
+    `${API_BASE}/admin/identity/actors/${encodeURIComponent(actorId)}/groups/${encodeURIComponent(groupId)}`,
+    { method: 'DELETE' },
+  )
+}
 
 // ============================================================================
 // Models (OpenAI Compatible)

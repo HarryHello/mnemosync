@@ -51,6 +51,7 @@ export interface SetupCredentialsResponse {
 
 export interface ApiKeyCreateRequest {
   note: string
+  strategy_id?: string | null
 }
 
 export interface ApiKeyCreateResponse {
@@ -69,6 +70,7 @@ export interface ApiKeyInfo {
   created_at: string
   last_used_at: string | null
   is_active: boolean
+  strategy_id: string | null
 }
 
 export interface ApiKeyListResponse {
@@ -511,4 +513,72 @@ export interface ChatCompletionResponse {
     completion_tokens: number
     total_tokens: number
   }
+}
+
+// ============================================================================
+// Identity (v0.3.0 多用户身份)
+// ============================================================================
+
+/** 前台应用上的一个可识别账号, 由 (frontend, external_key) 唯一确定. */
+export interface Actor {
+  id: string
+  external_key: string
+  frontend: string
+  display_name: string | null
+  metadata: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ActorListResponse {
+  items: Actor[]
+  total: number
+}
+
+/** 一个真实人; 多个 Actor 绑定到同一 UserGroup = 跨平台身份. */
+export interface UserGroup {
+  id: string
+  name: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface UserGroupListResponse {
+  items: UserGroup[]
+  total: number
+}
+
+export interface UserGroupCreateBody {
+  name?: string | null
+}
+
+export type IdentityStrategyType = 'direct' | 'api_key_bound' | 'regex' | 'llm'
+
+/** 身份识别策略, 绑定到 API Key, 定义如何从请求中提取身份. */
+export interface IdentityStrategy {
+  id: string
+  name: string
+  strategy_type: IdentityStrategyType
+  /** JSON 配置字符串 (各策略类型的字段见后端文档). */
+  config: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface IdentityStrategyListResponse {
+  items: IdentityStrategy[]
+  total: number
+}
+
+export interface IdentityStrategyCreateBody {
+  name: string
+  strategy_type: IdentityStrategyType
+  config?: string
+}
+
+export interface IdentityStrategyUpdateBody {
+  name?: string
+  config?: string
+  is_active?: boolean
 }
