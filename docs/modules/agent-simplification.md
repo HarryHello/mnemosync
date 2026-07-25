@@ -1,6 +1,6 @@
 # Agent 简化与优化设计 | Agent Simplification & Optimization Design
 
-> **文档版本**: v0.4.0-draft
+> **文档版本**: v0.2-draft
 > **创建时间**: 2026-07-25
 > **最后更新**: 2026-07-25
 > **状态**: 设计预留 · 未进入开发 (Design Reservation · No Implementation)
@@ -17,13 +17,13 @@
 
 ## 2. 当前 Agent 全景
 
-| # | Agent | 推理方法 | 使用模型 | 触发时机 | 输出 |
-|---|-------|---------|---------|---------|------|
-| 1 | 主对话 | 直接推理 | 主模型 | 每次请求必跑 | 回复文本 |
-| 2 | 代理思考 | CoT (无工具) | 辅助模型 | 主模型无原生推理 & 启用 | reasoning_content |
-| 3 | 记忆分析 | ReAct | 辅助模型 | 主对话后，与关系分析并行 | new_memories + decay_evaluations |
-| 4 | 关系分析 | ReAct | 辅助模型 | 主对话后，与记忆分析并行 | 关系更新建议 |
-| 5 | 提示词清洗 | ReAct | 辅助模型 | 客户端 system 非空 | retained + discarded |
+| #   | Agent      | 推理方法     | 使用模型 | 触发时机                 | 输出                             |
+| --- | ---------- | ------------ | -------- | ------------------------ | -------------------------------- |
+| 1   | 主对话     | 直接推理     | 主模型   | 每次请求必跑             | 回复文本                         |
+| 2   | 代理思考   | CoT (无工具) | 辅助模型 | 主模型无原生推理 & 启用  | reasoning_content                |
+| 3   | 记忆分析   | ReAct        | 辅助模型 | 主对话后，与关系分析并行 | new_memories + decay_evaluations |
+| 4   | 关系分析   | ReAct        | 辅助模型 | 主对话后，与记忆分析并行 | 关系更新建议                     |
+| 5   | 提示词清洗 | ReAct        | 辅助模型 | 客户端 system 非空       | retained + discarded             |
 
 ---
 
@@ -59,7 +59,48 @@ LLM 在衰减评估中的边际价值很小——调整衰减速度的判断，�
 
 **结论**：提示词清洗不需要逐句 ReAct。单次 LLM 调用，直接重写。
 
-### 3.3 Agent 缺乏统一运行契约
+### 3.3 关系分析 Agent：ReAct 过度
+
+当前关系分析 Agent 使用 ReAct 循环，但实际工作流是：
+
+```text
+调用 emotion_analyzer → 分析信号 → 可能调用 update_addressing → 输出 JSON
+```
+
+最多 2-3 次迭代，且是一条直线（先调工具，再输出），不需要 ReAct 的"思考-行动-观察"迭代灵活性。当前 `max_iterations=3` 偏大。
+
+**结论**：保持 ReAct（因为确实需要工具调用），但 `max_iterations` 可以从 3 降到 2。
+
+### 3.4 emotion_analyzer 重复调用
+
+记忆分析 Agent 和关系分析 Agent 各自独立调用 `emotion_analyzer`，对同一段对话做两次情绪分析。两次调用输入相同，结果相同。
+
+```text
+memory_analysis:    调 emotion_analyzer → 情绪标签
+relationship_analysis: 调 emotion_analyzer → 同一段对话的情绪标签
+```
+
+**结论**：冗余。情绪分析结果可以在 graph 层预先计算一次，同时注入两个 Agent 的输入。
+
+### 3.5 代理思考 Agent：语言不一致
+
+Prompt 是英文，其他所有 Agent 的 Prompt 是中文。模型在英文 Prompt 和中文对话之间切换，可能影响推理质量。
+
+**结论**：改为中文，与项目风格一致。
+
+### 3.6 主对话 Agent：记忆使用指引模糊
+
+当前 Prompt：
+
+```text
+自然地将对用户的了解融入对话，不要生硬地背诵记忆
+```
+
+正确但太模糊。模型可能不知道"自然融入"具体长什么样。
+
+**结论**：增加具体示例，区分永久记忆和检索记忆的使用方式。
+
+### 3.7 Agent 缺乏统一运行契约
 
 当前 5 个 Agent 各自独立实现，没有统一的超时、取消、Trace、版本化机制。如果 Memory Analysis 超时，没有标准化的失败记录；如果主对话已完成，后台 Agent 无法被取消。
 
@@ -151,7 +192,59 @@ last_accessed = now
 "请用 JSON 格式回复。不要使用表情符号。"
 ```
 
-### 4.5 辅助 Agent 统一运行契约
+### 4.5 关系分析 Agent：缩减迭代
+
+**当前**：ReAct 循环，`max_iterations=3`
+
+**改为**：`max_iterations: 3 → 2`
+
+当前工作流不会超过 2 轮工具调用（`emotion_analyzer` + 可选的 `update_addressing`），不需要 3 轮迭代。ReAct 模式本身保持，因为确实需要工具调用。
+
+### 4.6 emotion_analyzer：提至 graph 层共享
+
+**当前**：记忆分析 Agent 和关系分析 Agent 各自独立调用 `emotion_analyzer`
+
+**改为**：在 graph 节点中预先计算一次情绪分析，结果同时注入两个 Agent 的输入
+
+```text
+当前:
+  memory_analysis:     调 emotion_analyzer → 情绪标签
+  relationship_analysis: 调 emotion_analyzer → 同一段对话的情绪标签
+
+优化后:
+  graph 层: 调 emotion_analyzer → 情绪标签
+  ├── 注入 memory_analysis 输入
+  └── 注入 relationship_analysis 输入
+```
+
+减少一次辅助模型调用。两个 Agent 的 Prompt 中移除 `emotion_analyzer` 工具调用指令，改为从输入中读取情绪分析结果。
+
+### 4.7 代理思考 Agent：中文化
+
+**当前**：Prompt 为英文，与其他 Agent 不一致
+
+**改为**：改写为中文 Prompt，保持输出结构不变（Intent / Background / Emotion / Strategy）
+
+### 4.8 主对话 Agent：细化记忆使用指引
+
+**当前**：
+
+```text
+自然地将对用户的了解融入对话，不要生硬地背诵记忆
+```
+
+**改为**：增加具体示例：
+
+```text
+关于记忆的使用：
+- 永久记忆是你"本来就知道"的事——直接表达，不要提"我记得"
+  ❌ "我记得你喜欢Rust"
+  ✅ "你上次不是说Rust的编译速度还可以嘛"
+- 检索到的记忆是你"刚想起来"的事——谨慎使用，不确定时宁可不用
+- 如果某条记忆可能与当前对话无关，不要强行关联
+```
+
+### 4.9 辅助 Agent 统一运行契约
 
 所有辅助 Agent（记忆分析、关系分析、代理思考、提示词清洗）共享统一的 Spec 和 Run Record。
 
@@ -211,15 +304,15 @@ MemoryAnalysisResult
 
 ## 5. 优化后的 Agent 全景
 
-| # | Agent | 推理方法 | 使用模型 | 触发时机 | 输出 | 变化 |
-|---|-------|---------|---------|---------|------|------|
-| 1 | 主对话 | 直接推理 | 主模型 | 每次请求必跑 | 回复文本 | 不变 |
-| 2 | 代理思考 | CoT (无工具) | 辅助模型 | 主模型无原生推理 & 启用 | reasoning_content | 不变 |
-| 3 | 记忆分析 | ReAct | 辅助模型 | 主对话后，与关系分析并行 | new_memories + conflicts + importance_updates | 移除衰减评估，新增冲突和重要性更新 |
-| 4 | 关系分析 | ReAct | 辅助模型 | 主对话后，与记忆分析并行 | 关系更新建议 | 不变 |
-| 5 | 提示词清洗 | 单次调用 | 辅助模型 | 客户端 system 非空 | 重写后的 clean prompt | 从 ReAct 改为单次调用 |
-| — | 衰减任务 | 确定性公式 | 无 | 每次请求后 | 更新 priority，标记 forgotten | 新增，非 Agent |
-| — | 检索强化 | 确定性更新 | 无 | 检索命中时 | access_count, last_accessed | 新增，非 Agent |
+| #   | Agent      | 推理方法     | 使用模型 | 触发时机                 | 输出                                          | 变化                                                         |
+| --- | ---------- | ------------ | -------- | ------------------------ | --------------------------------------------- | ------------------------------------------------------------ |
+| 1   | 主对话     | 直接推理     | 主模型   | 每次请求必跑             | 回复文本                                      | 细化记忆使用指引                                             |
+| 2   | 代理思考   | CoT (无工具) | 辅助模型 | 主模型无原生推理 & 启用  | reasoning_content                             | Prompt 中文化                                                |
+| 3   | 记忆分析   | ReAct        | 辅助模型 | 主对话后，与关系分析并行 | new_memories + conflicts + importance_updates | 移除衰减评估，新增冲突和重要性更新，emotion 从 graph 层注入  |
+| 4   | 关系分析   | ReAct        | 辅助模型 | 主对话后，与记忆分析并行 | 关系更新建议                                  | max_iterations 3→2，emotion 从 graph 层注入                  |
+| 5   | 提示词清洗 | 单次调用     | 辅助模型 | 客户端 system 非空       | 重写后的 clean prompt                         | 从 ReAct 改为单次调用                                        |
+| —   | 衰减任务   | 确定性公式   | 无       | 每次请求后               | 更新 priority，标记 forgotten                 | 新增，非 Agent                                               |
+| —   | 检索强化   | 确定性更新   | 无       | 检索命中时               | access_count, last_accessed                   | 新增，非 Agent                                               |
 
 ---
 
@@ -235,11 +328,11 @@ MemoryAnalysisResult
 
 ## 7. 与外部项目的参考关系
 
-| 参考 | 借鉴了什么 | 不借鉴什么 |
-|------|-----------|-----------|
+| 参考                   | 借鉴了什么                       | 不借鉴什么                        |
+| ---------------------- | -------------------------------- | --------------------------------- |
 | **ChatLuna Sub-Agent** | AgentRun 记录、超时/取消、版本化 | 动态 Agent 定义、权限系统、触发器 |
-| **Pi Agent** | 追加式事件、检查点版本化 | 会话树、分支 |
-| **Hermes Agent** | MemoryProvider 生命周期 | 多 Provider 动态注册 |
+| **Pi Agent**           | 追加式事件、检查点版本化         | 会话树、分支                      |
+| **Hermes Agent**       | MemoryProvider 生命周期          | 多 Provider 动态注册              |
 
 ---
 
