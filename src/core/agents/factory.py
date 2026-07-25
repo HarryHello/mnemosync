@@ -158,32 +158,22 @@ async def run_memory_analysis(
     source_user: str,
     conversation: str,
     tools: list,
-    decay_targets: list[dict] | None = None,
-    max_iterations: int = 6,
+    max_iterations: int = 4,
     *,
     persona_name: str,
     persona_addressing: str,
     user_addressing: str,
     relation_context: str,
 ) -> MemoryAnalysisOutput:
-    """记忆分析 Agent: ReAct 循环, 提取候选 + 衰减评估.
+    """记忆分析 Agent: ReAct 循环, 提取候选记忆.
+
+    衰减评估已从此 Agent 移除 —— 由 MemoryLifecycle.run_deterministic_decay() 用确定性公式处理。
 
     persona_name / persona_addressing / user_addressing / relation_context: v0.2.9 起
     透传给 prompt, 让 Agent 用 "哥哥 X" 而不是 "用户 X" 提取记忆.
     """
-    decay_section = ""
-    if decay_targets:
-        lines = []
-        for t in decay_targets:
-            lines.append(
-                f"- memory_id: {t['memory_id']}, content: {t['content']}, "
-                f"importance: {t.get('importance', 0.5)}, decay_rate: {t.get('decay_rate', 0.3)}, "
-                f"memory_type: {t.get('memory_type', 'normal')}"
-            )
-        decay_section = load_decay_targets_header() + "\n".join(lines) + "\n"
     user_prompt = build_memory_analysis_prompt(
         source_user=source_user, conversation=conversation,
-        decay_targets_section=decay_section,
         persona_name=persona_name,
         persona_addressing=persona_addressing,
         user_addressing=user_addressing,

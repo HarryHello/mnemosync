@@ -186,6 +186,55 @@ class MemoryLifecycle:
                 logger.error("应用衰减评估失败 mem=%s: %s", ev.memory_id, e)
         return count
 
+    async def run_deterministic_decay(
+        self,
+        *,
+        batch_limit: int = 100,
+    ) -> int:
+        """确定性公式批量衰减所有 NORMAL 记忆，不依赖 LLM.
+
+        对每条 NORMAL 记忆计算理论优先级，根据结果更新 priority 并标记遗忘。
+        遗忘的记忆从向量库移除，SQLite 保留可恢复。
+
+        Args:
+            batch_limit: 单次处理上限
+
+        Returns:
+            成功更新的条数
+        """
+        entries = await self.memory_store.list_for_decay(skip_hours=0, limit=batch_limit)
+        if not entries:
+            return 0
+
+        count = 0
+        forgotten_count = 0
+
+        for entry in entries:
+            try:
+                new_priority = entry.compute_theoretical_priority()
+                new_state = DecayState.from_priority(new_priority)
+                is_forgotten = new_state == DecayState.FORGOTTEN
+
+                if abs(new_priority - entry.priority) < 0.001 and entry.is_forgotten == is_forgotten:
+                    continue  # 无需更新
+
+                await self.memory_store.update_priority(
+                    entry.id, new_priority, is_forgotten
+                )
+                if is_forgotten:
+                    self.vector_store.delete(entry.id)
+                    forgotten_count += 1
+                count += 1
+            except Exception as e:
+                logger.error("确定性衰减失败 mem=%s: %s", entry.id, e)
+
+        if count > 0:
+            logger.info(
+                "确定性衰减完成: 更新 %d 条, 遗忘 %d 条",
+                count, forgotten_count,
+            )
+        return count
+
     async def apply_relationship_update(
         self,
         persona_id: str,

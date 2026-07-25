@@ -31,7 +31,6 @@ from src.persistence.notification_store import NotificationStore
 from src.tools import (
     MemoryRetriever,
     make_emotion_analyzer_tool,
-    make_time_decay_calculator_tool,
     make_update_addressing_tool,
     make_vector_search_tool,
 )
@@ -220,7 +219,7 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
 
 
 async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
-    """记忆分析 Agent: ReAct, 提取候选记忆 + 衰减评估."""
+    """记忆分析 Agent: ReAct, 提取候选记忆. 衰减由确定性公式处理."""
     settings = get_settings()
     source_user = state["source_user"]
     forwarder, resolver = _make_multi_forwarder_with_resolver()
@@ -236,7 +235,6 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         tools = [
             make_vector_search_tool(retriever),
             make_emotion_analyzer_tool(forwarder),
-            make_time_decay_calculator_tool(memory_store),
         ]
 
         extracted = state.get("extracted_new", [])
@@ -247,19 +245,6 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             logger.debug("  ⚠️ 无对话内容, 跳过")
             return {"new_memories": [], "decay_evaluations": []}
 
-        decay_targets_entries = await memory_store.list_for_decay(skip_hours=24, limit=10)
-        decay_targets = [
-            {
-                "memory_id": e.id,
-                "content": e.content,
-                "importance": e.importance,
-                "decay_rate": e.decay_rate,
-                "memory_type": e.memory_type.value,
-            }
-            for e in decay_targets_entries
-        ]
-        logger.debug("  📉 待衰减评估: %d 条", len(decay_targets))
-
         rel_for_addressing = await memory_store.get_relationship("default", source_user)
         persona_addr, user_addr, rel_ctx = _resolve_addressing(rel_for_addressing, settings)
 
@@ -269,16 +254,14 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             source_user=source_user,
             conversation=conversation,
             tools=tools,
-            decay_targets=decay_targets if decay_targets else None,
-            max_iterations=6,
+            max_iterations=4,
             persona_name=settings.persona.name,
             persona_addressing=persona_addr,
             user_addressing=user_addr,
             relation_context=rel_ctx,
         )
 
-        logger.debug("  ✅ 记忆分析完成: 新记忆 %d 条, 衰减评估 %d 条",
-                     len(out.new_memories), len(out.decay_evaluations))
+        logger.debug("  ✅ 记忆分析完成: 新记忆 %d 条", len(out.new_memories))
 
         lifecycle = MemoryLifecycle(memory_store, vector_store, forwarder, resolver=resolver)
         notification_store = NotificationStore(_NOTIFICATION_DB_PATH)
@@ -286,7 +269,9 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         lifecycle.notification_store = notification_store
         for cand in out.new_memories:
             await lifecycle.store_candidate(cand, source_user=source_user)
-        await lifecycle.apply_decay_evaluations(out.decay_evaluations)
+
+        # 确定性衰减：公式批量更新所有 NORMAL 记忆
+        await lifecycle.run_deterministic_decay()
 
         return {
             "new_memories": [
@@ -296,7 +281,7 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
                 }
                 for m in out.new_memories
             ],
-            "decay_evaluations": [e.__dict__ for e in out.decay_evaluations],
+            "decay_evaluations": [],
         }
     except Exception as e:
         logger.error("记忆分析失败: %s", e)
@@ -340,7 +325,7 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
                 make_emotion_analyzer_tool(forwarder),
                 make_update_addressing_tool(memory_store, "default", source_user),
             ],
-            max_iterations=3,
+            max_iterations=2,
             persona_name=settings.persona.name,
             persona_addressing=persona_addr,
             user_addressing=user_addr,
