@@ -262,8 +262,7 @@ async def run_relationship_analysis(
 class PromptCleaningOutput:
     """提示词清洗 Agent 的解析输出."""
 
-    retained: list[str]
-    discarded: list[str]
+    clean_prompt: str
     reasoning: str
     raw_output: str
     steps: list
@@ -272,19 +271,18 @@ class PromptCleaningOutput:
 async def run_prompt_cleaning(
     forwarder: MultiForwarder,
     system_message: str,
-    tools: list,
-    max_iterations: int = 3,
 ) -> PromptCleaningOutput:
-    """提示词清洗 Agent: ReAct 循环, 分离人格描述与功能性指令.
+    """提示词清洗 Agent: 单次调用, 重写系统消息.
+
+    从逐句 ReAct + classify_sentence_type 改为单次 LLM 调用 ——
+    直接重写整个 system 消息, 剥离人格描述, 保留功能性指令.
 
     Args:
         forwarder: 多候选转发器
         system_message: 客户端发来的 system 消息
-        tools: 工具列表 (应包含 classify_sentence_type)
-        max_iterations: ReAct 最大迭代轮数
 
     Returns:
-        PromptCleaningOutput: retained(保留的指令), discarded(丢弃的人格), reasoning, raw_output, steps
+        PromptCleaningOutput: clean_prompt(重写后的系统消息), reasoning, raw_output, steps
     """
     user_prompt = build_prompt_cleaning_user_prompt(system_message)
 
@@ -293,36 +291,26 @@ async def run_prompt_cleaning(
 
     try:
         with use_agent("prompt_cleaning"):
-            result = await run_react_loop(
+            content = await run_simple_completion(
                 forwarder=forwarder,
                 role=ModelType.ASSIST,
                 system_prompt=load_prompt_cleaning_system(),
                 user_prompt=user_prompt,
-                tools=tools,
-                max_iterations=max_iterations,
                 temperature=0.2,
             )
-        if not result.succeeded:
-            logger.warning("提示词清洗 ReAct 失败: %s, 降级为全部丢弃", result.error)
-            return PromptCleaningOutput(
-                retained=[], discarded=[system_message] if system_message else [],
-                reasoning=f"清洗失败: {result.error}", raw_output="", steps=result.steps,
-            )
-        parsed = _extract_json(result.output) or {}
-        retained = parsed.get("retained", []) or []
-        discarded = parsed.get("discarded", []) or []
+        parsed = _extract_json(content) or {}
+        clean_prompt = parsed.get("clean_prompt", "") or ""
         reasoning = parsed.get("reasoning", "")
 
-        logger.debug("  ✅ 清洗完成: 保留 %d 条指令, 丢弃 %d 条人格描述", len(retained), len(discarded))
+        logger.debug("  ✅ 清洗完成: 输出长度 %d", len(clean_prompt))
         return PromptCleaningOutput(
-            retained=retained, discarded=discarded,
-            reasoning=reasoning, raw_output=result.output, steps=result.steps,
+            clean_prompt=clean_prompt, reasoning=reasoning,
+            raw_output=content, steps=[],
         )
     except Exception as e:
         logger.warning("提示词清洗异常: %s, 降级为全部丢弃", e)
         return PromptCleaningOutput(
-            retained=[], discarded=[system_message] if system_message else [],
-            reasoning=str(e), raw_output="", steps=[],
+            clean_prompt="", reasoning=str(e), raw_output="", steps=[],
         )
 
 

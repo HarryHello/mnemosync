@@ -1,11 +1,11 @@
 ---
-version: 1
+version: 2
 placeholders: [SYSTEM_MESSAGE]
 ---
-请分析以下客户端 system 消息, 分离人格描述和功能性指令:
+请重写以下客户端 system 消息，剥离人格描述，保留功能性指令：
 
 === 客户端 system 消息 ===
 __SYSTEM_MESSAGE__
 === 结束 ===
 
-请逐句调用 classify_sentence_type 工具, 然后输出最终 JSON。
+直接输出 JSON，不需要调用工具。

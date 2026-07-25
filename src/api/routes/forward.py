@@ -57,7 +57,7 @@ from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.memory_store import SqliteMemoryStore
-from src.tools import MemoryRetriever, make_sentence_classifier_tool
+from src.tools import MemoryRetriever
 
 router = APIRouter(prefix="/v1")
 logger = logging.getLogger(__name__)
@@ -229,28 +229,22 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         logger.debug("  🧹 清洗客户端 system 消息 (长度: %d)", len(client_system_msg))
         multi_forwarder = _get_multi_forwarder(http_request)
         try:
-            cleaning_tools = [make_sentence_classifier_tool(multi_forwarder)]
             cleaning_out = await run_prompt_cleaning(
                 forwarder=multi_forwarder,
                 system_message=client_system_msg,
-                tools=cleaning_tools,
-                max_iterations=3,
             )
             prompt_cleaning_result = {
-                "retained": cleaning_out.retained,
-                "discarded": cleaning_out.discarded,
+                "clean_prompt": cleaning_out.clean_prompt,
                 "reasoning": cleaning_out.reasoning,
             }
-            if cleaning_out.retained:
-                retained_text = "\n".join(cleaning_out.retained)
-                persona = persona + "\n\n" + retained_text
-                logger.debug("  ✅ 清洗完成: 保留 %d 条指令, 丢弃 %d 条人格描述",
-                             len(cleaning_out.retained), len(cleaning_out.discarded))
+            if cleaning_out.clean_prompt:
+                persona = persona + "\n\n" + cleaning_out.clean_prompt
+                logger.debug("  ✅ 清洗完成: 输出长度 %d", len(cleaning_out.clean_prompt))
             else:
                 logger.debug("  ✅ 清洗完成: 无保留指令, 全部丢弃")
         except Exception as e:
             logger.warning("提示词清洗失败, 降级: 全部丢弃客户端 system 消息 (%s)", e)
-            prompt_cleaning_result = {"retained": [], "discarded": [client_system_msg], "reasoning": str(e)}
+            prompt_cleaning_result = {"clean_prompt": "", "reasoning": str(e)}
 
     main_model = await _resolve_main_model(http_request)
     use_proxy = should_use_proxy_thinking(request, settings, main_model=main_model)
