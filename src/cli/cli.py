@@ -521,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
     # ── ask ──
     ask_parser = subparsers.add_parser("ask", help="命令行直连主对话 (调试用)")
     ask_parser.add_argument("question", nargs="?", default=None, help="问题内容 (不填则从 stdin 读入)")
-    ask_parser.add_argument("--user", default="cli", help="source_user 标识 (默认: cli)")
+    ask_parser.add_argument("--user", required=True, help="source_user 标识 (必填)")
     ask_parser.add_argument("--persona-file", default=None, help="人格 prompt 文件路径")
     ask_parser.add_argument("--stream", action="store_true", help="流式输出 (与生产 SSE 路径一致)")
     ask_parser.add_argument("--debug", action="store_true", help="打印上游 HTTP 请求/响应 (等价 serve --debug)")
