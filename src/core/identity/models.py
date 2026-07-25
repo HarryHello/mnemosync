@@ -84,4 +84,5 @@ class IdentityContext:
     space_id: str | None          # 会话空间 ID
     channel_type: str | None      # "direct" | "group" | None
     strategy_name: str | None     # 使用的策略名（调试用）
+    external_event_id: str | None = None  # 平台侧事件唯一 ID (幂等用)
     effective_user_id: str | None = None  # 实际用户 ID (group_id 或 actor_id); None = 非归属模式

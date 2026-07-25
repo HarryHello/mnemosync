@@ -162,6 +162,7 @@ class IdentityResolver:
 
         display_name = self._match_pattern(text, config.get("name_pattern"))
         space_id = self._match_pattern(text, config.get("space_pattern"))
+        external_event_id = self._match_pattern(text, config.get("event_id_pattern"))
 
         actor = await self.store.find_or_create_actor(
             external_key=external_key,
@@ -179,6 +180,7 @@ class IdentityResolver:
             space_id=space_id,
             channel_type="group" if space_id else "direct",
             strategy_name=strategy_name,
+            external_event_id=external_event_id,
         )
 
     async def _resolve_llm(
@@ -211,6 +213,7 @@ class IdentityResolver:
                 return self._unattributed()
             display_name = data.get("actor_name")
             space_id = data.get("space_id")
+            external_event_id = data.get("event_id")
             actor = await self.store.find_or_create_actor(
                 external_key=external_key,
                 frontend=frontend,
@@ -227,6 +230,7 @@ class IdentityResolver:
                 space_id=space_id,
                 channel_type="group" if space_id else "direct",
                 strategy_name=strategy_name,
+                external_event_id=external_event_id,
             )
         except Exception as e:
             logger.warning("LLM 身份解析失败: %s", e)
