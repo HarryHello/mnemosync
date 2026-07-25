@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from src.api.deps import (
@@ -109,6 +109,29 @@ def _persona_id() -> str:
     return "default"
 
 
+async def _resolve_relationship_target(
+    request: Request,
+    user_id: str | None,
+    actor_id: str | None,
+) -> str:
+    """解析关系端点的目标用户 (v0.3.0).
+
+    user_id 优先直取; 否则 actor_id 经 identity_store 解析为 effective_user_id
+    (绑定 UserGroup 的 Actor 落到组关系上 — 面板上点任一平台账号都能查到
+    "这个人"的关系)。两者都缺 → 400。
+    """
+    if user_id:
+        return user_id
+    if actor_id:
+        identity_store: SqliteIdentityStore | None = getattr(
+            request.app.state, "identity_store", None,
+        )
+        if identity_store is None:
+            raise HTTPException(500, detail="identity store 未初始化")
+        return await identity_store.get_effective_user_id(actor_id)
+    raise HTTPException(400, detail="user_id 或 actor_id 至少提供一个")
+
+
 # ============================================================================
 # Schemas
 # ============================================================================
@@ -178,13 +201,16 @@ class RelationshipUpdateBody(BaseModel):
     """v0.2.10: 人工 override 关系称呼/背景 (source='manual').
 
     三字段都可选传, 但至少一个非 None. reason 必填 (至少 5 字), 用于审计.
+    v0.3.0: user_id / actor_id 至少一个; 传 actor_id 时自动解析为
+    effective_user_id (绑定 UserGroup 的 Actor 落到组关系上).
     """
 
     persona_addressing: Optional[str] = None
     user_addressing: Optional[str] = None
     context: Optional[str] = None
     reason: str = Field(..., min_length=5, max_length=500)
-    user_id: str = Field(..., min_length=1, description="用户标识 (必填)")
+    user_id: Optional[str] = Field(None, min_length=1, description="用户标识 (effective_user_id)")
+    actor_id: Optional[str] = Field(None, min_length=1, description="Actor ID, 自动解析为 effective_user_id")
 
 
 class RelationshipAuditItem(BaseModel):
@@ -429,7 +455,9 @@ async def delete_memory(
 
 @router.get("/relationship", response_model=RelationshipResponse)
 async def get_relationship(
-    user_id: str = Query(..., min_length=1, description="用户标识 (必填)"),
+    request: Request,
+    user_id: str | None = Query(None, min_length=1, description="用户标识 (effective_user_id)"),
+    actor_id: str | None = Query(None, min_length=1, description="Actor ID, 自动解析为 effective_user_id"),
     store: SqliteMemoryStore = Depends(get_memory_store),
 ):
     """获取关系状态.
@@ -439,14 +467,18 @@ async def get_relationship(
 
     v0.2.10: 响应含 persona_addressing / user_addressing / context. 表中为 NULL 时
     用 settings.persona.relation.* 基线填充, 前端拿到的永远是"当前有效值".
+
+    v0.3.0: user_id / actor_id 至少一个. actor_id 经 identity_store 解析为
+    effective_user_id (绑定 UserGroup 的 Actor 查到的是组关系)。
     """
+    target = await _resolve_relationship_target(request, user_id, actor_id)
     settings = get_settings()
     base = settings.persona.relation
-    rel = await store.get_relationship(_persona_id(), user_id)
+    rel = await store.get_relationship(_persona_id(), target)
     if not rel:
         return RelationshipResponse(
             persona_id=_persona_id(),
-            user_id=user_id,
+            user_id=target,
             intimacy=0.0,
             trust=0.0,
             relationship_type="stranger",
@@ -474,6 +506,7 @@ async def get_relationship(
 @router.put("/relationship", response_model=RelationshipResponse)
 async def update_relationship_addressing(
     body: RelationshipUpdateBody,
+    request: Request,
     store: SqliteMemoryStore = Depends(get_memory_store),
 ):
     """人工 override 关系称呼/背景 (source='manual').
@@ -483,6 +516,8 @@ async def update_relationship_addressing(
     - reason 必填 (min 5), 写入审计日志
     - 相同值会被跳过, 不写 audit
     - 相同响应 shape 与 GET 一致
+
+    v0.3.0: user_id / actor_id 至少一个; actor_id 自动解析为 effective_user_id.
     """
     provided = {
         "persona_addressing": body.persona_addressing,
@@ -491,9 +526,10 @@ async def update_relationship_addressing(
     }
     if all(v is None for v in provided.values()):
         raise HTTPException(400, detail="至少需要传入一个字段")
+    target = await _resolve_relationship_target(request, body.user_id, body.actor_id)
     try:
         await store.update_relationship_addressing(
-            _persona_id(), body.user_id,
+            _persona_id(), target,
             persona_addressing=body.persona_addressing,
             user_addressing=body.user_addressing,
             context=body.context,
@@ -502,17 +538,20 @@ async def update_relationship_addressing(
         )
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
-    return await get_relationship(user_id=body.user_id, store=store)
+    return await get_relationship(request=request, user_id=target, store=store)
 
 
 @router.get("/relationship/audit", response_model=RelationshipAuditResponse)
 async def list_relationship_audit(
-    user_id: str = Query(..., min_length=1, description="用户标识 (必填)"),
+    request: Request,
+    user_id: str | None = Query(None, min_length=1, description="用户标识 (effective_user_id)"),
+    actor_id: str | None = Query(None, min_length=1, description="Actor ID, 自动解析为 effective_user_id"),
     limit: int = Query(20, ge=1, le=200),
     store: SqliteMemoryStore = Depends(get_memory_store),
 ):
     """按时间倒序返回关系称呼字段的审计条目 (v0.2.10)."""
-    entries = await store.list_relationship_audit(_persona_id(), user_id, limit=limit)
+    target = await _resolve_relationship_target(request, user_id, actor_id)
+    entries = await store.list_relationship_audit(_persona_id(), target, limit=limit)
     return RelationshipAuditResponse(
         items=[
             RelationshipAuditItem(
