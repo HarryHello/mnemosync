@@ -36,6 +36,8 @@ class ConversationTurn:
     ts: datetime
     token_count: int
     source_frontend: str | None
+    actor_id: str | None = None
+    space_id: str | None = None
 
 
 class SqliteConversationStore:
@@ -82,13 +84,23 @@ class SqliteConversationStore:
                 content TEXT NOT NULL,
                 ts TIMESTAMP NOT NULL,
                 token_count INTEGER NOT NULL DEFAULT 0,
-                source_frontend TEXT
+                source_frontend TEXT,
+                actor_id TEXT,
+                space_id TEXT
             )
         """)
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_conversation_turns_ts "
             "ON conversation_turns(ts DESC)"
         )
+        # v0.3.0: 向后兼容迁移
+        for col in ("actor_id", "space_id"):
+            try:
+                await db.execute(
+                    f"ALTER TABLE conversation_turns ADD COLUMN {col} TEXT"
+                )
+            except aiosqlite.OperationalError:
+                pass
 
     async def init_db(self) -> None:
         async with self._conn() as db:
@@ -102,6 +114,8 @@ class SqliteConversationStore:
         token_count: int,
         source_frontend: str | None = None,
         ts: datetime | None = None,
+        actor_id: str | None = None,
+        space_id: str | None = None,
     ) -> int:
         """追加一条对话轮次, 返回 rowid."""
         if role not in ("user", "assistant"):
@@ -109,9 +123,9 @@ class SqliteConversationStore:
         stamp = (ts or datetime.now(timezone.utc)).isoformat()
         async with self._conn() as db:
             cur = await db.execute(
-                "INSERT INTO conversation_turns (role, content, ts, token_count, source_frontend) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (role, content, stamp, int(token_count), source_frontend),
+                "INSERT INTO conversation_turns (role, content, ts, token_count, source_frontend, actor_id, space_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (role, content, stamp, int(token_count), source_frontend, actor_id, space_id),
             )
             await db.commit()
             return cur.lastrowid or 0
@@ -122,7 +136,7 @@ class SqliteConversationStore:
         """按时间升序列出 since (UTC) 之后的对话. 装填上下文用."""
         async with self._conn() as db:
             async with db.execute(
-                "SELECT id, role, content, ts, token_count, source_frontend "
+                "SELECT id, role, content, ts, token_count, source_frontend, actor_id, space_id "
                 "FROM conversation_turns WHERE ts >= ? ORDER BY ts ASC LIMIT ?",
                 (since.isoformat(), limit),
             ) as cur:
@@ -133,7 +147,7 @@ class SqliteConversationStore:
         """按时间降序列出最近 N 条 (调试面板用)."""
         async with self._conn() as db:
             async with db.execute(
-                "SELECT id, role, content, ts, token_count, source_frontend "
+                "SELECT id, role, content, ts, token_count, source_frontend, actor_id, space_id "
                 "FROM conversation_turns ORDER BY ts DESC LIMIT ?",
                 (limit,),
             ) as cur:
@@ -179,7 +193,7 @@ class SqliteConversationStore:
                 total = row[0] if row else 0
 
             async with db.execute(
-                f"SELECT id, role, content, ts, token_count, source_frontend "
+                f"SELECT id, role, content, ts, token_count, source_frontend, actor_id, space_id "
                 f"FROM conversation_turns{where_sql} "
                 f"ORDER BY {sort_col} {direction}, id ASC LIMIT ? OFFSET ?",
                 (*params, limit, offset),
@@ -263,4 +277,6 @@ class SqliteConversationStore:
             ts=ts,
             token_count=row[4],
             source_frontend=row[5],
+            actor_id=row[6] if len(row) > 6 else None,
+            space_id=row[7] if len(row) > 7 else None,
         )

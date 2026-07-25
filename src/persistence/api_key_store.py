@@ -33,9 +33,10 @@ class ApiKey:
     is_active: bool = True
     key_full: str | None = None  # 解密后的完整 key, 仅内存持有
     source: str = API_KEY_SOURCE_USER  # 来源: user (手动) / panel-debug (调试面板自动生成)
+    strategy_id: str | None = None  # 绑定的身份识别策略 ID (v0.3.0)
 
     @staticmethod
-    def generate(note: str, source: str = API_KEY_SOURCE_USER) -> "ApiKey":
+    def generate(note: str, source: str = API_KEY_SOURCE_USER, strategy_id: str | None = None) -> "ApiKey":
         raw = f"sk-{secrets.token_urlsafe(32)}"
         return ApiKey(
             id=secrets.token_hex(16),
@@ -44,6 +45,7 @@ class ApiKey:
             note=note,
             key_full=raw,
             source=source,
+            strategy_id=strategy_id,
         )
 
     def mark_used(self) -> None:
@@ -158,7 +160,8 @@ class SqliteApiKeyStore:
                 is_active INTEGER NOT NULL DEFAULT 1,
                 key_full TEXT,
                 key_encrypted TEXT,
-                source TEXT NOT NULL DEFAULT 'user'
+                source TEXT NOT NULL DEFAULT 'user',
+                strategy_id TEXT
             )
         """)
         # 兼容早期库
@@ -166,6 +169,7 @@ class SqliteApiKeyStore:
             "ALTER TABLE api_keys ADD COLUMN key_full TEXT",
             "ALTER TABLE api_keys ADD COLUMN key_encrypted TEXT",
             "ALTER TABLE api_keys ADD COLUMN source TEXT NOT NULL DEFAULT 'user'",
+            "ALTER TABLE api_keys ADD COLUMN strategy_id TEXT",
         ):
             try:
                 await db.execute(ddl)
@@ -211,8 +215,8 @@ class SqliteApiKeyStore:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO api_keys
-                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full, key_encrypted, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full, key_encrypted, source, strategy_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
                 """,
                 (
                     api_key.id,
@@ -224,6 +228,7 @@ class SqliteApiKeyStore:
                     1 if api_key.is_active else 0,
                     encrypted,
                     api_key.source or API_KEY_SOURCE_USER,
+                    api_key.strategy_id,
                 ),
             )
             await db.commit()
@@ -298,6 +303,7 @@ class SqliteApiKeyStore:
         legacy_plain = row[7] if len(row) > 7 else None
         encrypted = row[8] if len(row) > 8 else None
         source = row[9] if len(row) > 9 and row[9] else API_KEY_SOURCE_USER
+        strategy_id = row[10] if len(row) > 10 else None
         key_full: str | None = None
         if encrypted:
             key_full = await self._decrypt(db, encrypted)
@@ -313,4 +319,5 @@ class SqliteApiKeyStore:
             is_active=bool(row[6]),
             key_full=key_full,
             source=source,
+            strategy_id=strategy_id,
         )

@@ -123,6 +123,14 @@ class SqliteMemoryStore:
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_created_at ON memory_entries(created_at DESC)"
         )
+        # v0.3.0: 向后兼容迁移
+        try:
+            await db.execute("ALTER TABLE memory_entries ADD COLUMN space_id TEXT")
+        except aiosqlite.OperationalError:
+            pass
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mem_space ON memory_entries(space_id)"
+        )
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS relationships (
