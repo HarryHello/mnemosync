@@ -609,9 +609,26 @@ async def _handle_stream(
     await memory_store.init_db()
     vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
 
-    perms = await memory_store.list_permanent(
-        source_user, limit=settings.memory.permanent_load_top
+    from src.core.memory.audience import AudienceFilter, RetrievalContext
+
+    rel = await memory_store.get_relationship(
+        initial_state.get("persona_id", "default"), source_user,
+    ) if source_user else None
+    logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
+    retrieval_ctx = RetrievalContext(
+        effective_user_id=source_user or None,
+        actor_id=actor_id,
+        space_id=space_id,
+        channel_type=initial_state.get("channel_type"),
+        relationship=rel,
     )
+
+    perms = await memory_store.list_permanent(
+        source_user or None,
+        limit=settings.memory.permanent_load_top,
+        space_id=space_id,
+    )
+    perms = AudienceFilter.filter(perms, retrieval_ctx)
     logger.debug("  📚 永久记忆: %d 条", len(perms))
 
     # 客户端 history 视为"不可信": 服务器有自己的跨前端流水. 只从本轮请求
@@ -628,7 +645,7 @@ async def _handle_stream(
         retriever = MemoryRetriever(multi_forwarder, vector_store, memory_store)
         results = await retriever.search(
             new_user_content, top_k=settings.memory.retrieval_top_k,
-            source_user=source_user,
+            retrieval_ctx=retrieval_ctx,
         )
         for r in results:
             await memory_store.mark_accessed(r.memory_id)
@@ -636,9 +653,6 @@ async def _handle_stream(
             if entry:
                 retrieved_entries.append(entry)
         logger.debug("  🔍 检索结果: %d 条", len(retrieved_entries))
-
-    rel = await memory_store.get_relationship("default", source_user) if source_user else None
-    logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
 
     # 4. 代理推理 (可选, 同步, 与检索串行)
     reasoning_text: str | None = None

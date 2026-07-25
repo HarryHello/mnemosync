@@ -61,6 +61,22 @@ def _resolve_addressing(rel, settings) -> tuple[str, str, str]:
     )
 
 
+def _retrieval_context(state: AgentState, rel=None) -> "RetrievalContext":
+    """从图状态构建受众上下文 (v0.3.0).
+
+    rel 传入时用于 FRIENDS_ONLY / CONFIDENTIAL 门槛判定; 调用方应在检索前
+    先加载关系 (一次索引查询, 开销可忽略)。
+    """
+    from src.core.memory.audience import RetrievalContext
+    return RetrievalContext(
+        effective_user_id=state.get("source_user") or None,
+        actor_id=state.get("actor_id"),
+        space_id=state.get("space_id"),
+        channel_type=state.get("channel_type"),
+        relationship=rel,
+    )
+
+
 def _make_multi_forwarder_with_resolver() -> tuple[MultiForwarder, RoleResolver]:
     """构建 MultiForwarder + resolver 对 (共享同一 store)."""
     store = LLMServiceStore(_LLM_SERVICE_DB_PATH)
@@ -127,8 +143,12 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
 
         source_user = state["source_user"]
         if source_user:
-            perms = await memory_store.list_permanent(source_user, limit=5)
             rel = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
+            perms = await memory_store.list_permanent(
+                source_user, limit=5, space_id=state.get("space_id"),
+            )
+            from src.core.memory.audience import AudienceFilter
+            perms = AudienceFilter.filter(perms, _retrieval_context(state, rel))
         else:
             perms = []
             rel = None
@@ -144,7 +164,6 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
 
         logger.debug("  💬 用户消息: %s", user_msg[:100] if user_msg else "(空)")
 
-        rel = await memory_store.get_relationship(state.get("persona_id", "default"), state["source_user"])
         logger.debug("  🚀 调用代理思考 Agent...")
         result = await run_proxy_thinking(
             forwarder=forwarder,
@@ -187,9 +206,18 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
     logger.debug("  source_user: %s", source_user)
 
     try:
+        from src.core.memory.audience import AudienceFilter
+
+        rel = await memory_store.get_relationship(state.get("persona_id", "default"), source_user) if source_user else None
+        logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
+        retrieval_ctx = _retrieval_context(state, rel)
+
         perms = await memory_store.list_permanent(
-            source_user, limit=settings.memory.permanent_load_top
+            source_user or None,
+            limit=settings.memory.permanent_load_top,
+            space_id=state.get("space_id"),
         )
+        perms = AudienceFilter.filter(perms, retrieval_ctx)
         logger.debug("  📚 永久记忆: %d 条", len(perms))
         for p in perms:
             await memory_store.mark_accessed(p.id)
@@ -208,7 +236,7 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
             retriever = MemoryRetriever(forwarder, vector_store, memory_store)
             results = await retriever.search(
                 query, top_k=settings.memory.retrieval_top_k,
-                source_user=source_user,
+                retrieval_ctx=retrieval_ctx,
             )
             logger.debug("  🔍 检索结果: %d 条", len(results))
             for r in results:
@@ -216,9 +244,6 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
                 entry = await memory_store.get_by_id(r.memory_id)
                 if entry:
                     retrieved_entries.append(entry)
-
-        rel = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
-        logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
 
         # 情绪分析: 预计算一次, 供 memory_analysis + relationship_analysis 共享
         emotion_analysis = await _compute_emotion(forwarder, extracted)
@@ -269,9 +294,6 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
     try:
         vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
         retriever = MemoryRetriever(forwarder, vector_store, memory_store)
-        tools = [
-            make_vector_search_tool(retriever),
-        ]
 
         extracted = state.get("extracted_new", [])
         conversation = "\n".join(
@@ -283,6 +305,11 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
 
         rel_for_addressing = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
         persona_addr, user_addr, rel_ctx = _resolve_addressing(rel_for_addressing, settings)
+
+        # 受众上下文: 记忆分析 Agent 的查重检索也按当前会话受众过滤
+        tools = [
+            make_vector_search_tool(retriever, _retrieval_context(state, rel_for_addressing)),
+        ]
 
         # 从 state 获取预计算的情绪分析
         emotion_analysis = state.get("emotion_analysis", {})
@@ -313,7 +340,9 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         await notification_store.init_db()
         lifecycle.notification_store = notification_store
         for cand in out.new_memories:
-            await lifecycle.store_candidate(cand, source_user=source_user)
+            await lifecycle.store_candidate(
+                cand, source_user=source_user, space_id=state.get("space_id"),
+            )
 
         # 确定性衰减：公式批量更新所有 NORMAL 记忆
         await lifecycle.run_deterministic_decay()
