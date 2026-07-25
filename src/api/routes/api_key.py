@@ -32,7 +32,7 @@ async def create_api_key(
     store: SqliteApiKeyStore = Depends(get_api_key_store),
 ) -> ApiKeyCreateResponse:
     """生成新的 API Key."""
-    api_key = ApiKey.generate(note=request.note)
+    api_key = ApiKey.generate(note=request.note, strategy_id=request.strategy_id)
     await store.save(api_key)
 
     return ApiKeyCreateResponse(
@@ -64,6 +64,7 @@ async def list_api_keys(
             created_at=ak.created_at.isoformat(),
             last_used_at=ak.last_used_at.isoformat() if ak.last_used_at else None,
             is_active=ak.is_active,
+            strategy_id=ak.strategy_id,
         )
         for ak in api_keys
     ]

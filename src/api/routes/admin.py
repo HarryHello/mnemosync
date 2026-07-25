@@ -18,6 +18,7 @@ from src.api.deps import (
     get_api_key_store,
     get_conversation_store,
     get_http_log_store,
+    get_identity_store,
     get_llm_service_store,
     get_memory_store,
     get_multi_forwarder,
@@ -30,9 +31,16 @@ from src.api.routes.auth import get_current_user
 from src.core.config import get_settings
 from src.core.models.resolver import RoleResolver
 from src.api.schemas.admin import (
+    ActorListResponse,
+    ActorResponse,
+    BindActorBody,
     ConversationClearResponse,
     ConversationTurnItem,
     ConversationTurnListResponse,
+    IdentityStrategyCreateBody,
+    IdentityStrategyListResponse,
+    IdentityStrategyResponse,
+    IdentityStrategyUpdateBody,
     MarkReadResponse,
     NotificationItem,
     NotificationListResponse,
@@ -60,6 +68,9 @@ from src.api.schemas.admin import (
     RoleBindingReorderBody,
     RoleBindingUpdateBody,
     UnreadCountResponse,
+    UserGroupCreateBody,
+    UserGroupListResponse,
+    UserGroupResponse,
 )
 from src.core.config import (
     _delete_persona_override,
@@ -80,6 +91,7 @@ from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
+from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 
@@ -90,6 +102,11 @@ router = APIRouter(
     tags=["Admin"],
     dependencies=[Depends(get_current_user)],
 )
+
+
+def _persona_id() -> str:
+    """当前人格标识. v0.3.0 单人格阶段固定为 'default', 未来从配置派生."""
+    return "default"
 
 
 # ============================================================================
@@ -167,7 +184,7 @@ class RelationshipUpdateBody(BaseModel):
     user_addressing: Optional[str] = None
     context: Optional[str] = None
     reason: str = Field(..., min_length=5, max_length=500)
-    user_id: str = "default"
+    user_id: str = Field(..., min_length=1, description="用户标识 (必填)")
 
 
 class RelationshipAuditItem(BaseModel):
@@ -354,7 +371,7 @@ async def clear_logs(store: HttpLogStore = Depends(get_http_log_store)):
 
 @router.get("/memories", response_model=MemoryListResponse)
 async def list_memories(
-    source_user: str = "default",
+    source_user: str = Query(..., min_length=1, description="用户标识 (必填)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     memory_type: str | None = Query(None, description="normal | permanent"),
@@ -412,7 +429,7 @@ async def delete_memory(
 
 @router.get("/relationship", response_model=RelationshipResponse)
 async def get_relationship(
-    user_id: str = "default",
+    user_id: str = Query(..., min_length=1, description="用户标识 (必填)"),
     store: SqliteMemoryStore = Depends(get_memory_store),
 ):
     """获取关系状态.
@@ -425,10 +442,10 @@ async def get_relationship(
     """
     settings = get_settings()
     base = settings.persona.relation
-    rel = await store.get_relationship("default", user_id)
+    rel = await store.get_relationship(_persona_id(), user_id)
     if not rel:
         return RelationshipResponse(
-            persona_id="default",
+            persona_id=_persona_id(),
             user_id=user_id,
             intimacy=0.0,
             trust=0.0,
@@ -476,7 +493,7 @@ async def update_relationship_addressing(
         raise HTTPException(400, detail="至少需要传入一个字段")
     try:
         await store.update_relationship_addressing(
-            "default", body.user_id,
+            _persona_id(), body.user_id,
             persona_addressing=body.persona_addressing,
             user_addressing=body.user_addressing,
             context=body.context,
@@ -490,12 +507,12 @@ async def update_relationship_addressing(
 
 @router.get("/relationship/audit", response_model=RelationshipAuditResponse)
 async def list_relationship_audit(
-    user_id: str = "default",
+    user_id: str = Query(..., min_length=1, description="用户标识 (必填)"),
     limit: int = Query(20, ge=1, le=200),
     store: SqliteMemoryStore = Depends(get_memory_store),
 ):
     """按时间倒序返回关系称呼字段的审计条目 (v0.2.10)."""
-    entries = await store.list_relationship_audit("default", user_id, limit=limit)
+    entries = await store.list_relationship_audit(_persona_id(), user_id, limit=limit)
     return RelationshipAuditResponse(
         items=[
             RelationshipAuditItem(
@@ -1267,6 +1284,284 @@ async def delete_notification(
     if not ok:
         raise HTTPException(status_code=404, detail="notification not found")
     return {"success": True, "id": notification_id}
+
+
+# ============================================================================
+# 身份管理 (v0.3.0) — Actors / UserGroups / IdentityStrategies
+# ============================================================================
+
+
+# ── Identity Strategies ──
+
+
+@router.get("/identity/strategies", response_model=IdentityStrategyListResponse)
+async def list_identity_strategies(
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """列出所有身份识别策略."""
+    items, total = await store.list_strategies()
+    return IdentityStrategyListResponse(
+        items=[
+            IdentityStrategyResponse(
+                id=s.id, name=s.name, strategy_type=s.strategy_type,
+                config=s.config, is_active=s.is_active,
+                created_at=s.created_at.isoformat() if s.created_at else "",
+                updated_at=s.updated_at.isoformat() if s.updated_at else "",
+            )
+            for s in items
+        ],
+        total=total,
+    )
+
+
+@router.post("/identity/strategies", response_model=IdentityStrategyResponse, status_code=201)
+async def create_identity_strategy(
+    body: IdentityStrategyCreateBody,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """创建身份识别策略."""
+    if body.strategy_type not in ("direct", "api_key_bound", "regex", "llm"):
+        raise HTTPException(400, detail=f"无效策略类型: {body.strategy_type}")
+    s = await store.create_strategy(
+        name=body.name, strategy_type=body.strategy_type, config=body.config,
+    )
+    return IdentityStrategyResponse(
+        id=s.id, name=s.name, strategy_type=s.strategy_type,
+        config=s.config, is_active=s.is_active,
+        created_at=s.created_at.isoformat() if s.created_at else "",
+        updated_at=s.updated_at.isoformat() if s.updated_at else "",
+    )
+
+
+@router.get("/identity/strategies/{strategy_id}", response_model=IdentityStrategyResponse)
+async def get_identity_strategy(
+    strategy_id: str,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """获取单个策略详情."""
+    s = await store.get_strategy(strategy_id)
+    if s is None:
+        raise HTTPException(404, detail="策略不存在")
+    return IdentityStrategyResponse(
+        id=s.id, name=s.name, strategy_type=s.strategy_type,
+        config=s.config, is_active=s.is_active,
+        created_at=s.created_at.isoformat() if s.created_at else "",
+        updated_at=s.updated_at.isoformat() if s.updated_at else "",
+    )
+
+
+@router.patch("/identity/strategies/{strategy_id}", response_model=IdentityStrategyResponse)
+async def update_identity_strategy(
+    strategy_id: str,
+    body: IdentityStrategyUpdateBody,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """更新策略 (名称/配置/启用状态)."""
+    s = await store.get_strategy(strategy_id)
+    if s is None:
+        raise HTTPException(404, detail="策略不存在")
+    # 当前 store 没有 update 方法, 通过 create 覆盖 (同 id)
+    import json
+    config = body.config if body.config is not None else s.config
+    name = body.name if body.name is not None else s.name
+    is_active = body.is_active if body.is_active is not None else s.is_active
+    # 重建策略行
+    from datetime import datetime, timezone as _tz
+    now = datetime.now(_tz)
+    async with store._conn() as db:
+        await db.execute(
+            "UPDATE identity_strategies SET name=?, config=?, is_active=?, updated_at=? WHERE id=?",
+            (name, config, 1 if is_active else 0, now.isoformat(), strategy_id),
+        )
+        await db.commit()
+    s = await store.get_strategy(strategy_id)
+    return IdentityStrategyResponse(
+        id=s.id, name=s.name, strategy_type=s.strategy_type,
+        config=s.config, is_active=s.is_active,
+        created_at=s.created_at.isoformat() if s.created_at else "",
+        updated_at=s.updated_at.isoformat() if s.updated_at else "",
+    )
+
+
+@router.delete("/identity/strategies/{strategy_id}")
+async def delete_identity_strategy(
+    strategy_id: str,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """删除策略."""
+    s = await store.get_strategy(strategy_id)
+    if s is None:
+        raise HTTPException(404, detail="策略不存在")
+    async with store._conn() as db:
+        await db.execute("DELETE FROM identity_strategies WHERE id = ?", (strategy_id,))
+        await db.commit()
+    return {"success": True}
+
+
+# ── Actors ──
+
+
+@router.get("/identity/actors", response_model=ActorListResponse)
+async def list_actors(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """列出所有 Actor."""
+    items, total = await store.list_actors(limit=limit, offset=offset)
+    return ActorListResponse(
+        items=[
+            ActorResponse(
+                id=a.id, external_key=a.external_key, frontend=a.frontend,
+                display_name=a.display_name, metadata=a.metadata,
+                created_at=a.created_at.isoformat() if a.created_at else "",
+                updated_at=a.updated_at.isoformat() if a.updated_at else "",
+            )
+            for a in items
+        ],
+        total=total,
+    )
+
+
+@router.get("/identity/actors/{actor_id}", response_model=ActorResponse)
+async def get_actor(
+    actor_id: str,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """获取单个 Actor."""
+    a = await store.get_actor(actor_id)
+    if a is None:
+        raise HTTPException(404, detail="Actor 不存在")
+    return ActorResponse(
+        id=a.id, external_key=a.external_key, frontend=a.frontend,
+        display_name=a.display_name, metadata=a.metadata,
+        created_at=a.created_at.isoformat() if a.created_at else "",
+        updated_at=a.updated_at.isoformat() if a.updated_at else "",
+    )
+
+
+# ── UserGroups ──
+
+
+@router.get("/identity/groups", response_model=UserGroupListResponse)
+async def list_user_groups(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """列出所有 UserGroup."""
+    items, total = await store.list_groups(limit=limit, offset=offset)
+    return UserGroupListResponse(
+        items=[
+            UserGroupResponse(
+                id=g.id, name=g.name,
+                created_at=g.created_at.isoformat() if g.created_at else "",
+                updated_at=g.updated_at.isoformat() if g.updated_at else "",
+            )
+            for g in items
+        ],
+        total=total,
+    )
+
+
+@router.post("/identity/groups", response_model=UserGroupResponse, status_code=201)
+async def create_user_group(
+    body: UserGroupCreateBody,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """创建 UserGroup."""
+    g = await store.create_group(name=body.name)
+    return UserGroupResponse(
+        id=g.id, name=g.name,
+        created_at=g.created_at.isoformat() if g.created_at else "",
+        updated_at=g.updated_at.isoformat() if g.updated_at else "",
+    )
+
+
+@router.get("/identity/groups/{group_id}", response_model=UserGroupResponse)
+async def get_user_group(
+    group_id: str,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """获取单个 UserGroup."""
+    g = await store.get_group(group_id)
+    if g is None:
+        raise HTTPException(404, detail="UserGroup 不存在")
+    return UserGroupResponse(
+        id=g.id, name=g.name,
+        created_at=g.created_at.isoformat() if g.created_at else "",
+        updated_at=g.updated_at.isoformat() if g.updated_at else "",
+    )
+
+
+@router.get("/identity/groups/{group_id}/members", response_model=ActorListResponse)
+async def list_group_members(
+    group_id: str,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """列出 UserGroup 的所有成员 Actor."""
+    members = await store.list_group_members(group_id)
+    return ActorListResponse(
+        items=[
+            ActorResponse(
+                id=a.id, external_key=a.external_key, frontend=a.frontend,
+                display_name=a.display_name, metadata=a.metadata,
+                created_at=a.created_at.isoformat() if a.created_at else "",
+                updated_at=a.updated_at.isoformat() if a.updated_at else "",
+            )
+            for a in members
+        ],
+        total=len(members),
+    )
+
+
+# ── Actor ↔ Group Bindings ──
+
+
+@router.post("/identity/actors/{actor_id}/groups/{group_id}")
+async def bind_actor_to_group(
+    actor_id: str,
+    group_id: str,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """绑定 Actor 到 UserGroup."""
+    ok = await store.bind_actor_to_group(actor_id, group_id)
+    if not ok:
+        raise HTTPException(409, detail="绑定已存在或 Actor/Group 不存在")
+    return {"success": True, "actor_id": actor_id, "group_id": group_id}
+
+
+@router.delete("/identity/actors/{actor_id}/groups/{group_id}")
+async def unbind_actor_from_group(
+    actor_id: str,
+    group_id: str,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """解绑 Actor 从 UserGroup."""
+    ok = await store.unbind_actor_from_group(actor_id, group_id)
+    if not ok:
+        raise HTTPException(404, detail="绑定不存在")
+    return {"success": True}
+
+
+@router.get("/identity/actors/{actor_id}/groups", response_model=UserGroupListResponse)
+async def list_actor_groups(
+    actor_id: str,
+    store: SqliteIdentityStore = Depends(get_identity_store),
+):
+    """列出 Actor 所属的所有 UserGroup."""
+    groups = await store.list_actor_groups(actor_id)
+    return UserGroupListResponse(
+        items=[
+            UserGroupResponse(
+                id=g.id, name=g.name,
+                created_at=g.created_at.isoformat() if g.created_at else "",
+                updated_at=g.updated_at.isoformat() if g.updated_at else "",
+            )
+            for g in groups
+        ],
+        total=len(groups),
+    )
 
 
 # ============================================================================

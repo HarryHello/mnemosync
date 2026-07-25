@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -56,6 +57,8 @@ from src.infra.llm_service.models import ModelType
 from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
+from src.persistence.identity_store import SqliteIdentityStore
+from src.core.identity import IdentityResolver, IdentityContext
 from src.persistence.memory_store import SqliteMemoryStore
 from src.tools import MemoryRetriever
 
@@ -91,6 +94,11 @@ def _get_conversation_store(http_request: Request) -> SqliteConversationStore:
     return http_request.app.state.conversation_store
 
 
+def _get_identity_store(http_request: Request) -> SqliteIdentityStore | None:
+    """从 app.state 取共享 SqliteIdentityStore (由 lifespan 建立)."""
+    return getattr(http_request.app.state, "identity_store", None)
+
+
 async def _resolve_main_candidate(http_request: Request):
     """解析 MAIN 角色首选候选. 返回 ResolvedCandidate 或 None (无候选)."""
     resolver = http_request.app.state.resolver
@@ -122,8 +130,44 @@ async def _resolve_source_frontend(request: Request, api_key_id: str | None) -> 
     return ak.note if ak else None
 
 
-async def _verify_api_key(request: Request) -> str | None:
-    """从 Authorization header 验证 API Key, 返回 api_key_id 或 None."""
+async def _resolve_identity_context(
+    http_request: Request,
+    api_key: ApiKey | None,
+    request_user: str | None,
+    messages: list,
+) -> IdentityContext | None:
+    """解析请求中的身份信息。
+
+    1. 获取 API Key 绑定的策略
+    2. 解析身份
+    3. 返回 IdentityContext（None = 非归属模式）
+    """
+    identity_store = _get_identity_store(http_request)
+    if identity_store is None:
+        return None
+
+    strategy_id = api_key.strategy_id if api_key else None
+    if not strategy_id:
+        return None
+
+    strategy = await identity_store.get_strategy(strategy_id)
+    if strategy is None or not strategy.is_active:
+        return None
+
+    config = json.loads(strategy.config) if strategy.config else {}
+    forwarder = _get_multi_forwarder(http_request)
+    resolver = IdentityResolver(identity_store, forwarder)
+    return await resolver.resolve(
+        request_user=request_user,
+        messages=messages,
+        strategy_type=strategy.strategy_type,
+        strategy_config=config,
+        strategy_name=strategy.name,
+    )
+
+
+async def _verify_api_key(request: Request) -> ApiKey | None:
+    """从 Authorization header 验证 API Key, 返回 ApiKey 对象 (含 strategy_id) 或 None."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return None
@@ -133,7 +177,7 @@ async def _verify_api_key(request: Request) -> str | None:
     if api_key is None:
         return None
     await store.update_last_used(api_key.id)
-    return api_key.id
+    return api_key
 
 
 # ── Models ─────────────────────────────────────────────────────
@@ -199,7 +243,8 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
 
     # 服务器侧派生 source_frontend (来自 API Key 的 note, 仅元数据).
     # 客户端不需要传任何 header, 不需要修改客户端 (见 no-client-modifications)
-    api_key_id = await _verify_api_key(http_request)
+    api_key = await _verify_api_key(http_request)
+    api_key_id = api_key.id if api_key else None
     source_frontend = await _resolve_source_frontend(http_request, api_key_id)
     if source_frontend:
         logger.debug("  🔖 source_frontend: %s", source_frontend)
@@ -208,8 +253,14 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     messages_dict = [msg.model_dump(exclude_none=True) for msg in request.messages]
     logger.debug("  构建 state 完成, 消息数: %d", len(messages_dict))
 
-    # 提取 source_user (从 user 字段或默认)
-    source_user = request.user or "default"
+    # 身份解析：通过 API Key 绑定的策略识别参与者
+    identity_ctx = await _resolve_identity_context(
+        http_request, api_key, request.user, messages_dict,
+    )
+    actor_id = identity_ctx.actor_id if identity_ctx else None
+    source_user = identity_ctx.effective_user_id if identity_ctx else (request.user or None)
+    space_id = identity_ctx.space_id if identity_ctx else None
+    channel_type = identity_ctx.channel_type if identity_ctx else None
 
     # 服务器优先人格: 从配置加载, 不从客户端 system 消息提取
     settings = get_settings()
@@ -253,12 +304,16 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     initial_state = {
         "messages": messages_dict,
         "source_user": source_user,
+        "actor_id": actor_id,
         "persona": persona,
         "persona_name": persona_name,
+        "persona_id": "default",
         "proxy_thinking_enabled": use_proxy,
         "stream_mode": bool(request.stream),
         "main_model": main_model,
         "source_frontend": source_frontend,
+        "space_id": space_id,
+        "channel_type": channel_type,
     }
     if prompt_cleaning_result:
         initial_state["prompt_cleaning_result"] = prompt_cleaning_result
@@ -282,8 +337,10 @@ async def _handle_non_stream(
     """
     settings = get_settings()
     conversation_store = _get_conversation_store(http_request)
-    source_user = initial_state.get("source_user", "default")
+    source_user = initial_state.get("source_user") or ""
     source_frontend = initial_state.get("source_frontend")
+    actor_id = initial_state.get("actor_id")
+    space_id = initial_state.get("space_id")
 
     main_candidate = await _resolve_main_candidate(http_request)
     main_ctx_length = main_candidate.context_length if main_candidate else None
@@ -351,6 +408,8 @@ async def _handle_non_stream(
                 content=new_user_content,
                 token_count=token_count_for_storage(new_user_content),
                 source_frontend=source_frontend,
+                actor_id=actor_id,
+                space_id=space_id,
             )
         if response_text:
             await conversation_store.append(
@@ -358,6 +417,8 @@ async def _handle_non_stream(
                 content=response_text,
                 token_count=token_count_for_storage(response_text),
                 source_frontend=source_frontend,
+                actor_id=actor_id,
+                space_id=space_id,
             )
     except Exception as e:
         logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
@@ -403,8 +464,10 @@ async def _handle_stream(
     delta.reasoning_content 提前吐给客户端, 与上游正文流拼接成完整回复.
     """
     settings = get_settings()
-    source_user = initial_state.get("source_user", "default")
+    source_user = initial_state.get("source_user") or ""
     source_frontend = initial_state.get("source_frontend")
+    actor_id = initial_state.get("actor_id")
+    space_id = initial_state.get("space_id")
     main_candidate = await _resolve_main_candidate(http_request)
     main_model = main_candidate.model if main_candidate else "mnemosync-any"
     main_ctx_length = main_candidate.context_length if main_candidate else None
@@ -444,7 +507,7 @@ async def _handle_stream(
                 retrieved_entries.append(entry)
         logger.debug("  🔍 检索结果: %d 条", len(retrieved_entries))
 
-    rel = await memory_store.get_relationship("default", source_user)
+    rel = await memory_store.get_relationship("default", source_user) if source_user else None
     logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
 
     # 4. 代理推理 (可选, 同步, 与检索串行)

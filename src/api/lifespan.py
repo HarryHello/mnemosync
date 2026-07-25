@@ -25,6 +25,7 @@ from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
+from src.persistence.identity_store import SqliteIdentityStore
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ API_KEY_DB_PATH = "data/api_keys.db"
 HTTP_LOG_DB_PATH = "data/http_logs.db"
 LLM_SERVICE_DB_PATH = "data/llm_service.db"
 NOTIFICATION_DB_PATH = "data/notifications.db"
+IDENTITY_DB_PATH = "data/identity.db"
 
 
 def _memory_db_path() -> str:
@@ -100,6 +102,7 @@ async def app_lifespan(app: FastAPI):
     llm_service_store = LLMServiceStore(LLM_SERVICE_DB_PATH)
     conversation_store = SqliteConversationStore(_conversation_db_path())
     notification_store = NotificationStore(NOTIFICATION_DB_PATH)
+    identity_store = SqliteIdentityStore(IDENTITY_DB_PATH)
 
     await auth_store.connect()
     await api_key_store.connect()
@@ -108,6 +111,7 @@ async def app_lifespan(app: FastAPI):
     await llm_service_store.init_db()
     await conversation_store.connect()
     await notification_store.connect()
+    await identity_store.connect()
 
     resolver = RoleResolver(llm_service_store)
     multi_forwarder = MultiForwarder(resolver)
@@ -151,6 +155,7 @@ async def app_lifespan(app: FastAPI):
     app.state.debug_bus = debug_bus
     app.state.conversation_store = conversation_store
     app.state.notification_store = notification_store
+    app.state.identity_store = identity_store
 
     # 后台任务: 每 24h 清理窗外对话流水
     from src.core.config import get_settings as _gs
@@ -162,7 +167,7 @@ async def app_lifespan(app: FastAPI):
     app.state.conversation_prune_task = prune_task
 
     logger.info(
-        "Stores connected (auth / api_key / memory / http_log / llm_service / conversation); "
+        "Stores connected (auth / api_key / memory / http_log / llm_service / conversation / identity); "
         "resolver + multi_forwarder + vector_store + reindex_progress + debug_bus ready"
     )
 
@@ -186,7 +191,7 @@ async def app_lifespan(app: FastAPI):
             await api_key_store.delete_by_source(API_KEY_SOURCE_PANEL_DEBUG)
         except Exception as e:
             logger.warning("Error cleaning panel-debug keys on shutdown: %s", e)
-        for store in (conversation_store, notification_store, http_log_store, memory_store, api_key_store, auth_store):
+        for store in (conversation_store, notification_store, identity_store, http_log_store, memory_store, api_key_store, auth_store):
             try:
                 await store.close()
             except Exception as e:
