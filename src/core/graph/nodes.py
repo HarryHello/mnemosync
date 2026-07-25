@@ -409,7 +409,10 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
             current_relationship=current_rel_str,
             conversation=conversation,
             tools=[
-                make_update_addressing_tool(memory_store, state.get("persona_id", "default"), source_user),
+                make_update_addressing_tool(
+                    memory_store, state.get("persona_id", "default"), source_user,
+                    actor_id=state.get("actor_id"),
+                ),
             ],
             max_iterations=2,
             persona_name=settings.persona.name,
