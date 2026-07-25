@@ -460,6 +460,24 @@ Mnemosync CLI
   prompt reset --all                   全部回默认
   prompt validate <name> / --all       校验占位符齐全性
 
+身份管理 (v0.3.0 多用户):
+  identity strategy list               列出身份识别策略
+  identity strategy create --name "AstrBot QQ" --type regex \\
+      --frontend astrbot --actor-pattern 'QQ号[:：]\\s*(\\d+)' \\
+      --name-pattern '用户名[:：]\\s*(\\S+)' --space-pattern '群号[:：]\\s*(\\d+)'
+                                       创建策略 (便捷参数或 --config JSON)
+  identity strategy show <id>          查看策略详情 (含 config)
+  identity strategy update <id> [--name X] [--config JSON] [--active/--inactive]
+  identity strategy delete <id>        删除策略
+  identity actor list [--frontend X] [--search 关键词]
+                                       列出参与者 (请求到达时自动创建)
+  identity actor show <actor_id>       参与者详情 (组归属 + effective_user_id)
+  identity group list                  列出用户组 (含成员数)
+  identity group create --name 张三    创建用户组 (一个真实人)
+  identity group show <group_id>       查看组成员
+  identity bind <actor_id> <group_id>  跨平台身份归一 (共享记忆与关系)
+  identity unbind <actor_id> <group_id>
+
 升级:
   upgrade             拉取最新代码并更新依赖
   upgrade --branch dev  指定分支（默认 dev）
@@ -535,6 +553,10 @@ def main(argv: list[str] | None = None) -> int:
     # ── prompt ──
     from src.cli.prompt_cmd import build_parser as _build_prompt_parser
     _build_prompt_parser(subparsers)
+
+    # ── identity ──
+    from src.cli.identity_cmd import build_parser as _build_identity_parser
+    _build_identity_parser(subparsers)
 
     # ── upgrade ──
     upgrade_parser = subparsers.add_parser("upgrade", help="升级 Mnemosync")
