@@ -105,7 +105,8 @@ class SqliteMemoryStore:
                 related_memories TEXT,
                 created_at TIMESTAMP NOT NULL,
                 last_accessed TIMESTAMP,
-                expires_at TIMESTAMP
+                expires_at TIMESTAMP,
+                space_id TEXT
             )
         """)
         await db.execute(
@@ -188,8 +189,9 @@ class SqliteMemoryStore:
                 INSERT OR REPLACE INTO memory_entries
                 (id, content, role, source_user, memory_type, importance, decay_rate,
                  priority, access_count, is_forgotten, visibility, custom_policies,
-                 emotional_tags, related_memories, created_at, last_accessed, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 emotional_tags, related_memories, created_at, last_accessed, expires_at,
+                 space_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.id,
@@ -209,6 +211,7 @@ class SqliteMemoryStore:
                     _dt(entry.created_at),
                     _dt(entry.last_accessed),
                     _dt(entry.expires_at),
+                    entry.space_id,
                 ),
             )
             await db.commit()
@@ -229,17 +232,37 @@ class SqliteMemoryStore:
             await db.commit()
             return cur.rowcount > 0
 
-    async def list_permanent(self, source_user: str, limit: int = 7) -> list[MemoryEntry]:
-        """加载用户的永久记忆（按重要性降序）."""
+    async def list_permanent(
+        self,
+        source_user: str | None,
+        limit: int = 7,
+        space_id: str | None = None,
+    ) -> list[MemoryEntry]:
+        """加载永久记忆（按重要性降序）.
+
+        v0.3.0 受众放宽 (粗筛): 返回 自己桶 + PUBLIC (+ 群聊时本空间共享,
+        不含 SOURCE_RESTRICTED) 的并集。精确的可见性判定 (关系门槛 /
+        custom_policies) 由调用方走 AudienceFilter.filter 完成。
+        """
+        conditions = ["visibility = 'public'"]
+        params: list = []
+        if source_user:
+            conditions.append("source_user = ?")
+            params.append(source_user)
+        if space_id:
+            conditions.append("(space_id = ? AND visibility != 'source_restricted')")
+            params.append(space_id)
+        where = " OR ".join(conditions)
         async with self._conn() as db:
             async with db.execute(
-                """
+                f"""
                 SELECT * FROM memory_entries
-                WHERE source_user = ? AND memory_type = 'permanent' AND is_forgotten = 0
+                WHERE memory_type = 'permanent' AND is_forgotten = 0
+                  AND ({where})
                 ORDER BY importance DESC, created_at DESC
                 LIMIT ?
                 """,
-                (source_user, limit),
+                (*params, limit),
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [self._row_to_entry(r) for r in rows]
@@ -654,6 +677,7 @@ class SqliteMemoryStore:
             created_at=_parse_dt(row[14]) or datetime.now(timezone.utc),
             last_accessed=_parse_dt(row[15]),
             expires_at=_parse_dt(row[16]),
+            space_id=row[17] if len(row) > 17 else None,
         )
 
     def _row_to_relationship(self, row: tuple) -> Relationship:
