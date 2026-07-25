@@ -7,6 +7,7 @@ class ApiKeyCreateRequest(BaseModel):
     """创建 API Key 请求."""
 
     note: str = Field(..., min_length=1, max_length=256, description="API Key 备注")
+    strategy_id: str | None = Field(None, description="绑定的身份识别策略 ID (v0.3.0)")
 
 
 class ApiKeyCreateResponse(BaseModel):
@@ -32,6 +33,7 @@ class ApiKeyInfo(BaseModel):
     created_at: str = Field(..., description="创建时间")
     last_used_at: str | None = Field(None, description="最后使用时间")
     is_active: bool = Field(..., description="是否激活")
+    strategy_id: str | None = Field(None, description="绑定的身份识别策略 ID (v0.3.0)")
 
 
 class ApiKeyListResponse(BaseModel):

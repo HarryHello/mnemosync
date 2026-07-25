@@ -331,6 +331,75 @@ class MarkReadResponse(BaseModel):
     marked: int
 
 
+# ---- 身份管理 (v0.3.0) ---------------------------------------------------
+
+
+class ActorResponse(BaseModel):
+    """Actor 视图."""
+    id: str
+    external_key: str
+    frontend: str
+    display_name: str | None = None
+    metadata: str = "{}"
+    created_at: str
+    updated_at: str
+
+
+class ActorListResponse(BaseModel):
+    items: list[ActorResponse]
+    total: int
+
+
+class UserGroupResponse(BaseModel):
+    """UserGroup 视图."""
+    id: str
+    name: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class UserGroupListResponse(BaseModel):
+    items: list[UserGroupResponse]
+    total: int
+
+
+class UserGroupCreateBody(BaseModel):
+    name: str | None = None
+
+
+class BindActorBody(BaseModel):
+    actor_id: str
+    group_id: str
+
+
+class IdentityStrategyResponse(BaseModel):
+    """身份识别策略视图."""
+    id: str
+    name: str
+    strategy_type: str
+    config: str = "{}"
+    is_active: bool = True
+    created_at: str
+    updated_at: str
+
+
+class IdentityStrategyListResponse(BaseModel):
+    items: list[IdentityStrategyResponse]
+    total: int
+
+
+class IdentityStrategyCreateBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    strategy_type: str = Field(..., description="direct | api_key_bound | regex | llm")
+    config: str = Field(default="{}", description="JSON 配置字符串")
+
+
+class IdentityStrategyUpdateBody(BaseModel):
+    name: str | None = None
+    config: str | None = None
+    is_active: bool | None = None
+
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
@@ -367,4 +436,14 @@ __all__ = [
     "NotificationListResponse",
     "UnreadCountResponse",
     "MarkReadResponse",
+    "ActorResponse",
+    "ActorListResponse",
+    "UserGroupResponse",
+    "UserGroupListResponse",
+    "UserGroupCreateBody",
+    "BindActorBody",
+    "IdentityStrategyResponse",
+    "IdentityStrategyListResponse",
+    "IdentityStrategyCreateBody",
+    "IdentityStrategyUpdateBody",
 ]
