@@ -98,6 +98,7 @@ async def test_main_dialogue_node_generates_when_response_missing():
     assert result == {
         "response": "新生成的回复",
         "upstream_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        "emotion_analysis": {"emotion": "neutral", "intensity": 0.0, "category": "other", "keywords": [], "summary": ""},
     }
     build.assert_called_once()
     run_main.assert_awaited_once_with(forwarder, [])
