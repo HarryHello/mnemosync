@@ -86,3 +86,19 @@ async def test_tool_updates_all_three_fields(store):
     assert rel.persona_addressing == "人家"
     assert rel.user_addressing == "亲爱的"
     assert rel.context == "恋人"
+
+
+async def test_tool_returns_bound_actor_id(store):
+    """v0.3.0: actor_id 闭包绑定, 返回给调用方供溯源, 不影响写入目标."""
+    tool = make_update_addressing_tool(
+        store, "default", "group_zhangsan", actor_id="actor_qq_12345",
+    )
+    result = await tool.ainvoke({
+        "user_addressing": "三哥",
+        "reason": "群聊中该 Actor 自我介绍后确立称呼",
+    })
+    assert result["actor_id"] == "actor_qq_12345"
+    # 写入目标仍是绑定的 effective_user_id (组), 不是 actor
+    rel = await store.get_relationship("default", "group_zhangsan")
+    assert rel.user_addressing == "三哥"
+    assert await store.get_relationship("default", "actor_qq_12345") is None

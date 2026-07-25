@@ -31,12 +31,17 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     memory_store = SqliteMemoryStore(str(tmp_path / "mem.db"))
     loop.run_until_complete(memory_store.connect())
 
+    from src.persistence.identity_store import SqliteIdentityStore
+    identity_store = SqliteIdentityStore(str(tmp_path / "identity.db"))
+    loop.run_until_complete(identity_store.connect())
+
     app = FastAPI()
     outer = APIRouter(prefix="/panel")
     outer.include_router(admin_router)
     app.include_router(outer)
 
     app.state.memory_store = memory_store
+    app.state.identity_store = identity_store
     app.dependency_overrides[get_current_user] = lambda: User(
         id="test", username="test", password_hash="",
         must_change_password=False,
@@ -46,6 +51,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     yield app
 
     loop.run_until_complete(memory_store.close())
+    loop.run_until_complete(identity_store.close())
     loop.close()
 
 
@@ -174,3 +180,110 @@ def test_audit_orders_by_id_desc(app: FastAPI) -> None:
     assert len(audit["items"]) == 2
     assert audit["items"][0]["new_value"] == "v2"
     assert audit["items"][1]["new_value"] == "v1"
+
+
+# ─── v0.3.0 关系按 Actor 解析 ─────────────────────────
+
+
+def test_relationship_requires_user_or_actor_id(app: FastAPI) -> None:
+    """两个标识都不传 → 400."""
+    client = TestClient(app)
+    resp = client.get("/panel/admin/relationship")
+    assert resp.status_code == 400
+
+
+def test_relationship_resolves_actor_to_group(app: FastAPI) -> None:
+    """绑定 UserGroup 的 Actor → 查到的是组关系 (effective_user_id 收敛)."""
+    import asyncio
+    from src.persistence.identity_store import SqliteIdentityStore
+
+    loop = asyncio.new_event_loop()
+    identity_store: SqliteIdentityStore = app.state.identity_store
+    memory_store: SqliteMemoryStore = app.state.memory_store
+    try:
+        actor_qq = loop.run_until_complete(
+            identity_store.find_or_create_actor("12345", "astrbot", "小明")
+        )
+        actor_dc = loop.run_until_complete(
+            identity_store.find_or_create_actor("67890", "maibot", "小明")
+        )
+        group = loop.run_until_complete(identity_store.create_group("张三"))
+        loop.run_until_complete(identity_store.bind_actor_to_group(actor_qq.id, group.id))
+        loop.run_until_complete(identity_store.bind_actor_to_group(actor_dc.id, group.id))
+
+        # 在组 (effective_user_id) 上写关系
+        rel = Relationship.create("default", group.id)
+        rel.intimacy_score = 0.55
+        rel.type = "friend"
+        loop.run_until_complete(memory_store.save_relationship(rel))
+    finally:
+        loop.close()
+
+    client = TestClient(app)
+    # 两个平台的 Actor 都查到同一份组关系
+    for actor_id in (actor_qq.id, actor_dc.id):
+        resp = client.get(f"/panel/admin/relationship?actor_id={actor_id}")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["user_id"] == group.id
+        assert body["intimacy"] == pytest.approx(0.55)
+        assert body["relationship_type"] == "friend"
+
+
+def test_relationship_actor_without_group_uses_actor_id(app: FastAPI) -> None:
+    """未绑组的 Actor → effective_user_id 就是 actor_id 本身."""
+    import asyncio
+    from src.persistence.identity_store import SqliteIdentityStore
+
+    loop = asyncio.new_event_loop()
+    identity_store: SqliteIdentityStore = app.state.identity_store
+    try:
+        actor = loop.run_until_complete(
+            identity_store.find_or_create_actor("99999", "chatbox", "独行侠")
+        )
+    finally:
+        loop.close()
+
+    client = TestClient(app)
+    resp = client.get(f"/panel/admin/relationship?actor_id={actor.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["user_id"] == actor.id
+    assert body["relationship_type"] == "stranger"  # 尚未建立 → 默认值
+
+
+def test_put_and_audit_by_actor_id(app: FastAPI) -> None:
+    """PUT 支持 actor_id 定位; 审计也能按 actor_id 查."""
+    import asyncio
+    from src.persistence.identity_store import SqliteIdentityStore
+
+    loop = asyncio.new_event_loop()
+    identity_store: SqliteIdentityStore = app.state.identity_store
+    try:
+        actor = loop.run_until_complete(
+            identity_store.find_or_create_actor("54321", "web", "面板用户")
+        )
+    finally:
+        loop.close()
+
+    client = TestClient(app)
+    resp = client.put(
+        "/panel/admin/relationship",
+        json={"actor_id": actor.id, "user_addressing": "老板", "reason": "按 actor 定位的人工设置"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["user_addressing"] == "老板"
+    assert resp.json()["user_id"] == actor.id
+
+    audit = client.get(f"/panel/admin/relationship/audit?actor_id={actor.id}").json()
+    assert len(audit["items"]) == 1
+    assert audit["items"][0]["new_value"] == "老板"
+
+
+def test_put_relationship_requires_user_or_actor_id(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.put(
+        "/panel/admin/relationship",
+        json={"user_addressing": "小哥", "reason": "没有身份标识的尝试"},
+    )
+    assert resp.status_code == 400
