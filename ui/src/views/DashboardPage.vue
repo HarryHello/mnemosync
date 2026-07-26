@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { getDashboardStats, getRelationship } from '@/api/client'
+import { getDashboardStats, listRelationships } from '@/api/client'
 import type { HealthResponse, Relationship } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
 import StatGrid from '@/components/dashboard/StatGrid.vue'
@@ -12,7 +12,7 @@ const authStore = useAuthStore()
 
 const health = ref<HealthResponse | null>(null)
 const healthErr = ref<string | null>(null)
-const relationship = ref<Relationship | null>(null)
+const relationships = ref<Relationship[]>([])
 const relationshipLoading = ref(false)
 
 const apiKeyCount = ref<number | null>(null)
@@ -48,10 +48,11 @@ async function refresh() {
   }
 
   try {
-    relationship.value = await getRelationship()
+    const res = await listRelationships({ page_size: 5, sort_by: 'intimacy_score', sort_order: 'desc' })
+    relationships.value = res.items
   } catch (err) {
-    console.warn('Failed to load relationship:', err)
-    relationship.value = null
+    console.warn('Failed to load relationships:', err)
+    relationships.value = []
   } finally {
     relationshipLoading.value = false
   }
@@ -84,7 +85,7 @@ onMounted(refresh)
       :prompt-total-count="promptTotalCount"
     />
 
-    <RelationshipCard class="relationship-card-block" :relationship="relationship" :loading="relationshipLoading" />
+    <RelationshipCard class="relationship-card-block" :relationships="relationships" :loading="relationshipLoading" />
 
     <SystemHealthCard :health="health" :error="healthErr" />
   </div>

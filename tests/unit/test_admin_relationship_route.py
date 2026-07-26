@@ -287,3 +287,127 @@ def test_put_relationship_requires_user_or_actor_id(app: FastAPI) -> None:
         json={"user_addressing": "小哥", "reason": "没有身份标识的尝试"},
     )
     assert resp.status_code == 400
+
+
+# ─── v0.3.0 关系列表 ─────────────────────────
+
+
+def test_list_relationships_empty(app: FastAPI) -> None:
+    """空表 → items=[] total=0."""
+    client = TestClient(app)
+    resp = client.get("/panel/admin/relationships")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+    assert body["page"] == 1
+    assert body["page_size"] == 20
+
+
+def test_list_relationships_returns_all(app: FastAPI) -> None:
+    """写入多条 → 全部返回, 默认按亲密度降序."""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    store: SqliteMemoryStore = app.state.memory_store
+    try:
+        for i, (uid, intimacy) in enumerate([("alice", 0.42), ("bob", 0.91), ("carol", 0.15)]):
+            rel = Relationship.create("default", uid)
+            rel.intimacy_score = intimacy
+            loop.run_until_complete(store.save_relationship(rel))
+    finally:
+        loop.close()
+
+    client = TestClient(app)
+    resp = client.get("/panel/admin/relationships")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 3
+    assert len(body["items"]) == 3
+    # 默认亲密度降序: bob > alice > carol
+    assert body["items"][0]["user_id"] == "bob"
+    assert body["items"][1]["user_id"] == "alice"
+    assert body["items"][2]["user_id"] == "carol"
+
+
+def test_list_relationships_pagination(app: FastAPI) -> None:
+    """page_size=2 第一页 2 条, 第二页 1 条."""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    store: SqliteMemoryStore = app.state.memory_store
+    try:
+        for i in range(5):
+            rel = Relationship.create("default", f"user_{i}")
+            rel.intimacy_score = round(i * 0.1, 3)
+            loop.run_until_complete(store.save_relationship(rel))
+    finally:
+        loop.close()
+
+    client = TestClient(app)
+    # 第一页
+    r1 = client.get("/panel/admin/relationships?page=1&page_size=2")
+    assert r1.status_code == 200
+    b1 = r1.json()
+    assert len(b1["items"]) == 2
+    assert b1["total"] == 5
+    assert b1["page"] == 1
+    assert b1["page_size"] == 2
+
+    # 第二页
+    r2 = client.get("/panel/admin/relationships?page=2&page_size=2")
+    assert r2.status_code == 200
+    b2 = r2.json()
+    assert len(b2["items"]) == 2
+    assert b2["page"] == 2
+
+    # 第三页 (最后一条)
+    r3 = client.get("/panel/admin/relationships?page=3&page_size=2")
+    assert r3.status_code == 200
+    b3 = r3.json()
+    assert len(b3["items"]) == 1
+    assert b3["page"] == 3
+
+
+def test_list_relationships_invalid_sort_falls_back(app: FastAPI) -> None:
+    """非法 sort_by 退回 intimacy_score 降序."""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    store: SqliteMemoryStore = app.state.memory_store
+    try:
+        rel = Relationship.create("default", "alice")
+        rel.intimacy_score = 0.5
+        loop.run_until_complete(store.save_relationship(rel))
+        rel2 = Relationship.create("default", "bob")
+        rel2.intimacy_score = 0.9
+        loop.run_until_complete(store.save_relationship(rel2))
+    finally:
+        loop.close()
+
+    client = TestClient(app)
+    resp = client.get("/panel/admin/relationships?sort_by=nonexistent")
+    assert resp.status_code == 200
+    body = resp.json()
+    # 降序: bob 在前
+    assert body["items"][0]["user_id"] == "bob"
+    assert body["items"][1]["user_id"] == "alice"
+
+
+def test_list_relationships_trust_sort(app: FastAPI) -> None:
+    """按 trust_level 升序."""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    store: SqliteMemoryStore = app.state.memory_store
+    try:
+        for uid, trust in [("alice", 0.3), ("bob", 0.9), ("carol", 0.1)]:
+            rel = Relationship.create("default", uid)
+            rel.trust_level = trust
+            loop.run_until_complete(store.save_relationship(rel))
+    finally:
+        loop.close()
+
+    client = TestClient(app)
+    resp = client.get("/panel/admin/relationships?sort_by=trust_level&sort_order=asc")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["items"][0]["user_id"] == "carol"
+    assert body["items"][1]["user_id"] == "alice"
+    assert body["items"][2]["user_id"] == "bob"

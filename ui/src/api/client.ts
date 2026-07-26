@@ -19,6 +19,7 @@ import type {
   PersonaConfigUpdateBody,
   Relationship,
   RelationshipAuditListResponse,
+  RelationshipListResponse,
   RelationshipUpdateBody,
   HealthResponse,
   ChatCompletionRequest,
@@ -327,6 +328,27 @@ export async function getRelationshipAudit(
 ): Promise<RelationshipAuditListResponse> {
   return request<RelationshipAuditListResponse>(
     `${API_BASE}/admin/relationship/audit?user_id=${userId}&limit=${limit}`,
+  )
+}
+
+export interface ListRelationshipsParams {
+  page?: number
+  page_size?: number
+  sort_by?: string
+  sort_order?: string
+}
+
+export async function listRelationships(
+  params: ListRelationshipsParams = {},
+): Promise<RelationshipListResponse> {
+  const q = new URLSearchParams()
+  if (params.page) q.set('page', String(params.page))
+  if (params.page_size) q.set('page_size', String(params.page_size))
+  if (params.sort_by) q.set('sort_by', params.sort_by)
+  if (params.sort_order) q.set('sort_order', params.sort_order)
+  const qs = q.toString()
+  return request<RelationshipListResponse>(
+    `${API_BASE}/admin/relationships${qs ? `?${qs}` : ''}`,
   )
 }
 
@@ -699,6 +721,28 @@ export async function deleteIdentityStrategy(strategyId: string): Promise<void> 
   await request(`${API_BASE}/admin/identity/strategies/${encodeURIComponent(strategyId)}`, {
     method: 'DELETE',
   })
+}
+
+export interface GenerateConfigBody {
+  strategy_type: string
+  description: string
+  sample_message?: string | null
+}
+
+export interface GenerateConfigResponse {
+  config: string
+}
+
+export async function generateStrategyConfig(
+  body: GenerateConfigBody,
+): Promise<GenerateConfigResponse> {
+  return request<GenerateConfigResponse>(
+    `${API_BASE}/admin/identity/strategies/generate-config`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  )
 }
 
 // ── 参与者 (Actor) ──

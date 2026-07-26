@@ -656,6 +656,53 @@ class SqliteMemoryStore:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
 
+    async def list_relationships(
+        self,
+        persona_id: str,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        sort_by: str = "intimacy_score",
+        sort_order: str = "desc",
+    ) -> tuple[list[Relationship], int]:
+        """面板分页: 返回 (当前页, 匹配总数). 仅返回指定 persona 的关系.
+
+        sort_by 白名单: intimacy_score / trust_level / interaction_count /
+        last_active / user_id / type. 非法值退回 intimacy_score.
+        sort_order: 'asc' / 'desc', 其它值退回 desc.
+        """
+        allowed_sort = {
+            "intimacy_score", "trust_level", "interaction_count",
+            "last_active", "user_id", "type",
+        }
+        sort_col = sort_by if sort_by in allowed_sort else "intimacy_score"
+        direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM relationships WHERE persona_id = ?",
+                (persona_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                total = row[0] if row else 0
+
+            async with db.execute(
+                f"""
+                SELECT persona_id, user_id, type, intimacy_score, trust_level,
+                       interaction_count, last_active, notes,
+                       persona_addressing, user_addressing, context
+                FROM relationships
+                WHERE persona_id = ?
+                ORDER BY {sort_col} {direction}, user_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (persona_id, limit, offset),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                items = [self._row_to_relationship(r) for r in rows]
+
+        return items, total
+
     # ============ 工具方法 ============
 
     def _row_to_entry(self, row: tuple) -> MemoryEntry:

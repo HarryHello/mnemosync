@@ -37,6 +37,8 @@ from src.api.schemas.admin import (
     ConversationClearResponse,
     ConversationTurnItem,
     ConversationTurnListResponse,
+    GenerateConfigBody,
+    GenerateConfigResponse,
     IdentityStrategyCreateBody,
     IdentityStrategyListResponse,
     IdentityStrategyResponse,
@@ -82,6 +84,7 @@ from src.core.config import (
 from src.core.prompts import get_prompt_store
 from src.core.prompts.registry import PROMPT_REGISTRY
 from src.infra.forwarder import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
+from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import (
     LLMServiceProvider,
     ModelConfiguration,
@@ -92,6 +95,7 @@ from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.identity_store import SqliteIdentityStore
+from src.core.memory.models import Relationship
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 
@@ -227,6 +231,15 @@ class RelationshipAuditResponse(BaseModel):
     items: list[RelationshipAuditItem]
 
 
+class RelationshipListResponse(BaseModel):
+    """v0.3.0: 多用户关系列表 (分页 + 排序)."""
+
+    items: list[RelationshipResponse]
+    total: int
+    page: int = 1
+    page_size: int = 20
+
+
 class DashboardStatsResponse(BaseModel):
     """仪表盘聚合数据. 单端点替换 5 次往返."""
 
@@ -310,6 +323,46 @@ def _build_health() -> HealthResponse:
         status="ok",
         version=pkg_version,
         timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _relationship_to_response(
+    rel: Relationship | None,
+    target: str,
+    *,
+    settings_override=None,
+) -> RelationshipResponse:
+    """将关系数据转为 Response 模型, 自动处理 NULL 与 TOML 基线回退.
+
+    通用逻辑: 表中为 NULL 的称呼字段用 settings.persona.relation.* 填充;
+    无关系行时返回默认 stranger/0/0, updated_at=""。
+    """
+    s = settings_override or get_settings()
+    base = s.persona.relation
+    if not rel:
+        return RelationshipResponse(
+            persona_id=_persona_id(),
+            user_id=target,
+            intimacy=0.0,
+            trust=0.0,
+            relationship_type="stranger",
+            notes=None,
+            updated_at="",
+            persona_addressing=base.persona_addressing,
+            user_addressing=base.user_addressing,
+            context=base.context,
+        )
+    return RelationshipResponse(
+        persona_id=rel.persona_id,
+        user_id=rel.user_id,
+        intimacy=rel.intimacy_score,
+        trust=rel.trust_level,
+        relationship_type=rel.type,
+        notes=rel.notes,
+        updated_at=rel.last_active.isoformat() if rel.last_active else "",
+        persona_addressing=rel.persona_addressing or base.persona_addressing,
+        user_addressing=rel.user_addressing or base.user_addressing,
+        context=rel.context or base.context,
     )
 
 
@@ -463,43 +516,48 @@ async def get_relationship(
     """获取关系状态.
 
     关系尚未建立 (新装 / 人格重置后 / 与新 user_id 首次交互) 时返回默认 stranger/0/0,
-    不落库 — 后续对话时 `lifecycle.update_relationship` 会自然创建真实行。
+    不落库 — 后续对话时 `lifecycle.update_relationship` 会自然创建真实行.
 
     v0.2.10: 响应含 persona_addressing / user_addressing / context. 表中为 NULL 时
     用 settings.persona.relation.* 基线填充, 前端拿到的永远是"当前有效值".
 
     v0.3.0: user_id / actor_id 至少一个. actor_id 经 identity_store 解析为
-    effective_user_id (绑定 UserGroup 的 Actor 查到的是组关系)。
+    effective_user_id (绑定 UserGroup 的 Actor 查到的是组关系).
     """
     target = await _resolve_relationship_target(request, user_id, actor_id)
-    settings = get_settings()
-    base = settings.persona.relation
     rel = await store.get_relationship(_persona_id(), target)
-    if not rel:
-        return RelationshipResponse(
-            persona_id=_persona_id(),
-            user_id=target,
-            intimacy=0.0,
-            trust=0.0,
-            relationship_type="stranger",
-            notes=None,
-            updated_at="",
-            persona_addressing=base.persona_addressing,
-            user_addressing=base.user_addressing,
-            context=base.context,
-        )
+    return _relationship_to_response(rel, target)
 
-    return RelationshipResponse(
-        persona_id=rel.persona_id,
-        user_id=rel.user_id,
-        intimacy=rel.intimacy_score,
-        trust=rel.trust_level,
-        relationship_type=rel.type,
-        notes=rel.notes,
-        updated_at=rel.last_active.isoformat() if rel.last_active else "",
-        persona_addressing=rel.persona_addressing or base.persona_addressing,
-        user_addressing=rel.user_addressing or base.user_addressing,
-        context=rel.context or base.context,
+
+@router.get("/relationships", response_model=RelationshipListResponse)
+async def list_relationships(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    sort_by: str = Query(
+        "intimacy_score",
+        description="intimacy_score | trust_level | interaction_count | last_active | user_id | type",
+    ),
+    sort_order: str = Query("desc", description="asc | desc"),
+    store: SqliteMemoryStore = Depends(get_memory_store),
+):
+    """分页列出当前人格的所有关系 (v0.3.0 多用户).
+
+    默认按亲密度降序排列, 适合仪表盘"关系较好的用户"展示.
+    sort_by 走白名单, 非法值退回 intimacy_score.
+    """
+    offset = (page - 1) * page_size
+    rows, total = await store.list_relationships(
+        _persona_id(),
+        limit=page_size,
+        offset=offset,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return RelationshipListResponse(
+        items=[_relationship_to_response(r, r.user_id) for r in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -1420,6 +1478,80 @@ async def update_identity_strategy(
         created_at=s.created_at.isoformat() if s.created_at else "",
         updated_at=s.updated_at.isoformat() if s.updated_at else "",
     )
+
+
+@router.post("/identity/strategies/generate-config", response_model=GenerateConfigResponse)
+async def generate_strategy_config(
+    body: GenerateConfigBody,
+    forwarder: MultiForwarder = Depends(get_multi_forwarder),
+):
+    """AI 辅助生成身份策略配置 (v0.3.1).
+
+    用户用自然语言描述身份信息在消息中的格式, 模型自动生成合法的策略配置 JSON,
+    包含正则表达式 (regex 类型) 或 prompt 模板 (llm 类型).
+    """
+    if body.strategy_type not in ("regex", "llm"):
+        raise HTTPException(400, detail=f"不支持为 {body.strategy_type} 类型生成配置, 仅支持 regex / llm")
+
+    sample_block = f"\n\n示例消息:\n```\n{body.sample_message}\n```" if body.sample_message else ""
+
+    if body.strategy_type == "regex":
+        system_prompt = (
+            "你是一个正则表达式专家, 帮助用户生成 Mnemosync 身份识别策略的配置。\n\n"
+            "用户会描述他的消息中身份信息的位置和格式, 你需要输出一个 JSON 对象, 包含以下字段:\n"
+            '- frontend: 前台应用名 (如 astrbot, maibot, chatbox, web 等)\n'
+            '- actor_pattern: 提取用户唯一标识的正则 (如 QQ号、Discord ID、用户名), 必须包含一个捕获组 ()\n'
+            '- name_pattern: 可选, 提取用户显示名称的正则, 包含一个捕获组\n'
+            '- space_pattern: 可选, 提取群聊/会话 ID 的正则, 包含一个捕获组\n'
+            '- event_id_pattern: 可选, 提取消息事件 ID 的正则, 包含一个捕获组\n'
+            '- search_in: 搜索范围, 可选值: system_or_first_user (优先 system 消息再第一条 user 消息),'
+            ' system (仅 system 消息), all (全部消息)\n\n'
+            "正则编写要点:\n"
+            "- 用 \\s* 匹配可能的空白字符\n"
+            "- 用 [:：] 匹配中英文冒号\n"
+            "- 用 \\S+ 匹配非空白标识符, \\d+ 匹配纯数字 ID\n"
+            "- 每个 pattern 必须包含恰好一个捕获组 (括号), 用于提取目标值\n"
+            "- 如果用户描述中某个字段不存在, 省略该字段\n\n"
+            "严格输出 JSON 对象, 不要包含任何解释或 markdown 标记."
+        )
+    else:
+        system_prompt = (
+            "你是一个 AI 提示词工程师, 帮助用户生成 Mnemosync 身份识别策略的配置。\n\n"
+            "LLM 策略通过调用辅助模型从消息中提取身份信息。你需要输出一个 JSON 对象, 包含以下字段:\n"
+            '- frontend: 前台应用名 (如 astrbot, maibot, chatbox, web 等)\n'
+            '- prompt_template: 提示词模板, 包含 {content} 占位符, 指示模型从消息中提取身份信息\n'
+            "  并返回 JSON: {\"actor_id\":\"...\",\"actor_name\":\"...\",\"space_id\":\"...\",\"event_id\":\"...\"}\n\n"
+            "严格输出 JSON 对象, 不要包含任何解释或 markdown 标记."
+        )
+
+    user_prompt = (
+        f"请根据以下描述生成 {body.strategy_type} 策略配置:\n\n"
+        f"{body.description}{sample_block}"
+    )
+
+    try:
+        resp = await forwarder.chat(
+            ModelType.ASSIST,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            extra_body={"enable_thinking": False},
+        )
+        raw = resp["choices"][0]["message"]["content"].strip()
+        data = json.loads(raw)
+        # 校验生成的 JSON 是有效对象
+        if not isinstance(data, dict):
+            raise ValueError("模型返回的不是 JSON 对象")
+        return GenerateConfigResponse(config=json.dumps(data, ensure_ascii=False, indent=2))
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        logger.warning("AI 生成策略配置失败: %s", e)
+        raise HTTPException(500, detail=f"模型生成失败: {e}")
+    except Exception as e:
+        logger.warning("AI 生成策略配置失败 (网络/模型): %s", e)
+        raise HTTPException(502, detail=f"模型调用失败: {e}")
 
 
 @router.delete("/identity/strategies/{strategy_id}")

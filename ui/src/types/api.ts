@@ -186,6 +186,14 @@ export interface RelationshipUpdateBody {
   user_id?: string
 }
 
+/** v0.3.0: 多用户关系列表 (分页 + 排序). */
+export interface RelationshipListResponse {
+  items: Relationship[]
+  total: number
+  page: number
+  page_size: number
+}
+
 // ============================================================================
 // Health
 // ============================================================================

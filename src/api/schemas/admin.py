@@ -400,6 +400,18 @@ class IdentityStrategyUpdateBody(BaseModel):
     is_active: bool | None = None
 
 
+class GenerateConfigBody(BaseModel):
+    """AI 辅助生成身份策略配置 (v0.3.1)."""
+
+    strategy_type: str = Field(..., description="regex | llm")
+    description: str = Field(..., min_length=10, max_length=2000, description="用自然语言描述身份信息在消息中的格式")
+    sample_message: str | None = Field(None, max_length=5000, description="可选: 一条真实消息示例")
+
+
+class GenerateConfigResponse(BaseModel):
+    config: str = Field(..., description="生成的 JSON 配置字符串")
+
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
