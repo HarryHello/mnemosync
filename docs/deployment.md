@@ -1,9 +1,9 @@
 # 部署指南 | Deployment
 
-> **系统版本**: v0.2.12
+> **系统版本**: v0.3.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **作者**: HarryHelloo
 
 ---
@@ -17,7 +17,7 @@ Mnemosync 只读 `config.local.toml`, 缺失即启动失败。首次部署:
 ```bash
 cp config.example.toml config.local.toml
 # 编辑 [persona] / [runtime] / [storage] 等段; 模型绑定 (main/assist/embedding/rerank)
-# 由 role_bindings 表管理, 通过 CLI (`mnemosync login` → `ad-service` + `set-model`) 或
+# 由 role_bindings 表管理, 通过 CLI (`mnemosync login` → `ad-service` + `model add`) 或
 # 面板 `/panel/admin/model-bindings` 配置, 不再写在 TOML 里 (v0.2.3 起)
 ```
 
@@ -35,10 +35,10 @@ Mnemosync/
 ├── pyproject.toml / uv.lock
 ├── src/
 │   ├── api/                # FastAPI 路由 + 中间件 + reasoning_control + admin_debug
-│   ├── cli/                # 顶层命令 + 交互式 shell + ask
-│   ├── core/               # config / graph / memory / agents / models / prompts
+│   ├── cli/                # 顶层命令 + 交互式 shell + ask + identity (v0.3.0)
+│   ├── core/               # config / graph / memory / agents / models / prompts / identity (v0.3.0)
 │   ├── infra/              # forwarder + MultiForwarder / llm_service / vector_store / debug_bus
-│   ├── persistence/        # SQLite stores (memory / auth / api_key / conversation / http_log)
+│   ├── persistence/        # SQLite stores (memory / auth / api_key / conversation / http_log / identity / idempotency)
 │   ├── tools/              # make_*_tool 工厂
 │   └── main.py
 ├── ui/                     # 管理面前端
@@ -50,10 +50,13 @@ Mnemosync/
 `data/` 是**唯一需要持久化**的目录, 包含:
 - `memory.db` — 长期记忆元数据 (SQLite)
 - `auth.db` — 管理员账号 + 会话 Token
-- `api_keys.db` — 前端 API Key (含 v0.2.5 `source` 列)
+- `api_keys.db` — 前端 API Key (含 v0.2.5 `source` 列、v0.3.0 `strategy_id` 列)
 - `llm_service.db` — 服务商 + `role_bindings` (v0.2.3)
-- `conversation.db` — v0.2.6 跨前端短期记忆 (`conversation_turns` 流水)
+- `conversation.db` — v0.2.6 跨前端短期记忆 (`conversation_turns` 流水; v0.3.0 含空间事件流列)
 - `http_logs.db` — v0.2.5 调试面板 HTTP 日志
+- `notifications.db` — v0.2.13 通知中心
+- `identity.db` — **v0.3.0** 身份四表 (actors / user_groups / actor_group_memberships / identity_strategies)
+- `idempotency.db` — **v0.3.0** 幂等重放缓存 (平台重发消息时原样返回首次响应)
 - `chroma/` — ChromaDB 向量库 (含 v0.2.4 embedding lock metadata)
 - `prompts/` — v0.2.1 用户提示词覆盖层 (可选; 无覆盖时读默认层)
 - `prompts/.history/` — 提示词覆盖备份 (每个 name 保留最近 10 份)
@@ -85,7 +88,7 @@ docker compose exec mnemosync uv run mnemosync init --docker
 docker compose exec mnemosync uv run mnemosync login --docker
 ```
 
-在 shell 内使用 `generate-key`, `ad-service`, `set-model <role> <service_id> <model>` 等, 详见 [cli.md](modules/cli.md)。
+在 shell 内使用 `generate-key`, `ad-service`, `model add <role> <service_id> <model>` 等, 详见 [cli.md](modules/cli.md)。
 
 ### 2.4 停止
 
@@ -273,7 +276,7 @@ chmod 755 data/
 **上游 API 排查**: 用 `mnemosync serve --debug` 或 `mnemosync ask --debug "..."` 打印所有请求/响应 JSON。
 
 **记忆检索为空**:
-1. 是否配置了嵌入角色绑定? `mnemosync login` → `set-model embedding <service_id> <model> --dim N` (v0.2.3+)
+1. 是否配置了嵌入角色绑定? `mnemosync login` → `model add embedding <service_id> <model> --dim N` (v0.2.3+)
 2. 切换嵌入模型: 走 `POST /panel/admin/memory/reindex` 或 CLI `memory reindex --prune` (v0.2.4); Chroma collection 锁 `(service_id, model, dim)`, 手动清空 `data/chroma/` 会失去元数据
 3. 重排端点差异见 [forward.md](modules/forward.md) §4 (`/rerank` → 404 fallback `/reranks`)
 
@@ -304,3 +307,4 @@ rm -rf /opt/Mnemosync
 | v0.2.1 | 2026-07-15 | 与代码对齐: 移除虚构环境变量表 (`MNEMOSYNC_DB_PATH` 等), 补 `mnemosync upgrade` / `--debug` / `--daemon`, 补 SSE 反代要点, 移除未实现的 Redis 缓存/metrics 章节 |
 | v0.2.6 | 2026-07-18 | 与代码对齐: 目录/data 列表补 `conversation.db` (v0.2.6 短期记忆) / `http_logs.db` (v0.2.5) / `prompts/` (v0.2.1); 模型绑定改由 `role_bindings` + CLI `set-model` (v0.2.3+), 不再写 `[chat]/[embedding]/[rerank]`; 换嵌入模型走 `memory reindex` (v0.2.4) 而非手动清 Chroma |
 | v0.2.12 | 2026-07-20 | 面板首次登录强制改账号密码: 新增 `POST /panel/auth/setup-credentials` 与 `require_password_settled` dependency (面板非 auth 路由 include 时统一注入); `must_change_password=True` 时所有 `/panel/*` (除 `/panel/auth/*`) 返回 `403 password_change_required`; 面板新增 `/setup` 页面 (BlankLayout, 无侧栏), 全局路由守卫强制跳转; `/settings` 简化为改密, 用户名只读展示; CLI `mnemosync login` 仍是唯一修改用户名的入口 |
+| v0.3.0 | 2026-07-26 | data 列表补 `identity.db` / `idempotency.db` (多用户身份 + 幂等重放) 与 `notifications.db`; 备份清单同步; 目录树补 `src/core/identity/` 与 persistence 新库; CLI 模型命令名修正为 `model add` |

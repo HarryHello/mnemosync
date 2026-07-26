@@ -2,9 +2,18 @@
 
 > **文档版本**: v0.3.0-draft
 > **创建时间**: 2026-07-24
-> **最后更新**: 2026-07-24
-> **状态**: 设计预留 · 未进入开发 (Design Reservation · No Implementation)
+> **最后更新**: 2026-07-26
+> **状态**: ✅ 核心骨架已在 v0.3.0 实现 (Design Reservation → Implemented Core)
 > **基准场景**: Mnemosync → AstrBot（或其他 ChatBot / Agent 框架）→ QQ 机器人 → QQ 群
+
+> **进展更新 (2026-07-26)**: 本文的核心架构边界已在 v0.3.0 Phase 2 落地——
+> - **三个正交维度**: 人格 (persona_id) / 参与者 (Actor: frontend + external_key) / 会话空间 (space_id) 已实现; 并新增 **UserGroup** (一个真实人) 作为跨平台身份归一实体, effective_user_id = group_id 或 actor_id 作为记忆/关系隔离边界。
+> - **身份可信度分层**: 四种身份策略 (direct / api_key_bound / regex / llm) 绑定 API Key, 服务器侧解析; 无可信身份降级为**非归属模式** (不建身份、不读写私有记忆)。
+> - **主体与受众分离**: `AudienceFilter` 两级过滤 (ChromaDB `$or` 粗筛 + `is_visible` 精筛), 记忆先按受众过滤再交给模型。
+> - **空间事件流**: `conversation_turns` 按 space_id 分区 + `committed_sequence` + `late_arrival` + 幂等重放表。
+> - **未实现 (保持预留)**: SpaceState / Checkpoint / 摘要生成、消息队列/分布式锁、用户自助记忆管理。
+>
+> 实现文档: [modules/identity.md](../modules/identity.md); 决策: [dev-decisions.md](../dev-decisions.md)「单人格多用户基础 (v0.3.0)」。下文为制定时的原始预留文本 (其中 "v0.2.x 现状" 描述已过时), 保留作架构推演参考。
 
 ---
 

@@ -1,8 +1,8 @@
 # 记忆系统设计 | Memory System Design
 
-> **文档版本**: v0.2.11
+> **文档版本**: v0.3.0
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **状态**: 与代码同步
 
 **结构**: 短期记忆 (v0.2.6, 跨前端对话流水双窗装填) + 长期记忆 (向量库 + SQLite + 衰减模型)。两者独立存储、独立生命周期, 在装填时汇合成同一份主对话 messages。
@@ -78,12 +78,18 @@ CREATE TABLE conversation_turns (
     content TEXT NOT NULL,
     ts TIMESTAMP NOT NULL,
     token_count INTEGER NOT NULL,   -- 估算 (len//2 + 8)
-    source_frontend TEXT            -- 派生自 api_key.note, 仅观测
+    source_frontend TEXT,           -- 派生自 api_key.note, 仅观测
+    actor_id TEXT,                  -- v0.3.0: 参与者 Actor ID
+    space_id TEXT,                  -- v0.3.0: 会话空间 ID (群聊分区)
+    external_event_id TEXT,         -- v0.3.0: 平台侧事件 ID (幂等)
+    committed_sequence INTEGER,     -- v0.3.0: 空间内单调递增序号 (MAX+1, 同事务分配)
+    late_arrival INTEGER NOT NULL DEFAULT 0  -- v0.3.0: 事件时间早于空间最新已提交
 );
 CREATE INDEX idx_conversation_turns_ts ON conversation_turns(ts DESC);
+CREATE INDEX idx_conv_space_seq ON conversation_turns(space_id, committed_sequence);
 ```
 
-所有前端写入同一 bucket, **无 thread/user 分区** — 单人格单用户定位 (`source_user='default'` 硬编码) 下, 分区就违背语义。
+**空间事件流 (v0.3.0)**: 群聊/多用户场景按 `space_id` 分区 — 每个空间内轮次在提交时分配 `committed_sequence` (空间内 MAX+1, 同事务分配), 事件时间早于空间内最新已提交时间时标记 `late_arrival`。无 `space_id` 的私聊/非归属轮次不分配序号, 仍按 `ts` 定序。装填上下文时 `space_id` 非空只读本空间流水 (`list_for_space`), 避免其他空间对话泄入。
 
 ### 写入 (forward.py)
 
@@ -93,14 +99,19 @@ CREATE INDEX idx_conversation_turns_ts ON conversation_turns(ts DESC);
 # _handle_stream 尾部
 await conversation_store.append("user", new_user_content,
                                  token_count=token_count_for_storage(new_user_content),
-                                 source_frontend=source_frontend)
+                                 source_frontend=source_frontend,
+                                 actor_id=actor_id,           # v0.3.0
+                                 space_id=space_id,           # v0.3.0
+                                 external_event_id=ext_id)    # v0.3.0
 await conversation_store.append("assistant", collected_response_text,
                                  token_count=token_count_for_storage(collected_response_text),
-                                 source_frontend=source_frontend)
+                                 source_frontend=source_frontend,
+                                 space_id=space_id)           # v0.3.0
 ```
 
 - `new_user_content` = 客户端 messages 里**最后一条 user** 的文本 (前面的历史全部忽略)
 - `source_frontend` = `api_key.note` (服务器派生, 不信任客户端 header)
+- `actor_id` / `space_id` = 由身份解析器按策略解析 (v0.3.0), 详见 [identity.md](identity.md)
 
 ### 装填 (build_short_term_history)
 
@@ -113,6 +124,7 @@ BuiltContext = await build_short_term_history(
     system_text=rendered_system,                    # 已 render 完的 system
     new_user_text=new_user_content,
     max_tokens_hint=request.max_tokens,
+    space_id=space_id,                              # v0.3.0: 非空时只读本空间
 )
 ```
 
@@ -327,13 +339,16 @@ v0.2.0: embed(query) → cosine_similarity → reranker → 语义匹配
 查询文本（最新用户消息）
     │
     ▼
-嵌入模型 → query_vector [768 维]
+嵌入模型 → query_vector
     │
     ▼
-ChromaDB.similarity_search(query_vector, n_results=top_k * 2)
-    │  余弦相似度粗筛
+ChromaDB.query(query_vector, where=受众粗筛子句, n_results=top_k * 3)   ← v0.3.0
+    │  余弦相似度粗筛 (where 为 $or: 自己桶 / PUBLIC / 本空间)
     ▼
-candidate_list (top 10)
+candidate_list
+    │
+    ▼
+AudienceFilter.is_visible(entry, retrieval_ctx)                        ← v0.3.0 精筛
     │
     ▼
 重排序模型(query, candidates) → 精排
@@ -360,6 +375,34 @@ reranker 精排后:
   "我对海鲜过敏" (relevance 0.94) ← 排第一
   "我喜欢吃花生酱" (relevance 0.31) ← 排末尾
 ```
+
+### 4.4 受众过滤 (v0.3.0)
+
+多用户场景下, 检索**先按受众过滤再交给模型** — 不靠 prompt 防泄露。实现见 [src/core/memory/audience.py](../../src/core/memory/audience.py)。
+
+**两级过滤**:
+
+1. **粗筛** (`AudienceFilter.build_chromadb_where`): ChromaDB `$or` 子句放宽到"可能可见"的超集 — 自己桶 (`source_user`) / PUBLIC (`visibility`) / 本空间 (`space_id`, 仅群聊)。非归属模式仅 `visibility=public`。
+2. **精筛** (`AudienceFilter.is_visible`): 取到 `MemoryEntry` 后逐条判定 (关系门槛与策略无法在 ChromaDB 层表达)。候选数因此取 `top_k * 3` 补偿淘汰。
+
+**可见性规则** (`is_visible`):
+
+| 条件 | 可见性 |
+|------|--------|
+| `visibility = PUBLIC` | 任何上下文可见 (含非归属模式) |
+| `entry.source_user == 自己的 effective_user_id` | 可见 (自己桶的记忆, 任何可见性) |
+| `entry.space_id == 当前 space_id` 且非 SOURCE_RESTRICTED | 空间成员可见 (群聊共享记忆) |
+| `FRIENDS_ONLY` (非来源用户) | 需要 friend / intimate 关系 |
+| `CONFIDENTIAL` (非来源用户) | 需要 `trust_level >= 0.7` |
+| `custom_policies` 含 `deny:user:<id>` / `deny:actor:<id>` | 一票否决 |
+| `custom_policies` 含 `allow:*` 规则 | 构成白名单, 不在名单内不可见 |
+| 其余 (SOURCE_RESTRICTED 且非来源用户) | 不可见 |
+
+**群聊关键不变量**: 其他参与者的 SOURCE_RESTRICTED 记忆绝不出现在本用户的上下文中 — 即使同处一个空间。
+
+**永久记忆加载同样受众化**: `list_permanent(source_user, limit, space_id)` 的 SQL 放宽为 自己桶 OR PUBLIC OR (群聊时本空间非 SOURCE_RESTRICTED), 结果再过一遍 `AudienceFilter.filter` (关系门槛只能在 Python 层判)。
+
+身份的来龙去脉 (Actor / UserGroup / effective_user_id / 非归属模式) 见 [identity.md](identity.md)。
 
 ---
 
@@ -506,7 +549,7 @@ class MemoryEntry:
     id: str                      # 唯一标识
     content: str                 # 记忆文本
     role: str                    # user / assistant
-    source_user: str             # 来源用户
+    source_user: str             # 来源用户 (effective_user_id)
     memory_type: MemoryType      # PERMANENT / NORMAL (v0.2 新增)
     importance: float            # 0.0-1.0 (v0.2 新增)
     decay_rate: float            # 0.0-1.0 (v0.2 新增)
@@ -517,6 +560,7 @@ class MemoryEntry:
     custom_policies: list[str]   # 自定义策略
     emotional_tags: list[str]    # 情感标签
     related_memories: list[str]  # 关联记忆 ID (v0.2 新增)
+    space_id: str | None = None  # 诞生空间 (v0.3.0) — 非空=空间共享记忆候选
     created_at: datetime
     last_accessed: datetime
     expires_at: datetime | None
@@ -554,6 +598,7 @@ CREATE TABLE memory_entries (
     custom_policies TEXT,
     emotional_tags TEXT,
     related_memories TEXT,                             -- ★ JSON 数组
+    space_id TEXT,                                     -- ★ v0.3.0: 诞生空间
     created_at TIMESTAMP NOT NULL,
     last_accessed TIMESTAMP,
     expires_at TIMESTAMP
@@ -565,14 +610,15 @@ CREATE INDEX idx_memory_type ON memory_entries(memory_type);
 CREATE INDEX idx_priority ON memory_entries(priority DESC);
 CREATE INDEX idx_is_forgotten ON memory_entries(is_forgotten);
 CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
+CREATE INDEX idx_mem_space ON memory_entries(space_id);  -- v0.3.0
 ```
 
-**关系表 (v0.2.10 起 3 个 nullable 列; NULL = 沿用 TOML 基线)**
+**关系表 (v0.2.10 起 3 个 nullable 列; NULL = 沿用 TOML 基线; v0.3.0 user_id 列存 effective_user_id)**
 
 ```sql
 CREATE TABLE relationships (
     persona_id           TEXT NOT NULL,
-    user_id              TEXT NOT NULL,
+    user_id              TEXT NOT NULL,                  -- v0.3.0: effective_user_id (记忆与关系隔离边界)
     intimacy             REAL NOT NULL DEFAULT 0.0,   -- 0.0 ~ 1.0
     trust                REAL NOT NULL DEFAULT 0.0,
     stage                TEXT NOT NULL DEFAULT 'stranger',
@@ -681,6 +727,7 @@ CREATE INDEX idx_audit_user ON relationship_audit_log(persona_id, user_id, id DE
 | v0.2.7 | 2026-07-18 | 新增 `POST /panel/admin/persona/reset`: 原子清空 memory_entries (含 PERMANENT) / relationships / conversation_turns / Chroma collection, 保留服务商与 API Key。面板 + CLI 二次确认后触发 |
 | v0.2.9 | 2026-07-19 | 关系基线抽入 TOML `[persona.relation]` (`persona_addressing` / `user_addressing` / `context`), memory / relationship 两个 Agent prompt 通过占位符消费 |
 | v0.2.10 | 2026-07-19 | **关系称呼动态演化**: `relationships` 表加 3 个 nullable 列 (同名字段); 新增 `relationship_audit_log` 表 (字段级 diff, source=agent/manual); 关系分析 Agent 获得 `update_addressing` tool (自证 `reason` ≥ 10 字, `persona_id`/`user_id` 由 factory 闭包绑定不可越权); `nodes.py._resolve_addressing` 优先读表, NULL 回退 TOML 基线; `PUT /panel/admin/relationship` + `GET /panel/admin/relationship/audit` 提供人工 override 与历史回溯 |
+| v0.3.0 | 2026-07-26 | **多用户受众化**: `MemoryEntry.space_id` 字段; `source_user` / `relationships.user_id` 语义改为 effective_user_id (不再有 "default" 兜底); 检索两级受众过滤 (§4.4: `$or` 粗筛 + `is_visible` 精筛); `list_permanent` 放宽并过滤; 短期流水按 space_id 分区 (`committed_sequence` / `late_arrival` / `list_for_space`); 幂等缓存保护记忆不被重复写入 (详见 [identity.md](identity.md)) |
 
 ---
 

@@ -1,9 +1,9 @@
 # 消息处理流程 | Message Processing Flow
 
-> **系统版本**: v0.2.11
+> **系统版本**: v0.3.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **作者**: HarryHelloo
 
 ---
@@ -31,7 +31,16 @@ Client ──► POST /v1/chat/completions
               │
               ▼
        [forward.py]
-       _verify_api_key → _resolve_source_frontend (from api_key.note)
+       _verify_api_key → 身份解析 _resolve_identity_context (v0.3.0)
+         │                   │
+         │  (无策略/解析失败 → 非归属模式: actor_id=None, 不读写私有记忆)
+         │                   │
+         ▼                   ▼
+       幂等预检 _lookup_idempotency (v0.3.0)
+         │  (命中 → 重放首次响应, 零 LLM 开销)
+         │
+         ▼
+       _resolve_source_frontend (from api_key.note)
        resolve main/embedding/rerank candidates (role_bindings)
        load persona (server-first) → prompt_cleaning on client system
               │
@@ -39,17 +48,18 @@ Client ──► POST /v1/chat/completions
        ▼             ▼
   非流式          流式 (生产主路径)
   graph.ainvoke   直接在 forward.py 内:
-       │             1. 加载永久记忆 (SQLite)
-       │             2. 语义检索 (Chroma + rerank)
-       │             3. 加载关系状态
+       │             1. 加载永久记忆 (SQLite, space_id 分区)
+       │             2. 语义检索 (Chroma + rerank, RetrievalContext 受众过滤)
+       │             3. 加载关系状态 (persona_id, source_user)
        │             4. render_main_dialogue_system(...) → system_text
-       │             5. build_short_term_history(...)  ← v0.2.6 双窗
+       │             5. build_short_term_history(...)  ← v0.2.6 双窗, space_id
        │                (读 conversation_turns, 时间窗+模型窗裁剪)
        │             6. build_main_dialogue_messages(system, history, new_user)
        │             7. Forwarder.chat_stream → SSE 透传给客户端
        │             8. 流结束:
-       │                - conversation_store.append(user, new_user_content, ...)
-       │                - conversation_store.append(assistant, collected_text, ...)
+       │                - conversation_store.append(user, ..., actor_id, space_id, external_event_id)
+       │                - conversation_store.append(assistant, ..., actor_id, space_id)
+       │                - _record_idempotency (首次响应落库)
        │                - create_task(_run_memory_graph)
        │                          │
        └──────────────► 后台图 (关系分析 + 记忆分析):
@@ -69,23 +79,34 @@ Client ──► POST /v1/chat/completions
 
 ```
 1. API Key 验证 (_verify_api_key): Authorization: Bearer sk-<key>
-   → SqliteApiKeyStore.get_by_raw_key → api_key record
-2. source_frontend 派生 (_resolve_source_frontend):
+   → SqliteApiKeyStore.get_by_raw_key → api_key record (含 strategy_id, v0.3.0)
+2. 身份解析 (_resolve_identity_context, v0.3.0):
+   → 从 api_key.strategy_id 获取策略 (direct / api_key_bound / regex / llm)
+   → IdentityResolver.resolve(...) → IdentityContext
+   → 解析成功: actor_id / effective_user_id / space_id / channel_type / external_event_id
+   → 解析失败/无策略: 非归属模式 — source_user = request.user or None, 不创建 Actor, 不读写私有记忆
+3. 幂等预检 (_lookup_idempotency, v0.3.0):
+   → 按 (api_key.id, external_event_id) 查幂等缓存
+   → 命中: 直接重放首次响应 (零 LLM 开销, 零记忆副作用)
+   注意: 幂等预检在提示词清洗和上游调用之前, 确保重复请求零成本
+4. source_frontend 派生 (_resolve_source_frontend):
    = api_key.note (服务器派生, 不信任客户端 header)
-3. 模型解析: RoleResolver
+5. 模型解析: RoleResolver
    → main_candidate / assist_candidate / embedding_candidate / rerank_candidate
    → 每个 ResolvedCandidate 携带 base_url / api_key / model / context_length / embedding_dim
-4. 消息序列化: request.messages → messages_dict
+6. 消息序列化: request.messages → messages_dict
    ⚠️ 只取最后一条 user 消息作为 new_user_content, 客户端携带的历史全部忽略 (v0.2.6)
-5. 加载服务器人格 (settings.persona) — 服务器权威
-6. 客户端 system 消息走 prompt_cleaning Agent 剥离人格描述, 保留功能性指令
-7. 构建 initial_state:
+7. 加载服务器人格 (settings.persona) — 服务器权威
+8. 客户端 system 消息走 prompt_cleaning Agent 剥离人格描述, 保留功能性指令
+9. 构建 initial_state:
    {
-     new_user_content, source_user="default", source_frontend,
-     persona, persona_name,
+     new_user_content, source_user, actor_id,
+     persona, persona_name, persona_id="default",
      main_candidate, embedding_candidate, rerank_candidate,
      proxy_thinking_enabled: 由 reasoning_control 决策,
-     stream_mode: bool
+     stream_mode: bool,
+     source_frontend, space_id, channel_type,
+     external_event_id, api_key_id,
    }
 ```
 
@@ -107,22 +128,24 @@ Client ──► POST /v1/chat/completions
 
 ```
 1. 加载永久记忆
-   memory_store.list_permanent(source_user, limit=permanent_load_top)
+   memory_store.list_permanent(source_user, limit=permanent_load_top, space_id=space_id)
+   → AudienceFilter.filter(perms, retrieval_ctx) 受众过滤
 2. 语义检索
    query = new_user_content
+   retrieval_ctx = RetrievalContext(effective_user_id, actor_id, space_id, channel_type, relationship)
    MemoryRetriever(forwarder, vector_store, memory_store).search(
-     query, top_k=retrieval_top_k, source_user=...
+     query, top_k=retrieval_top_k, retrieval_ctx=retrieval_ctx,
    )
-   内部: embedding API → Chroma cosine 粗筛 → rerank API → top_k
+   内部: embedding API → Chroma $or 粗筛 → is_visible 精筛 → rerank API → top_k
 3. 更新访问时间: memory_store.mark_accessed(id)
-4. 加载关系状态: memory_store.get_relationship("default", source_user)
+4. 加载关系状态: memory_store.get_relationship(persona_id, source_user)
 5. 装填 system 内容
    system_text = render_main_dialogue_system(
      persona_name, persona_prompt, user_name,
      permanent_memories, retrieved_memories, relationship,
      proxy_thinking_result,
    )
-6. 装填短期记忆 (v0.2.6)
+6. 装填短期记忆 (v0.2.6, v0.3.0 加 space_id)
    built = await build_short_term_history(
      store=conversation_store,
      now=now,
@@ -131,6 +154,7 @@ Client ──► POST /v1/chat/completions
      system_text=system_text,
      new_user_text=new_user_content,
      max_tokens_hint=request.max_tokens,
+     space_id=space_id,
    )
    → built.history: list[dict[role, content]]
 7. 组装 messages
@@ -141,9 +165,12 @@ Client ──► POST /v1/chat/completions
      yield chunk                # 零缓冲透传
 9. 流结束
    await conversation_store.append("user", new_user_content,
-                                    token_count=..., source_frontend=source_frontend)
+                                    token_count=..., source_frontend=source_frontend,
+                                    actor_id=actor_id, space_id=space_id, external_event_id=external_event_id)
    await conversation_store.append("assistant", collected_response_text,
-                                    token_count=..., source_frontend=source_frontend)
+                                    token_count=..., source_frontend=source_frontend,
+                                    actor_id=actor_id, space_id=space_id)
+   await _record_idempotency(...)  # 首次响应落幂等缓存
    asyncio.create_task(_run_memory_graph(initial_state, collected_chunks))
 ```
 
@@ -251,3 +278,4 @@ relationship_analysis   memory_analysis (ReAct)
 | v0.2.0 | 2026-07-12 | LangGraph 多 Agent 编排, ChromaDB, 代理思考 |
 | v0.2.1 | 2026-07-16 | 纠正人格来源: 从"提取客户端 system 消息"改为"服务器加载人格" (server-first); 修正代理推理启用方式描述 |
 | v0.2.6 | 2026-07-18 | 数据流补充服务端 `conversation_turns` 装填与回写; 客户端历史被忽略, 仅取最后一条 user; source_frontend 从 api_key.note 派生; ResolvedCandidate 传 context_length 给双窗算法 |
+| v0.3.0 | 2026-07-26 | 新增身份解析与幂等预检步骤; source_user 改为从 identity_ctx.effective_user_id 派生 (非归属模式为 None, 不再硬编码 "default"); initial_state 新增 actor_id/space_id/channel_type/persona_id/external_event_id/api_key_id; 记忆检索接入 RetrievalContext 受众过滤; 短期记忆装填与流水回写接入 space_id 分区 |

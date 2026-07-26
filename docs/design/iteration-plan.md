@@ -2,8 +2,14 @@
 
 > **文档版本**: v0.1.0
 > **创建时间**: 2026-07-25
-> **最后更新**: 2026-07-25
-> **状态**: 计划中 · 待执行
+> **最后更新**: 2026-07-26
+> **状态**: ✅ 主体已完成 (Phase 1 → v0.2.12, Phase 2 → v0.3.0)
+
+> **进展更新 (2026-07-26)**:
+> - **Phase 1 (Agent 简化)** 已落地: 提示词清洗改单次重写 (`sentence_classifier` 移除)、衰减改确定性公式 (`time_decay_calculator` 移除, `decay_evaluations` 字段保留但恒空)、情绪分析去重 (`main_dialogue_node` 预计算共享)、迭代上限下调 (memory 6→4 / relationship 3→2)。
+> - **Phase 2 (多用户基础)** 已完整落地 (v0.3.0 Sub-Phase A–D): 身份模型 (Actor / UserGroup / effective_user_id) + 四种身份策略绑定 API Key + 非归属模式; 空间事件流 (space_id / committed_sequence / late_arrival) + 幂等重放; 受众过滤检索 (AudienceFilter 两级); 关系按 effective_user_id 分区 + actor_id 解析; 面板「身份管理」页 + `mnemosync identity` CLI。实现文档见 [modules/identity.md](../modules/identity.md), 决策见 [dev-decisions.md](../dev-decisions.md)「单人格多用户基础 (v0.3.0)」。
+> - **未实现 (保持远期)**: 多人格、SpaceState / Checkpoint / 群聊摘要、跨平台身份自动绑定、消息队列/分布式锁。
+> 下文为制定时的原始计划文本, 保留作历史参考。
 
 ---
 

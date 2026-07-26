@@ -1,9 +1,9 @@
 # 多 Agent 设计 | Multi-Agent Design
 
-> **系统版本**: v0.2.11
+> **系统版本**: v0.3.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **作者**: HarryHelloo
 
 ---
@@ -105,16 +105,16 @@ parse_request
 
 | 工具 | 工厂函数 | 用途 |
 |------|---------|------|
-| `vector_search` | `make_vector_search_tool` | 检索已有记忆判断重复/冲突/关联 |
-| `emotion_analyzer` | `make_emotion_analyzer_tool` | 分析对话情绪标签和强度 |
-| `time_decay_calculator` | `make_time_decay_calculator_tool` | 计算已有记忆的理论衰减优先级 |
+| `vector_search` | `make_vector_search_tool` | 检索已有记忆判断重复/冲突/关联 (v0.3.0: 带受众过滤) |
+
+**v0.3.0 变化**: 情绪分析不再作为 ReAct 工具 — 由 `main_dialogue_node` 预计算一次 (`_compute_emotion`), 结果通过 `emotion_analysis` 文本参数传给 Agent。衰减计算不再由 LLM 驱动 — 改为 `run_deterministic_decay()` 确定性公式批量处理, `decay_evaluations` 字段始终返回 `[]`。**非归属守卫**: `source_user` 为空 (非归属模式) 时节点直接返回 `{"new_memories": [], "decay_evaluations": []}`, 不调用 LLM、不写任何私有记忆。
 
 工具通过工厂注入依赖 (Forwarder / VectorStore / MemoryStore), 见 [tools.md](tools.md)。
 
 ### 3.3 循环约束
 
-- `max_iterations = 6` (由 nodes.py 传入)
-- 提示词要求: 先 `vector_search` 查重 → `emotion_analyzer` 定情绪 → 有衰减目标时 `time_decay_calculator` → 输出 JSON
+- `max_iterations = 4` (由 nodes.py 传入)
+- 提示词要求: 先 `vector_search` 查重 (v0.3.0 起检索带受众过滤, 工具闭包绑定 `RetrievalContext`) → 输出 JSON
 - Agent 判断无需工具调用时直接输出 JSON, 循环终止
 
 ### 3.4 输出 JSON schema
@@ -251,15 +251,15 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 
 ### 5.1 职责
 
-从本轮对话中量化亲密度 / 信任度增量, 更新 `RelationshipState`。
+从本轮对话中量化亲密度 / 信任度增量, 更新 `RelationshipState`。**非归属守卫** (v0.3.0): `source_user` 为空时节点直接返回 `{"relationship_delta": {}}`, 不调用 LLM、不更新关系。
 
 ### 5.2 循环与工具
 
-- 走 `run_react_loop`, `max_iterations = 3`
+- 走 `run_react_loop`, `max_iterations = 2`
 - 工具:
-  - `emotion_analyzer` — 每轮识别关系信号强度
-  - `update_addressing` (v0.2.10) — 检测到用户真诚请求改变称呼 / 关系背景时, 把 `persona_addressing / user_addressing / context` 落库到 `relationships` 表, 同时写 `relationship_audit_log`; `persona_id / user_id` 通过工厂闭包 bind, Agent 无法越权改写他人。详见 [tools.md §5](tools.md#5-make_update_addressing_toolmemory_store-persona_id-user_id-v0210)
-- 提示词流程: 调 `emotion_analyzer` → 识别关系信号 → (如有称呼演化) 调 `update_addressing` → 量化 → 输出 JSON
+  - `update_addressing` (v0.2.10) — 检测到用户真诚请求改变称呼 / 关系背景时, 把 `persona_addressing / user_addressing / context` 落库到 `relationships` 表, 同时写 `relationship_audit_log`; `persona_id` (从 state 读取) / `user_id` (effective_user_id) 通过工厂闭包 bind, Agent 无法越权改写他人; v0.3.0 起闭包同时绑定 `actor_id` 供溯源 (不改变写入目标)。详见 [tools.md](tools.md)
+- 情绪信号不再经工具: `main_dialogue_node` 预计算的 `emotion_analysis` 作为文本参数传入提示词
+- 提示词流程: 读取情绪分析 → 识别关系信号 → (如有称呼演化) 调 `update_addressing` → 量化 → 输出 JSON
 
 ### 5.3 信号量化参考
 
@@ -457,21 +457,27 @@ mnemosync prompt validate --all          # 校验全部, CI 友好
 
 ```python
 class AgentState(TypedDict, total=False):
-    # 请求上下文 (parse_request 写入)
+    # 请求上下文 (parse_request 写入 + API 层预注入)
     messages: list[dict]
     extracted_new: list[dict]
-    source_user: str
-    source_frontend: str | None    # v0.2.5: 派生自 api_key.note (服务器不信任客户端 header)
+    source_user: str               # v0.3.0: = effective_user_id (可为空 = 非归属模式)
+    actor_id: str | None           # v0.3.0: 当前参与者 Actor ID
     persona: str
     persona_name: str
+    persona_id: str                # v0.3.0: 人格标识 (当前固定 "default", 从 state 读不再硬编码)
     thread_id: str
     proxy_thinking_enabled: bool
+    space_id: str | None           # v0.3.0: 会话空间 ID (群聊分区)
+    channel_type: str | None       # v0.3.0: "direct" | "group" | None
 
     # 代理推理 (proxy_thinking 写入)
     proxy_thinking_result: str | None
 
     # 提示词清洗 (API 层写入, 来自 run_prompt_cleaning)
     prompt_cleaning_result: dict  # {retained, discarded, reasoning}
+
+    # 情绪分析 (main_dialogue 预计算, memory_analysis + relationship_analysis 共享)
+    emotion_analysis: dict        # v0.3.0: emotion/intensity/category/keywords/summary
 
     # 主对话输出 (main_dialogue 写入)
     main_model: str               # v0.2.3: RoleResolver 解析出的首位主候选 model
@@ -481,7 +487,7 @@ class AgentState(TypedDict, total=False):
 
     # 记忆分析输出 (memory_analysis 写入)
     new_memories: list[dict]
-    decay_evaluations: list[dict]
+    decay_evaluations: list[dict]  # v0.3.0: 恒为 [] (衰减改为确定性公式)
     decay_targets: list[dict]
 
     # 关系分析输出 (relationship_analysis 写入)
@@ -491,6 +497,8 @@ class AgentState(TypedDict, total=False):
     errors: list[str]
     stream_mode: bool
 ```
+
+**请求级附加键** (v0.3.0): forward.py 构建 initial_state 时还会注入 `source_frontend` / `external_event_id` / `api_key_id` 等不在 TypedDict 中的键 (LangGraph 容忍额外输入键, 节点与回写路径按需读取)。
 
 **注意**: 检索出的记忆 (`retrieved_memories` / `permanent_memories`) **不放入 state**, 由 forward.py 或 `main_dialogue_node` 内部处理; 短期记忆 `conversation_turns` 也不入 state, 装填后的 messages 才进 state。状态尽量瘦身以减少 checkpoint 开销 (checkpoint 在 v0.2.6 起仅作单请求内节点间共享 state, 见 [langgraph.md §6](langgraph.md))。
 
@@ -518,6 +526,7 @@ class AgentState(TypedDict, total=False):
 | v0.2.1 | 2026-07-16 | 提示词从硬编码常量迁到两层文件系统 (defaults + 用户覆盖), 新增 §7 自定义提示词章节, 记录 8 项 registry 与 `.replace` 统一约定; 修复 factory.py:314 proxy_thinking `.format` 静默返回未渲染模板的历史 bug |
 | v0.2.3 | 2026-07-17 | 主对话/记忆分析/关系分析/代理推理/提示词清洗全部改由 `RoleResolver` 解析角色 → 首位 `ResolvedCandidate` 提供 model + base_url + api_key; AgentState 补充 `main_model` (v0.2.3), `source_frontend` (v0.2.5) |
 | v0.2.6 | 2026-07-18 | 与代码对齐: `source_frontend` 字段说明 (派生自 api_key.note); AgentState 检索/短期记忆均不入 state 的注释更新 (checkpoint 已退化为单请求内 state 共享) |
+| v0.3.0 | 2026-07-26 | AgentState 新增 `actor_id` / `persona_id` / `space_id` / `channel_type` / `emotion_analysis`; `source_user` 语义改为 effective_user_id (可为空); 记忆/关系分析节点加非归属守卫; 情绪分析改为 `main_dialogue_node` 预计算共享 (不再是 ReAct 工具); 衰减改确定性公式 (`decay_evaluations` 恒空); `vector_search` 工具绑定受众上下文; `update_addressing` 闭包加 `actor_id` 溯源; 所有 `get_relationship` 从 state 读 `persona_id`; memory_analysis 迭代上限 6→4, relationship_analysis 3→2 |
 | v0.2.9 | 2026-07-19 | 记忆分析 / 关系分析 prompt 通过 `__PERSONA_ADDRESSING__` / `__USER_ADDRESSING__` / `__RELATION_CONTEXT__` 占位符消费关系基线; 默认人格改为"宅家内向的妹妹" |
 | v0.2.10 | 2026-07-19 | 关系分析 Agent 新增 `update_addressing` 工具 (自证 `reason` ≥ 10 字, 落 `relationships` 三 nullable 列 + `relationship_audit_log`); prompt 加"称呼演化"判断维度; `nodes.py._resolve_addressing` 让占位符按 表 → override → config → 默认 四层取值 |
 | v0.2.11 | 2026-07-19 | 文档补齐 v0.2.7–v0.2.11 (persona_override.toml, /conversation-turns/sources, /panel/admin/persona) |

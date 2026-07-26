@@ -1,9 +1,9 @@
 # 上游转发模块 (Forward Module)
 
-> **模块版本**: v0.2.11
+> **模块版本**: v0.3.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **作者**: HarryHelloo
 
 ---
@@ -86,7 +86,7 @@ async with Forwarder(config) as fwd:
 | `timeout` | float | 30.0 | 请求超时 (秒) |
 | `connect_timeout` | float | 10.0 | 连接超时 (秒) |
 
-生产使用建议根据调用类型给不同超时: 主对话流式 `90s`, 记忆图内部 `30s` (见 [forward.py:244/286](../../src/api/routes/forward.py))。
+生产使用建议根据调用类型给不同超时: 主对话流式 `90s`, 记忆图内部 `30s` (见 [forward.py](../../src/api/routes/forward.py))。
 
 ### 3.2 Forwarder.chat
 
@@ -177,9 +177,13 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 
 ## 6. 与 API 层的关系
 
-- **鉴权与请求组装**: [src/api/routes/forward.py](../../src/api/routes/forward.py) 完成 API Key 验证 (`_verify_api_key`)、`source_frontend` 派生 (`_resolve_source_frontend`, 从 `api_key.note`)、模型白名单校验 (`mnemosync-any`)、记忆加载、上下文拼装、短期记忆装填 (`build_short_term_history`, v0.2.6), 再交给 `MultiForwarder`
-- **短期记忆装填 (v0.2.6)**: 主 Forwarder 调用前, forward.py 用 `main_candidate.context_length` 从 `conversation_turns` 双窗裁剪历史; 主对话流结束后同步写 user + assistant 两条 turn。见 [message-processing.md](message-processing.md) §4.1
+- **鉴权与身份解析 (v0.3.0)**: [src/api/routes/forward.py](../../src/api/routes/forward.py) 完成 API Key 验证 (`_verify_api_key`) 后, 立即通过 `_resolve_identity_context` 解析身份 (详见 [identity.md](identity.md))。身份策略绑定在 API Key 的 `strategy_id` 上, 解析结果 (`IdentityContext`) 提供 `actor_id` / `effective_user_id` / `space_id` / `channel_type` / `external_event_id`。解析失败或无策略时退化为**非归属模式**: 不创建 Actor, 不读写私有记忆, 回复仍正常工作。
+- **幂等预检与重放 (v0.3.0)**: 在提示词清洗和上游调用之前, `_lookup_idempotency` 按 `(api_key.id, external_event_id)` 查幂等缓存。命中则直接重放首次响应 (`_replay_json_response` / `_replay_stream_response`), 零 LLM 开销、零记忆副作用。首次成功响应后通过 `_record_idempotency` 落库。
+- **initial_state 注入 (v0.3.0)**: `create_chat_completion` 构建 initial_state 时注入 `actor_id` / `space_id` / `channel_type` / `persona_id` / `external_event_id` / `api_key_id`, 供下游节点和短期记忆装填使用。
+- **source_frontend 派生**: 从 `api_key.note` 服务器派生 (`_resolve_source_frontend`), 不依赖客户端
 - **模型白名单**: `/v1/chat/completions` 只接受 `model="mnemosync-any"` 或空, 其他直接 400
+- **短期记忆装填 (v0.2.6)**: 主 Forwarder 调用前, forward.py 用 `main_candidate.context_length` 从 `conversation_turns` 双窗裁剪历史, 传入 `space_id` 做空间分区; 主对话结束后同步写 user + assistant 两条 turn, 传入 `actor_id` / `space_id` / `external_event_id`
+- **受众过滤 (v0.3.0)**: 流式与非流式路径均构建 `RetrievalContext` (含 `effective_user_id` / `actor_id` / `space_id` / `channel_type` / `relationship`), 传给 `MemoryRetriever.search` 和 `AudienceFilter.filter` 做 ChromaDB `$or` 粗筛 + `is_visible` 精筛
 - **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的决策函数控制。见 [agents.md](agents.md) §4
 - **流式字段透传**: `_handle_stream` 会把 `request` 里所有 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `MultiForwarder.chat_stream(**passthrough)`
 - **调试面板 (v0.2.5)**: `debug_hook` 模块级单例被 lifespan 注入 `set_debug_bus(bus)`, 让 forwarder 每次出/入方向都写一条 event 到 DebugEventBus; 订阅数为 0 时 emit 走惰性 gate 近似 no-op
@@ -236,3 +240,4 @@ ForwarderConfig(
 | v0.2.4 | 2026-07-17 | 嵌入角色单绑定, `MultiForwarder.embed()` 遇错不 fallback; ChromaDB collection 锁定 (service_id, model, dim) |
 | v0.2.5 | 2026-07-17 | `debug_hook` 模块级单例; forwarder 出/入方向 emit 到 DebugEventBus |
 | v0.2.6 | 2026-07-18 | forward.py 装填改由 `render_main_dialogue_system` + `build_short_term_history` 组合; 主对话完成后写 `conversation_turns` 两条 |
+| v0.3.0 | 2026-07-26 | forward.py 新增身份解析、幂等预检/重放、initial_state 注入 actor_id/space_id/channel_type/persona_id/external_event_id/api_key_id; 记忆检索与短期记忆装填接入 space_id 分区与受众过滤 |
