@@ -11,6 +11,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import {
   createIdentityStrategy,
   deleteIdentityStrategy,
+  generateStrategyConfig,
   listIdentityStrategies,
   updateIdentityStrategy,
 } from '@/api/client'
@@ -124,6 +125,42 @@ const rules: FormRules = {
 
 const dialogTitle = computed(() => (dialogMode.value === 'create' ? '创建身份策略' : '编辑身份策略'))
 
+// ─── AI 辅助生成 ────────────────────────────────
+
+const aiGenerating = ref(false)
+const aiDescription = ref('')
+const aiSampleMessage = ref('')
+const aiError = ref<string | null>(null)
+
+async function aiGenerate() {
+  const desc = aiDescription.value.trim()
+  if (desc.length < 10) {
+    aiError.value = '请至少输入 10 字的描述, 说明身份信息在消息中的位置和格式'
+    return
+  }
+  aiGenerating.value = true
+  aiError.value = null
+  try {
+    const resp = await generateStrategyConfig({
+      strategy_type: form.strategy_type,
+      description: desc,
+      sample_message: aiSampleMessage.value.trim() || null,
+    })
+    form.config = resp.config
+    ElMessage.success('配置已生成, 请检查并调整后保存')
+  } catch (err) {
+    aiError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    aiGenerating.value = false
+  }
+}
+
+function resetAiFields() {
+  aiDescription.value = ''
+  aiSampleMessage.value = ''
+  aiError.value = null
+}
+
 async function refresh() {
   loading.value = true
   try {
@@ -142,6 +179,7 @@ function openCreate() {
   form.name = ''
   form.strategy_type = 'regex'
   form.config = CONFIG_TEMPLATES.regex
+  resetAiFields()
   dialogVisible.value = true
   void nextTick(() => formRef.value?.clearValidate())
 }
@@ -152,6 +190,7 @@ function openEdit(row: IdentityStrategy) {
   form.name = row.name
   form.strategy_type = row.strategy_type
   form.config = prettyConfig(row.config)
+  resetAiFields()
   dialogVisible.value = true
   void nextTick(() => formRef.value?.clearValidate())
 }
@@ -330,6 +369,64 @@ onMounted(refresh)
           </p>
         </el-form-item>
         <el-form-item label="配置" prop="config">
+          <div class="ai-generate-bar">
+            <el-button
+              link
+              type="warning"
+              size="small"
+              :disabled="aiGenerating"
+              @click="aiDescription = aiDescription || 'describe'"
+            >
+              <el-icon><MagicStick /></el-icon>
+              <span> AI 辅助生成</span>
+            </el-button>
+          </div>
+
+          <div v-if="aiDescription" class="ai-generate-panel">
+            <p class="ai-panel-hint">
+              用自然语言描述身份信息在消息中的格式, 模型会自动生成正则表达式 (或 LLM prompt)。
+            </p>
+            <el-form-item label="身份描述" label-width="80px" class="ai-field">
+              <el-input
+                v-model="aiDescription"
+                type="textarea"
+                :rows="3"
+                placeholder="例如: 每条消息的 system prompt 开头有一行格式为「用户: QQ号=123456, 昵称=小明, 群号=789012」, 请帮我提取 QQ号、昵称和群号"
+                :disabled="aiGenerating"
+              />
+            </el-form-item>
+            <el-form-item label="示例消息" label-width="80px" class="ai-field">
+              <el-input
+                v-model="aiSampleMessage"
+                type="textarea"
+                :rows="3"
+                placeholder="可选: 粘贴一条真实的消息文本, 帮助模型理解格式"
+                :disabled="aiGenerating"
+              />
+            </el-form-item>
+            <div class="ai-actions">
+              <el-button
+                type="primary"
+                size="small"
+                :loading="aiGenerating"
+                @click="aiGenerate"
+              >
+                生成配置
+              </el-button>
+              <el-button size="small" :disabled="aiGenerating" @click="resetAiFields">
+                收起
+              </el-button>
+            </div>
+            <el-alert
+              v-if="aiError"
+              :title="aiError"
+              type="error"
+              :closable="false"
+              show-icon
+              class="ai-error"
+            />
+          </div>
+
           <el-input
             v-model="form.config"
             type="textarea"
@@ -393,6 +490,40 @@ onMounted(refresh)
   font-size: 12px;
   color: var(--el-text-color-secondary);
   margin-left: $space-3;
+}
+
+.ai-generate-bar {
+  margin-bottom: $space-2;
+  text-align: right;
+}
+
+.ai-generate-panel {
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: $radius-md;
+  padding: $space-3;
+  margin-bottom: $space-3;
+}
+
+.ai-panel-hint {
+  margin: 0 0 $space-2;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+
+.ai-field {
+  margin-bottom: $space-2;
+}
+
+.ai-actions {
+  display: flex;
+  gap: $space-2;
+  margin-bottom: $space-2;
+}
+
+.ai-error {
+  margin-top: $space-2;
 }
 </style>
 
