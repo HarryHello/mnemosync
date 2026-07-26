@@ -20,7 +20,7 @@ def serve() -> None:
     app = FastAPI(
         title="Mnemosync API",
         description="智能代理中间件 - LLM 上下文编排与人格记忆管理",
-        version="0.2.0",
+        version="0.3.0",
     )
 
     app.include_router(api_router)
