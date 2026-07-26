@@ -14,7 +14,7 @@ import time
 import logging
 from typing import Callable
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, _StreamingResponse
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
@@ -178,33 +178,34 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                 "client_ip": request.client.host if request.client else None,
             })
 
-        # 流式响应: 收集完整流内容后再入队
-        if isinstance(response, StreamingResponse):
-            original_iter = response.body_iterator
-            collected: list[bytes] = []
+        # 收集响应体
+        # Starlette 1.0.0 的 BaseHTTPMiddleware.call_next 返回 _StreamingResponse,
+        # 其 body 不在 .body 属性中而在 .body_iterator 流中, 需要主动消费。
+        # 同时兼容普通 StreamingResponse (如流式 chat).
+        if isinstance(response, (_StreamingResponse, StreamingResponse)):
+            body_chunks: list[bytes] = []
+            async for chunk in response.body_iterator:
+                body_chunks.append(chunk)
 
-            async def logging_iter():
-                async for chunk in original_iter:
-                    collected.append(chunk)
-                    yield chunk
-                # 流结束
-                body_bytes = b"".join(collected)
-                response_body = None
-                if body_bytes:
-                    try:
-                        response_body = json.loads(body_bytes.decode("utf-8", errors="replace"))
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        response_body = body_bytes.decode("utf-8", errors="replace")[:1000]
-                _log(response_body)
+            body_bytes = b"".join(body_chunks)
+            response_body = None
+            if body_bytes:
+                try:
+                    response_body = json.loads(body_bytes.decode("utf-8", errors="replace"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    response_body = body_bytes.decode("utf-8", errors="replace")[:1000]
 
-            return StreamingResponse(
-                logging_iter(),
+            _log(response_body)
+
+            # 返回新的 Response, 用收集到的 body_bytes 重建
+            return Response(
+                content=body_bytes,
                 status_code=response.status_code,
                 headers=dict(response.headers),
                 media_type=response.media_type,
             )
 
-        # 非流式响应
+        # 兜底: 普通 Response (如直接返回的 JSONResponse, 但 call_next 不会走这里)
         response_body = None
         content_type = response.headers.get("content-type", "")
         if "json" in content_type:
