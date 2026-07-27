@@ -13,8 +13,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-from src.persistence.conversation_store import SqliteConversationStore
+from src.persistence.conversation_store import (
+    ConversationEvent,
+    SqliteConversationStore,
+    build_event_fingerprint,
+)
 
 
 @pytest.fixture
@@ -181,8 +184,9 @@ async def test_late_arrival_flag(store: SqliteConversationStore) -> None:
     assert flags["正常-1"] is False
     assert flags["正常-2"] is False
     assert flags["迟到的"] is True
-    # 乱序到达不影响序号单调: 仍排在最后提交
-    assert [t.committed_sequence for t in turns] == [0, 1, 2]
+    # 上下文读取按平台事件时间排序；提交序号仍保留真实到达顺序供调试。
+    assert [t.content for t in turns] == ["正常-1", "迟到的", "正常-2"]
+    assert [t.committed_sequence for t in turns] == [0, 2, 1]
 
 
 @pytest.mark.asyncio
@@ -192,6 +196,65 @@ async def test_external_event_id_roundtrip(store: SqliteConversationStore) -> No
                        external_event_id="qq-msg-12345", ts=now)
     turns = await store.list_for_space("g")
     assert turns[0].external_event_id == "qq-msg-12345"
+
+
+@pytest.mark.asyncio
+async def test_append_events_deduplicates_snapshot_in_one_transaction(
+    store: SqliteConversationStore,
+) -> None:
+    now = datetime.now(timezone.utc)
+    event = ConversationEvent(
+        role="user",
+        content="重复历史",
+        token_count=4,
+        source_frontend="astrbot",
+        ts=now,
+        actor_id="actor_1",
+        effective_user_id="actor_1",
+        display_name_snapshot="小明",
+        external_key_snapshot="12345",
+        space_id="测试群",
+        origin="history_snapshot",
+        request_id="request-1",
+    )
+    event.event_fingerprint = build_event_fingerprint(event)
+
+    first = await store.append_events([event])
+    event.request_id = "request-2"
+    second = await store.append_events([event])
+
+    assert first.inserted == 1
+    assert first.duplicates == 0
+    assert second.inserted == 0
+    assert second.duplicates == 1
+    assert await store.count() == 1
+    stored = (await store.list_for_space("测试群"))[0]
+    assert stored.display_name_snapshot == "小明"
+    assert stored.external_key_snapshot == "12345"
+    assert stored.origin == "history_snapshot"
+    assert stored.request_id == "request-1"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_does_not_consume_committed_sequence(
+    store: SqliteConversationStore,
+) -> None:
+    now = datetime.now(timezone.utc)
+    duplicate = ConversationEvent(
+        role="user", content="A", token_count=1, ts=now,
+        space_id="g", origin="history_snapshot", event_fingerprint="same",
+    )
+    current = ConversationEvent(
+        role="user", content="B", token_count=1, ts=now + timedelta(seconds=1),
+        space_id="g", origin="current", event_fingerprint="new",
+    )
+    await store.append_events([duplicate])
+    result = await store.append_events([duplicate, current])
+
+    assert result.inserted == 1
+    assert result.duplicates == 1
+    turns = await store.list_for_space("g")
+    assert [turn.committed_sequence for turn in turns] == [0, 1]
 
 
 @pytest.mark.asyncio
@@ -229,6 +292,8 @@ async def test_migration_from_v02x_schema(tmp_path: Path) -> None:
         assert len(turns) == 1
         assert turns[0].content == "老数据"
         assert turns[0].actor_id is None
+        assert turns[0].origin == "legacy"
+        assert turns[0].observed_at == turns[0].ts
         assert turns[0].committed_sequence is None
         assert turns[0].late_arrival is False
         # 迁移后新写入正常
@@ -236,3 +301,55 @@ async def test_migration_from_v02x_schema(tmp_path: Path) -> None:
         assert (await s.list_for_space("g"))[0].committed_sequence == 0
     finally:
         await s.close()
+
+
+@pytest.mark.asyncio
+async def test_migration_normalizes_mixed_timezone_text_for_sorting(tmp_path: Path) -> None:
+    """等价时刻的 +08:00 / +00:00 文本必须统一 UTC，避免助手消息被字符串排序分组."""
+    import sqlite3
+
+    db_path = tmp_path / "mixed-timezone.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute("""
+        CREATE TABLE conversation_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            ts TIMESTAMP NOT NULL,
+            token_count INTEGER NOT NULL DEFAULT 0,
+            source_frontend TEXT,
+            actor_id TEXT,
+            space_id TEXT,
+            external_event_id TEXT,
+            committed_sequence INTEGER,
+            late_arrival INTEGER NOT NULL DEFAULT 0,
+            effective_user_id TEXT,
+            display_name_snapshot TEXT,
+            external_key_snapshot TEXT,
+            origin TEXT NOT NULL DEFAULT 'legacy',
+            event_fingerprint TEXT,
+            observed_at TIMESTAMP,
+            request_id TEXT
+        )
+    """)
+    connection.execute(
+        "INSERT INTO conversation_turns (role, content, ts, token_count, space_id, observed_at) "
+        "VALUES ('user', '用户', '2026-07-27T00:56:00+08:00', 1, 'g', "
+        "'2026-07-27T00:56:00+08:00')"
+    )
+    connection.execute(
+        "INSERT INTO conversation_turns (role, content, ts, token_count, space_id, observed_at) "
+        "VALUES ('assistant', '助手', '2026-07-26T16:56:01+00:00', 1, 'g', "
+        "'2026-07-26T16:56:01+00:00')"
+    )
+    connection.commit()
+    connection.close()
+
+    store = SqliteConversationStore(str(db_path))
+    await store.connect()
+    try:
+        turns = await store.list_for_space("g")
+        assert [turn.content for turn in turns] == ["用户", "助手"]
+        assert all(turn.ts.utcoffset() == timedelta(0) for turn in turns)
+    finally:
+        await store.close()

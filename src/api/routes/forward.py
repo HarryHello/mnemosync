@@ -9,12 +9,18 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from src.api.reasoning_control import (
+    build_reasoning_stream_frames,
+    chunk_has_native_reasoning,
+    mark_native_reasoning,
+    should_use_proxy_thinking,
+)
 from src.api.schemas.forward import (
     ChatCompletionChoice,
     ChatCompletionRequest,
@@ -24,14 +30,11 @@ from src.api.schemas.forward import (
     ModelList,
     UsageInfo,
 )
-from src.api.reasoning_control import (
-    build_reasoning_stream_frames,
-    chunk_has_native_reasoning,
-    mark_native_reasoning,
-    should_use_proxy_thinking,
-)
+from src.core.agents import run_prompt_cleaning, run_proxy_thinking
 from src.core.config import get_settings
 from src.core.graph import build_graph
+from src.core.identity import IdentityContext, IdentityResolver
+from src.core.identity.plugin import IdentityPlugin, NormalizedEvent, PluginPreprocessResult
 from src.core.memory import format_relationship
 from src.core.memory.context import (
     build_main_dialogue_messages,
@@ -41,7 +44,6 @@ from src.core.memory.short_term import (
     build_short_term_history,
     token_count_for_storage,
 )
-from src.core.agents import run_proxy_thinking, run_prompt_cleaning
 from src.core.models.resolver import NoCandidateForRoleError
 from src.infra.debug_context import use_agent
 from src.infra.forwarder import (
@@ -56,10 +58,13 @@ from src.infra.forwarder.multi import (
 from src.infra.llm_service.models import ModelType
 from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
-from src.persistence.conversation_store import SqliteConversationStore
-from src.persistence.identity_store import SqliteIdentityStore
+from src.persistence.conversation_store import (
+    ConversationEvent,
+    SqliteConversationStore,
+    build_event_fingerprint,
+)
 from src.persistence.idempotency_store import IdempotencyRecord, SqliteIdempotencyStore
-from src.core.identity import IdentityResolver, IdentityContext
+from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.tools import MemoryRetriever
 
@@ -98,6 +103,11 @@ def _get_conversation_store(http_request: Request) -> SqliteConversationStore:
 def _get_identity_store(http_request: Request) -> SqliteIdentityStore | None:
     """从 app.state 取共享 SqliteIdentityStore (由 lifespan 建立)."""
     return getattr(http_request.app.state, "identity_store", None)
+
+
+def _get_plugins(http_request: Request) -> dict[str, IdentityPlugin]:
+    """从 app.state 取已加载的插件注册表."""
+    return getattr(http_request.app.state, "identity_plugins", {})
 
 
 def _get_idempotency_store(http_request: Request) -> SqliteIdempotencyStore | None:
@@ -173,7 +183,7 @@ def _replay_stream_response(record: IdempotencyRecord, model: str) -> StreamingR
     """流式幂等重放: 把缓存文本拼成标准 SSE 序列 (单内容帧 + stop 帧 + [DONE])."""
 
     async def replay_generator():
-        created = int(datetime.now(timezone.utc).timestamp())
+        created = int(datetime.now(UTC).timestamp())
         content_chunk = {
             "id": record.event_id,
             "object": "chat.completion.chunk",
@@ -187,7 +197,7 @@ def _replay_stream_response(record: IdempotencyRecord, model: str) -> StreamingR
                 }
             ],
         }
-        yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n".encode("utf-8")
+        yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n".encode()
         stop_chunk = {
             "id": record.event_id,
             "object": "chat.completion.chunk",
@@ -195,7 +205,7 @@ def _replay_stream_response(record: IdempotencyRecord, model: str) -> StreamingR
             "model": model,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
         }
-        yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n".encode("utf-8")
+        yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n".encode()
         yield b"data: [DONE]\n\n"
 
     return StreamingResponse(replay_generator(), media_type="text/event-stream")
@@ -258,7 +268,8 @@ async def _resolve_identity_context(
 
     config = json.loads(strategy.config) if strategy.config else {}
     forwarder = _get_multi_forwarder(http_request)
-    resolver = IdentityResolver(identity_store, forwarder)
+    plugins = _get_plugins(http_request)
+    resolver = IdentityResolver(identity_store, forwarder, plugins)
     return await resolver.resolve(
         request_user=request_user,
         messages=messages,
@@ -266,6 +277,21 @@ async def _resolve_identity_context(
         strategy_config=config,
         strategy_name=strategy.name,
     )
+
+
+def _model_speaker_label(
+    identity: IdentityContext | None,
+    request_user: str | None,
+) -> str:
+    """生成模型可读身份；内部 actor/group UUID 只用于存储，绝不进入提示词."""
+    if identity is None:
+        return (request_user or "未知参与者").strip() or "未知参与者"
+    name = (identity.display_name or "").strip()
+    external_key = (identity.external_key or "").strip()
+    frontend = (identity.frontend or "unknown").strip()
+    if name and external_key:
+        return f"{name} | {frontend} {external_key}"
+    return name or external_key or "未知参与者"
 
 
 async def _verify_api_key(request: Request) -> ApiKey | None:
@@ -280,6 +306,74 @@ async def _verify_api_key(request: Request) -> ApiKey | None:
         return None
     await store.update_last_used(api_key.id)
     return api_key
+
+
+def _conversation_events(
+    normalized: list[NormalizedEvent],
+    request_id: str,
+) -> list[ConversationEvent]:
+    """将插件事件转为带稳定指纹的存储事件."""
+    events: list[ConversationEvent] = []
+    for item in normalized:
+        event = ConversationEvent(
+            role=item.role,
+            content=item.content,
+            token_count=token_count_for_storage(item.content),
+            source_frontend=item.source_frontend,
+            ts=item.source_timestamp,
+            actor_id=item.actor_id,
+            effective_user_id=item.effective_user_id,
+            display_name_snapshot=item.display_name,
+            external_key_snapshot=item.external_key,
+            space_id=item.space_id,
+            external_event_id=item.external_event_id,
+            origin=item.origin,
+            request_id=request_id,
+        )
+        if item.origin == "history_snapshot" or item.external_event_id:
+            event.event_fingerprint = build_event_fingerprint(event)
+        events.append(event)
+    return events
+
+
+async def _persist_plugin_events(
+    store: SqliteConversationStore,
+    normalized: list[NormalizedEvent],
+    request_id: str,
+) -> None:
+    """批量持久化插件事件；失败不阻断主回复."""
+    if not normalized:
+        return
+    try:
+        result = await store.append_events(_conversation_events(normalized, request_id))
+        logger.debug(
+            "  🧩 规范化事件写入: 新增 %d, 去重 %d",
+            result.inserted,
+            result.duplicates,
+        )
+    except Exception as exc:
+        logger.warning("写入规范化 conversation events 失败 (不影响响应): %s", exc)
+
+
+async def _persist_assistant_event(
+    store: SqliteConversationStore,
+    content: str,
+    initial_state: dict[str, Any],
+    request_id: str,
+) -> None:
+    if not content:
+        return
+    await store.append(
+        role="assistant",
+        content=content,
+        token_count=token_count_for_storage(content),
+        source_frontend="mnemosync",
+        actor_id=None,
+        effective_user_id=initial_state.get("source_user"),
+        space_id=initial_state.get("space_id"),
+        origin="assistant",
+        request_id=request_id,
+    )
 
 
 # ── Models ─────────────────────────────────────────────────────
@@ -353,6 +447,17 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
 
     # 构建初始 state
     messages_dict = [msg.model_dump(exclude_none=True) for msg in request.messages]
+    # 兼容 OpenAI content parts 数组格式: 将数组展开为纯文本
+    for m in messages_dict:
+        content = m.get("content")
+        if isinstance(content, list):
+            texts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    texts.append(str(part.get("text", "")))
+            m["content"] = "\n".join(texts) if texts else ""
+        elif content is None:
+            m["content"] = ""
     logger.debug("  构建 state 完成, 消息数: %d", len(messages_dict))
 
     # 身份解析：通过 API Key 绑定的策略识别参与者
@@ -361,12 +466,42 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     )
     actor_id = identity_ctx.actor_id if identity_ctx else None
     source_user = identity_ctx.effective_user_id if identity_ctx else (request.user or None)
+    current_speaker = _model_speaker_label(identity_ctx, request.user)
     space_id = identity_ctx.space_id if identity_ctx else None
     channel_type = identity_ctx.channel_type if identity_ctx else None
     external_event_id = identity_ctx.external_event_id if identity_ctx else None
     if not external_event_id:
         # 可选兜底: 客户端主动带 Idempotency-Key 头时也接受 (不要求客户端适配)
         external_event_id = http_request.headers.get("Idempotency-Key") or None
+
+    # 插件预处理: 强类型返回模型消息 + 逐说话者规范化事件
+    preprocess_result: PluginPreprocessResult | None = None
+    if api_key and api_key.strategy_id:
+        identity_store = _get_identity_store(http_request)
+        if identity_store:
+            strategy = await identity_store.get_strategy(api_key.strategy_id)
+            if strategy and strategy.strategy_type == "plugin":
+                cfg = json.loads(strategy.config) if strategy.config else {}
+                plugin_name = cfg.get("plugin_name", "")
+                plugins = _get_plugins(http_request)
+                plugin = plugins.get(plugin_name)
+                if plugin and identity_ctx:
+                    preprocess_result = await plugin.preprocess(
+                        messages_dict,
+                        cfg,
+                        identity_store,
+                        identity_ctx,
+                    )
+                    messages_dict = preprocess_result.model_messages
+                    current_event = preprocess_result.current_event
+                    if current_event and current_event.external_event_id:
+                        external_event_id = current_event.external_event_id
+                    logger.debug(
+                        "  插件预处理完成 (%s): %d 条模型消息, %d 个事件",
+                        plugin_name,
+                        len(messages_dict),
+                        len(preprocess_result.events),
+                    )
 
     # 幂等: 平台重发同一事件 → 直接重放首次响应 (在提示词清洗/上游调用之前,
     # 重复请求不产生任何 LLM 开销与记忆副作用)
@@ -378,6 +513,19 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
             if request.stream:
                 return _replay_stream_response(replay, replay_model)
             return _replay_json_response(replay, replay_model)
+
+    # 平台历史快照必须在上下文装填前进入服务端事件流；当前消息则仅在本轮成功后落库。
+    event_request_id = f"req-{uuid.uuid4().hex[:16]}"
+    if preprocess_result:
+        history_events = [
+            event for event in preprocess_result.events
+            if event.origin == "history_snapshot"
+        ]
+        await _persist_plugin_events(
+            _get_conversation_store(http_request),
+            history_events,
+            event_request_id,
+        )
 
     # 服务器优先人格: 从配置加载, 不从客户端 system 消息提取
     settings = get_settings()
@@ -421,6 +569,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     initial_state = {
         "messages": messages_dict,
         "source_user": source_user,
+        "current_speaker": current_speaker,
         "actor_id": actor_id,
         "persona": persona,
         "persona_name": persona_name,
@@ -433,6 +582,10 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "channel_type": channel_type,
         "external_event_id": external_event_id,
         "api_key_id": api_key_id,
+        "normalized_events": (
+            [event for event in preprocess_result.events if event.origin == "current"]
+            if preprocess_result else []
+        ),
     }
     if prompt_cleaning_result:
         initial_state["prompt_cleaning_result"] = prompt_cleaning_result
@@ -483,7 +636,7 @@ async def _handle_non_stream(
 
     built = await build_short_term_history(
         store=conversation_store,
-        now=datetime.now(timezone.utc),
+        now=datetime.now(UTC),
         window_days=settings.storage.short_term_days,
         context_length=main_ctx_length,
         system_text=system_estimate,
@@ -491,6 +644,7 @@ async def _handle_non_stream(
         max_tokens_hint=request.max_tokens,
         space_id=space_id,
     )
+    initial_state["active_participants"] = built.active_participants
     logger.debug(
         "  🧵 短期对话装填 (non-stream): %d/%d 条 (预算 %d tok)",
         built.kept, built.total_candidates, built.budget,
@@ -522,27 +676,31 @@ async def _handle_non_stream(
     response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     main_model = initial_state.get("main_model") or await _resolve_main_model(http_request)
 
-    # 回写跨前端流水
+    # 回写结构化事件流。插件事件已拆分历史说话者；普通请求仍只写当前用户。
+    request_id = response_id
     try:
-        if new_user_content:
+        normalized_events = initial_state.get("normalized_events") or []
+        if normalized_events:
+            await _persist_plugin_events(conversation_store, normalized_events, request_id)
+        elif new_user_content:
             await conversation_store.append(
                 role="user",
                 content=new_user_content,
                 token_count=token_count_for_storage(new_user_content),
                 source_frontend=source_frontend,
                 actor_id=actor_id,
+                effective_user_id=source_user or None,
                 space_id=space_id,
                 external_event_id=external_event_id,
+                origin="current",
+                request_id=request_id,
             )
-        if response_text:
-            await conversation_store.append(
-                role="assistant",
-                content=response_text,
-                token_count=token_count_for_storage(response_text),
-                source_frontend=source_frontend,
-                actor_id=actor_id,
-                space_id=space_id,
-            )
+        await _persist_assistant_event(
+            conversation_store,
+            response_text,
+            initial_state,
+            request_id,
+        )
     except Exception as e:
         logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
 
@@ -593,6 +751,7 @@ async def _handle_stream(
     """
     settings = get_settings()
     source_user = initial_state.get("source_user") or ""
+    current_speaker = initial_state.get("current_speaker") or "未知参与者"
     source_frontend = initial_state.get("source_frontend")
     actor_id = initial_state.get("actor_id")
     space_id = initial_state.get("space_id")
@@ -662,11 +821,12 @@ async def _handle_stream(
             perms_text = "\n".join(f"- {e.content}" for e in perms) or "（无）"
             reasoning_text = await run_proxy_thinking(
                 forwarder=multi_forwarder,
-                user_name=source_user,
+                user_name=current_speaker,
                 relationship=format_relationship(rel) if rel else "新用户",
                 memories=perms_text,
                 user_message=new_user_content,
                 tools=None,
+                channel_type=initial_state.get("channel_type"),
             )
             logger.debug("  ✅ 代理推理完成, 长度: %d", len(reasoning_text) if reasoning_text else 0)
         except Exception as e:
@@ -680,15 +840,19 @@ async def _handle_stream(
     system_text = render_main_dialogue_system(
         persona_prompt=persona,
         persona_name=persona_name,
-        user_name=source_user,
+        user_name=current_speaker,
         permanent_memories=perms,
         retrieved_memories=retrieved_entries,
         relationship=rel,
         proxy_thinking_result=reasoning_text,
+        current_speaker=current_speaker,
+        channel_type=initial_state.get("channel_type"),
+        space_label=space_id,
+        active_participants=[],
     )
     built = await build_short_term_history(
         store=conversation_store,
-        now=datetime.now(timezone.utc),
+        now=datetime.now(UTC),
         window_days=settings.storage.short_term_days,
         context_length=main_ctx_length,
         system_text=system_text,
@@ -709,12 +873,16 @@ async def _handle_stream(
     messages_with_memory = build_main_dialogue_messages(
         persona_prompt=persona,
         persona_name=persona_name,
-        user_name=source_user,
+        user_name=current_speaker,
         permanent_memories=perms,
         retrieved_memories=retrieved_entries,
         relationship=rel,
         conversation_history=conversation_history,
         proxy_thinking_result=reasoning_text,
+        current_speaker=current_speaker,
+        channel_type=initial_state.get("channel_type"),
+        space_label=space_id,
+        active_participants=built.active_participants,
     )
 
     logger.debug("  📝 构建消息数: %d (含记忆上下文)", len(messages_with_memory))
@@ -761,19 +929,19 @@ async def _handle_stream(
             logger.debug("✅ 流式转发完成, chunks: %d", len(collected_chunks))
         except UpstreamTimeout as e:
             logger.debug("⏰ 流式超时: %s", e)
-            yield f'data: {{"error": "{e}"}}\n\n'.encode("utf-8")
+            yield f'data: {{"error": "{e}"}}\n\n'.encode()
             return
         except UpstreamError as e:
             logger.debug("❌ 流式错误: %s", e.message)
-            yield f'data: {{"error": "{e.message}"}}\n\n'.encode("utf-8")
+            yield f'data: {{"error": "{e.message}"}}\n\n'.encode()
             return
         except UpstreamAllCandidatesFailed as e:
             logger.debug("❌ 所有候选失败: %s", e)
-            yield f'data: {{"error": "all candidates failed: {e}"}}\n\n'.encode("utf-8")
+            yield f'data: {{"error": "all candidates failed: {e}"}}\n\n'.encode()
             return
         except NoCandidateForRoleError as e:
             logger.debug("❌ 无候选: %s", e)
-            yield f'data: {{"error": "no candidate: {e}"}}\n\n'.encode("utf-8")
+            yield f'data: {{"error": "no candidate: {e}"}}\n\n'.encode()
             return
 
         if saw_native:
@@ -782,27 +950,34 @@ async def _handle_stream(
         # 组装 assistant 回复文本 (从 SSE chunks 反解)
         assistant_text = parse_sse_stream(collected_chunks) or ""
 
-        # 回写跨前端流水: 先 user 再 assistant, 保序 (append 用 UTC now)
+        # 回写结构化事件流
         try:
-            if new_user_content:
+            normalized_events = initial_state.get("normalized_events") or []
+            if normalized_events:
+                await _persist_plugin_events(
+                    conversation_store,
+                    normalized_events,
+                    chatcmpl_id,
+                )
+            elif new_user_content:
                 await conversation_store.append(
                     role="user",
                     content=new_user_content,
                     token_count=token_count_for_storage(new_user_content),
                     source_frontend=source_frontend,
                     actor_id=actor_id,
+                    effective_user_id=source_user or None,
                     space_id=space_id,
                     external_event_id=external_event_id,
+                    origin="current",
+                    request_id=chatcmpl_id,
                 )
-            if assistant_text:
-                await conversation_store.append(
-                    role="assistant",
-                    content=assistant_text,
-                    token_count=token_count_for_storage(assistant_text),
-                    source_frontend=source_frontend,
-                    actor_id=actor_id,
-                    space_id=space_id,
-                )
+            await _persist_assistant_event(
+                conversation_store,
+                assistant_text,
+                initial_state,
+                chatcmpl_id,
+            )
         except Exception as e:
             logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
 

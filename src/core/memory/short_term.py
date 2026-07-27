@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.persistence.conversation_store import ConversationTurn
@@ -57,6 +57,7 @@ class BuiltContext:
     dropped_by_budget: int  # 因模型窗预算被丢弃的条数
     budget: int  # 本轮可分配给 history 的 token 预算
     used: int  # 保留 history 实际估计 tokens
+    active_participants: list[str]  # 裁剪后历史中最近出现的参与者（模型可读）
 
 
 def _resolve_context_budget(
@@ -83,8 +84,39 @@ def _resolve_context_budget(
     return max(budget, 0)
 
 
+def _turn_identity(turn: ConversationTurn) -> str | None:
+    """返回模型可读且可消歧的说话者标签；绝不退化为内部 UUID."""
+    if not (turn.display_name_snapshot or turn.external_key_snapshot):
+        return None
+    identity = turn.display_name_snapshot or "unknown"
+    if turn.external_key_snapshot:
+        identity = f"{identity} | {turn.source_frontend or 'unknown'} {turn.external_key_snapshot}"
+    return identity
+
+
 def _turn_to_message(turn: ConversationTurn) -> dict[str, Any]:
-    return {"role": turn.role, "content": turn.content}
+    content = turn.content
+    identity = _turn_identity(turn)
+    if turn.role == "user" and identity:
+        content = f"[{identity}]: {content}"
+    return {"role": turn.role, "content": content}
+
+
+def _active_participants(turns: list[ConversationTurn], limit: int = 12) -> list[str]:
+    """按最近出现顺序去重参与者，再恢复为自然的时间顺序."""
+    seen: set[str] = set()
+    recent: list[str] = []
+    for turn in reversed(turns):
+        if turn.role != "user":
+            continue
+        identity = _turn_identity(turn)
+        if not identity or identity.casefold() in seen:
+            continue
+        seen.add(identity.casefold())
+        recent.append(identity)
+        if len(recent) >= limit:
+            break
+    return list(reversed(recent))
 
 
 def trim_by_budget(
@@ -152,4 +184,5 @@ async def build_short_term_history(
         dropped_by_budget=dropped,
         budget=budget,
         used=used,
+        active_participants=_active_participants(kept),
     )
