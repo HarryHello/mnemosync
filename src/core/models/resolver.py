@@ -61,6 +61,36 @@ class RoleResolver:
         candidates = await self.for_role(role, require=True)
         return candidates[0]
 
+    async def first_for_tools(
+        self, role: ModelType, *, streaming: bool = False
+    ) -> ResolvedCandidate:
+        """返回第一个支持工具调用的候选.
+
+        当请求携带 tools 时, 优先选择支持工具的候选;
+        不支持工具的候选跳过 (不视为失败, 不触发 fallback).
+        """
+        candidates = await self.for_role(role, require=True)
+        for c in candidates:
+            if not c.supports_tools:
+                continue
+            if streaming and not c.supports_stream_tools:
+                continue
+            return c
+        raise NoCandidateForRoleError(role)
+
+    async def for_role_with_tools(
+        self, role: ModelType, *, streaming: bool = False
+    ) -> list[ResolvedCandidate]:
+        """返回该角色支持工具调用的候选列表 (按优先级升序).
+
+        无支持工具的候选时返回空列表 (不抛异常, 由调用方降级处理).
+        """
+        candidates = await self.for_role(role, require=False)
+        return [
+            c for c in candidates
+            if c.supports_tools and (not streaming or c.supports_stream_tools)
+        ]
+
     def invalidate(self, role: Optional[ModelType] = None) -> None:
         """使缓存失效. role 省略时清空全部."""
         if role is None:

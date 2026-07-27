@@ -289,18 +289,36 @@ def _replay_stream_response(record: IdempotencyRecord, model: str) -> StreamingR
     return StreamingResponse(replay_generator(), media_type="text/event-stream")
 
 
-async def _resolve_main_candidate(http_request: Request):
-    """解析 MAIN 角色首选候选. 返回 ResolvedCandidate 或 None (无候选)."""
+async def _resolve_main_candidate(
+    http_request: Request,
+    *,
+    require_tools: bool = False,
+    streaming: bool = False,
+):
+    """解析 MAIN 角色首选候选.
+
+    当请求携带 tools 时 (require_tools=True), 优先选择支持工具的候选;
+    不支持工具的候选跳过. 返回 ResolvedCandidate 或 None (无候选).
+    """
     resolver = http_request.app.state.resolver
     try:
+        if require_tools:
+            return await resolver.first_for_tools(ModelType.MAIN, streaming=streaming)
         return await resolver.first(ModelType.MAIN)
     except NoCandidateForRoleError:
         return None
 
 
-async def _resolve_main_model(http_request: Request) -> str:
+async def _resolve_main_model(
+    http_request: Request,
+    *,
+    require_tools: bool = False,
+    streaming: bool = False,
+) -> str:
     """解析 MAIN 角色首选候选的模型名 (供 usage/response.model/推理判定使用)."""
-    cand = await _resolve_main_candidate(http_request)
+    cand = await _resolve_main_candidate(
+        http_request, require_tools=require_tools, streaming=streaming,
+    )
     return cand.model if cand else "mnemosync-any"
 
 
@@ -739,7 +757,14 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
             logger.warning("提示词清洗失败, 降级: 全部丢弃客户端 system 消息 (%s)", e)
             prompt_cleaning_result = {"clean_prompt": "", "reasoning": str(e)}
 
-    main_model = await _resolve_main_model(http_request)
+    # 入站工具过滤: 在模型看到之前移除策略禁止的工具
+    allowed_tools = filter_client_tools(request.tools, tool_policy)
+
+    main_model = await _resolve_main_model(
+        http_request,
+        require_tools=bool(allowed_tools),
+        streaming=bool(request.stream),
+    )
     use_proxy = should_use_proxy_thinking(request, settings, main_model=main_model)
     if tool_transaction:
         # 工具续轮已经包含 MAIN 的上一轮决策和客户端执行结果；代理推理会
@@ -747,8 +772,6 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         use_proxy = False
     logger.debug("  代理推理: %s (main_model=%s)", "启用" if use_proxy else "跳过", main_model)
 
-    # 入站工具过滤: 在模型看到之前移除策略禁止的工具
-    allowed_tools = filter_client_tools(request.tools, tool_policy)
     # 工具续轮必须使用本轮允许的工具; 若续轮涉及已被策略禁止的工具则整轮拒绝
     if tool_transaction and allowed_tools is not request.tools:
         allowed_names = {f.get("function", {}).get("name") for f in (allowed_tools or [])}
@@ -819,7 +842,11 @@ async def _handle_non_stream(
     external_event_id = initial_state.get("external_event_id")
     api_key_id = initial_state.get("api_key_id")
 
-    main_candidate = await _resolve_main_candidate(http_request)
+    main_candidate = await _resolve_main_candidate(
+        http_request,
+        require_tools=bool(initial_state.get("tools")),
+        streaming=False,
+    )
     main_ctx_length = main_candidate.context_length if main_candidate else None
 
     # 提取本轮新用户消息；工具续轮没有新的 user 输入。
@@ -1017,7 +1044,11 @@ async def _handle_stream(
     space_id = initial_state.get("space_id")
     external_event_id = initial_state.get("external_event_id")
     api_key_id = initial_state.get("api_key_id")
-    main_candidate = await _resolve_main_candidate(http_request)
+    main_candidate = await _resolve_main_candidate(
+        http_request,
+        require_tools=bool(initial_state.get("tools")),
+        streaming=True,
+    )
     main_model = main_candidate.model if main_candidate else "mnemosync-any"
     main_ctx_length = main_candidate.context_length if main_candidate else None
     multi_forwarder = _get_multi_forwarder(http_request)

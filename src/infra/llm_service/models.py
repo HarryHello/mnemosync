@@ -97,3 +97,9 @@ class ResolvedCandidate:
     context_length: int | None = None
     embedding_dim: int | None = None
     send_dimensions: bool = False
+
+    # 工具调用能力声明 (v0.3.1)
+    supports_tools: bool = True          # 是否支持 tools 参数
+    supports_stream_tools: bool = True   # 是否支持 stream=True + tools
+    supports_parallel_tool_calls: bool = True
+    supports_tool_choice_required: bool = True  # 是否支持 tool_choice="required"
