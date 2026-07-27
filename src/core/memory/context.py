@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.core.memory.trigger_reason import (
+    TriggerReason,
+    format_trigger_reason,
+)
 from src.core.memory.models import MemoryEntry, Relationship, Visibility
 from src.core.prompts import get_prompt_store
 
@@ -123,10 +127,15 @@ def render_main_dialogue_system(
     channel_type: str | None = None,
     space_label: str | None = None,
     active_participants: list[str] | None = None,
+    trigger_reason: TriggerReason | None = None,
 ) -> str:
     """渲染主对话 system 段；user_name 仅保留为旧调用方的显示名兜底."""
     frame = get_prompt_store().load("main_dialogue_frame")
     speaker = _speaker_label(current_speaker or user_name)
+    reason = trigger_reason or TriggerReason(
+        reason="normal",
+        description="常规发言，自然回应。",
+    )
     return (
         frame.replace("__PERSONA_NAME__", persona_name)
         .replace("__PERSONA_PROMPT__", persona_prompt)
@@ -135,6 +144,7 @@ def render_main_dialogue_system(
         .replace("__CHANNEL_TYPE__", _channel_label(channel_type))
         .replace("__SPACE_LABEL__", space_label or "无独立空间")
         .replace("__ACTIVE_PARTICIPANTS__", _participants_label(active_participants, speaker))
+        .replace("__TRIGGER_REASON__", format_trigger_reason(reason))
         .replace("__RELATIONSHIP__", format_relationship(relationship))
         .replace(
             "__PERMANENT_MEMORIES__",
@@ -162,6 +172,7 @@ def build_main_dialogue_messages(
     channel_type: str | None = None,
     space_label: str | None = None,
     active_participants: list[str] | None = None,
+    trigger_reason: TriggerReason | None = None,
 ) -> list[dict[str, Any]]:
     """拼装主对话 Agent 的完整 messages.
 
@@ -194,6 +205,7 @@ def build_main_dialogue_messages(
         channel_type=channel_type,
         space_label=space_label,
         active_participants=active_participants,
+        trigger_reason=trigger_reason,
     )
 
     messages: list[dict[str, Any]] = [

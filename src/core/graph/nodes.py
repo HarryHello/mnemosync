@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.core.memory.trigger_reason import infer_trigger_reason
 from src.core.agents import (
     run_main_dialogue,
     run_memory_analysis,
@@ -252,6 +253,18 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
         conversation_history = state.get("messages", [])
         conversation_history = [m for m in conversation_history if m.get("role") != "system"]
 
+        # 推断本轮触发原因（不需要客户端修改）
+        extracted_user = ""
+        for m in reversed(extracted):
+            if m.get("role") == "user":
+                extracted_user = m.get("content", "")
+                break
+        trigger = infer_trigger_reason(
+            state.get("current_speaker"),
+            extracted_user,
+            channel_type=state.get("channel_type"),
+        )
+
         messages = build_main_dialogue_messages(
             persona_prompt=state.get("persona") or settings.persona.prompt,
             persona_name=state.get("persona_name") or settings.persona.name,
@@ -265,6 +278,7 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
             channel_type=state.get("channel_type"),
             space_label=state.get("space_id"),
             active_participants=state.get("active_participants"),
+            trigger_reason=trigger,
         )
 
         logger.debug("  📝 拼装消息数: %d", len(messages))

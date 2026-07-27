@@ -89,6 +89,7 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
             "CHANNEL_TYPE",
             "SPACE_LABEL",
             "ACTIVE_PARTICIPANTS",
+            "TRIGGER_REASON",
             "RELATIONSHIP",
             "PERMANENT_MEMORIES",
             "RETRIEVED_MEMORIES",
