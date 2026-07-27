@@ -70,72 +70,13 @@
 
 ---
 
-## 3. 阶段一: 协议正确性
+## 3. 阶段一: 工具事务闭环
 
-> 目标: 流式和非流式路径都能完整通过工具调用，不丢失 `tool_calls`，不破坏现有语义。
+> 基础协议保真已完成：流式和非流式路径均可将客户端工具交给 MAIN，保留并返回 `tool_calls` / `finish_reason`；流式响应可累积跨帧工具参数；纯工具调用中间轮不会触发记忆与关系分析。当前事实见 [forward.md](../modules/forward.md)。
 
-### 3.1 非流式主对话保留完整响应
+本阶段剩余目标是让客户端执行工具后回传的标准 OpenAI 工具事务能够接续服务器侧上下文，同时保持“普通客户端历史不可信”的架构边界。
 
-**现状**: [run_main_dialogue](src/core/agents/factory.py#L134-L151) 将上游响应压缩为 `(content, usage)`，丢弃 `tool_calls` 和 `finish_reason`。
-
-**变更**:
-
-```python
-@dataclass
-class MainDialogueResult:
-    message: dict[str, Any]      # 保留 content, tool_calls, reasoning_content 等
-    finish_reason: str | None
-    usage: dict[str, Any] | None
-```
-
-`graph.state.AgentState` 增加 `response_message: dict | None` 字段，非流式 `main_dialogue_node` 写入完整 message 而非纯文本。
-
-**影响**:
-
-- `ChatCompletionResponse` 构造可直接使用 `response_message`，不再需要手动拼装 `ChatMessage`。
-- `reasoning_content` 也通过 message 自然携带，无需额外字段。
-- 反映到 `AgentState.response` 的语义从"纯文本"变为"最终用户可见文本"（优先取 `response_message.content`）。
-
-### 3.2 流式工具调用累积解析
-
-**现状**: [parse_sse_stream](src/infra/forwarder/forwarder.py#L445-L470) 只提取 `delta.content`，丢弃 `delta.tool_calls`。
-
-**变更**: 扩展 `parse_sse_stream` 以区分纯文本流和工具调用流:
-
-```python
-@dataclass
-class StreamResult:
-    text: str
-    tool_calls: list[dict] | None  # 累积合并后的完整 tool_calls
-    finish_reason: str | None
-```
-
-核心逻辑:
-
-- `delta.tool_calls` 的 `index` 字段用于区分多个并行工具；
-- 同一 `index` 的 `function.arguments` 按 SSE 帧顺序拼接；
-- 处理 `function.arguments` 可能跨帧分片、跨帧 JSON 不完整的问题；
-- `finish_reason: "tool_calls"` 时停止累积文本，标记存在工具调用。
-
-**影响**:
-
-- `_run_memory_graph` 可以感知当前响应是文本还是工具调用；
-- 纯工具调用响应（`finish_reason=tool_calls`, 无文本）不触发记忆分析；
-- 幂等缓存可重放 `tool_calls` 而不仅是文本。
-
-### 3.3 补全透传字段
-
-**现状**: [forward.py:892-904](src/api/routes/forward.py#L892-L898) 的 `_optional_fields` 未包含 `parallel_tool_calls`。
-
-**变更**: 将 `parallel_tool_calls` 加入透传白名单。
-
-同时确认 `tool_choice` 的透传逻辑: 当 `tool_choice="required"` 时，上游必须返回工具调用。若上游不支持，应通过 `UpstreamError` 错误帧告知客户端，而非静默忽略。
-
-### 3.4 工具事务尾部桥接
-
-这是最关键的架构变更，需要仔细定义受控范围。
-
-**核心思路**: 在服务器侧短期历史之后，当前用户消息之前，插入一个**被校验过的客户端工具事务片段**。
+### 3.1 工具事务尾部桥接
 
 ```
 服务端 system
@@ -183,7 +124,7 @@ class StreamResult:
 - 校验失败: 记录告警，丢弃整个尾部，降级为无工具上下文；
 - 部分有效（有一条 `tool` 但 `tool_call_id` 不匹配）: 丢弃尾部，不尝试部分恢复。
 
-**模型候选声明**:
+### 3.2 模型候选能力声明
 
 在 `role_bindings` 表或 `ResolvedCandidate` 中增加工具能力元数据:
 
@@ -203,16 +144,17 @@ class ToolCapabilities:
 - `supports_stream_tools=False` 时，流式请求降级为非流式上游调用，再转为 SSE 帧返回客户端；
 - `supports_parallel_tool_calls=False` 时，`parallel_tool_calls` 强制设为 `false`。
 
-### 3.5 测试覆盖
+### 3.3 验证要求
 
-新增测试文件 `tests/unit/test_tool_roundtrip.py`，覆盖:
+工具事务闭环实现时，补充 `tests/unit/test_tool_roundtrip.py`，覆盖:
 
 - 工具事务尾部校验: 合法、非法、部分有效、空序列；
-- 流式工具调用累积: 单工具、多并行、arguments 分片、纯工具无文本；
-- 非流式工具调用: 完整 message 保留；
-- `tool_choice` 透传: `"auto"`, `"none"`, `"required"`, `{"type": "function", "function": {"name": "poke"}}`；
-- 隐私约束: 工具参数中出现私有记忆内容时的检测；
-- `parallel_tool_calls` 透传: 请求与上游 payload 一致。
+- 工具结果回传后 MAIN 能继续生成最终文本；
+- 事务尾部之外的客户端历史仍被丢弃；
+- 同一工具结果不会重复触发记忆与关系分析；
+- `tool_choice`: `"none"`, `"required"`, 指定函数；
+- 工具名称、参数和 `tool_call_id` 的非法输入；
+- 不传工具时不向上游发送 `parallel_tool_calls`。
 
 ---
 

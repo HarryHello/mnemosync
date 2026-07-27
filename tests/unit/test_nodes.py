@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from src.core.agents.factory import MainDialogueResult
 from src.core.graph.nodes import main_dialogue_node
 
 
@@ -73,9 +74,13 @@ async def test_main_dialogue_node_generates_when_response_missing():
     memory_store.list_permanent = AsyncMock(return_value=[])
     memory_store.get_relationship = AsyncMock(return_value=None)
     run_main = AsyncMock(
-        return_value=(
-            "新生成的回复",
-            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        return_value=MainDialogueResult(
+            message={
+                "role": "assistant",
+                "content": "新生成的回复",
+            },
+            finish_reason="stop",
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         )
     )
 
@@ -97,6 +102,11 @@ async def test_main_dialogue_node_generates_when_response_missing():
 
     assert result == {
         "response": "新生成的回复",
+        "response_message": {
+            "role": "assistant",
+            "content": "新生成的回复",
+        },
+        "finish_reason": "stop",
         "upstream_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         "emotion_analysis": {"emotion": "neutral", "intensity": 0.0, "category": "other", "keywords": [], "summary": ""},
     }
@@ -105,5 +115,79 @@ async def test_main_dialogue_node_generates_when_response_missing():
     assert build_kwargs["user_name"] == "未知参与者"
     assert build_kwargs["current_speaker"] is None
     assert build_kwargs["active_participants"] is None
-    run_main.assert_awaited_once_with(forwarder, [])
+    run_main.assert_awaited_once_with(
+        forwarder,
+        [],
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+    )
+    forwarder.close.assert_awaited_once()
+
+
+async def test_main_dialogue_node_forwards_client_tools_to_main_only():
+    settings = SimpleNamespace(
+        storage=SimpleNamespace(memory_db_abs="memory.db", chroma_dir_abs="chroma"),
+        memory=SimpleNamespace(permanent_load_top=5, retrieval_top_k=5),
+        persona=SimpleNamespace(prompt="persona", name="assistant"),
+    )
+    forwarder = MagicMock()
+    forwarder.close = AsyncMock()
+    memory_store = MagicMock()
+    memory_store.init_db = AsyncMock()
+    memory_store.list_permanent = AsyncMock(return_value=[])
+    memory_store.get_relationship = AsyncMock(return_value=None)
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "poke", "parameters": {"type": "object"}},
+        }
+    ]
+    run_main = AsyncMock(
+        return_value=MainDialogueResult(
+            message={
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "poke", "arguments": "{}"},
+                    }
+                ],
+            },
+            finish_reason="tool_calls",
+            usage=None,
+        )
+    )
+
+    with (
+        patch("src.core.graph.nodes.get_settings", return_value=settings),
+        patch("src.core.graph.nodes._make_multi_forwarder", return_value=forwarder),
+        patch("src.core.graph.nodes.SqliteMemoryStore", return_value=memory_store),
+        patch("src.core.graph.nodes.VectorStore"),
+        patch("src.core.graph.nodes.build_main_dialogue_messages", return_value=[]),
+        patch("src.core.graph.nodes.run_main_dialogue", new=run_main),
+    ):
+        result = await main_dialogue_node(
+            {
+                "source_user": "default",
+                "messages": [{"role": "user", "content": "戳一下"}],
+                "extracted_new": [],
+                "tools": tools,
+                "tool_choice": "auto",
+                "parallel_tool_calls": False,
+            }
+        )
+
+    assert result["response"] == ""
+    assert result["finish_reason"] == "tool_calls"
+    assert result["response_message"]["tool_calls"][0]["function"]["name"] == "poke"
+    run_main.assert_awaited_once_with(
+        forwarder,
+        [],
+        tools=tools,
+        tool_choice="auto",
+        parallel_tool_calls=False,
+    )
     forwarder.close.assert_awaited_once()

@@ -132,8 +132,9 @@ def test_get_prompt_unknown_returns_404(app_auth: FastAPI, temp_store: PromptSto
 def test_put_prompt_saves_override(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
     content = (
-        "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ "
-        "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ __RELATION_CONTEXT__ custom"
+        "__SOURCE_USER__ __CURRENT_SPEAKER__ __CHANNEL_TYPE__ __CONVERSATION__ "
+        "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ "
+        "__RELATION_CONTEXT__ __EMOTION_ANALYSIS__ custom"
     )
     resp = client.put(
         "/panel/admin/prompts/memory_analysis",
@@ -154,14 +155,15 @@ def test_put_prompt_missing_placeholder_returns_400(
     )
     assert resp.status_code == 400
     detail = resp.json()["detail"]
-    assert "DECAY_TARGETS" in detail["missing_placeholders"]
+    assert "CURRENT_SPEAKER" in detail["missing_placeholders"]
 
 
 def test_delete_prompt_resets_override(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
     content = (
-        "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ "
-        "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ __RELATION_CONTEXT__"
+        "__SOURCE_USER__ __CURRENT_SPEAKER__ __CHANNEL_TYPE__ __CONVERSATION__ "
+        "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ "
+        "__RELATION_CONTEXT__ __EMOTION_ANALYSIS__"
     )
     client.put("/panel/admin/prompts/memory_analysis", json={"content": content})
 
@@ -177,8 +179,9 @@ def test_validate_dry_run_does_not_persist(
     resp = client.post(
         "/panel/admin/prompts/memory_analysis:validate",
         json={"content": (
-            "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ "
-            "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ __RELATION_CONTEXT__"
+            "__SOURCE_USER__ __CURRENT_SPEAKER__ __CHANNEL_TYPE__ __CONVERSATION__ "
+            "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ "
+            "__RELATION_CONTEXT__ __EMOTION_ANALYSIS__"
         )},
     )
     assert resp.status_code == 200
@@ -197,16 +200,18 @@ def test_validate_reports_missing(app_auth: FastAPI, temp_store: PromptStore) ->
     assert resp.status_code == 200
     assert body["ok"] is False
     assert set(body["missing_placeholders"]) == {
-        "SOURCE_USER", "CONVERSATION", "DECAY_TARGETS",
+        "SOURCE_USER", "CURRENT_SPEAKER", "CHANNEL_TYPE", "CONVERSATION",
         "PERSONA_NAME", "PERSONA_ADDRESSING", "USER_ADDRESSING", "RELATION_CONTEXT",
+        "EMOTION_ANALYSIS",
     }
 
 
 def test_history_lists_backups(app_auth: FastAPI, temp_store: PromptStore) -> None:
     client = TestClient(app_auth)
     content = (
-        "__SOURCE_USER__ __CONVERSATION__ __DECAY_TARGETS__ "
-        "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ __RELATION_CONTEXT__"
+        "__SOURCE_USER__ __CURRENT_SPEAKER__ __CHANNEL_TYPE__ __CONVERSATION__ "
+        "__PERSONA_NAME__ __PERSONA_ADDRESSING__ __USER_ADDRESSING__ "
+        "__RELATION_CONTEXT__ __EMOTION_ANALYSIS__"
     )
     # 需要至少 2 次 save 才有 1 份备份 (首次无旧覆盖)
     client.put("/panel/admin/prompts/memory_analysis", json={"content": content + " v0"})

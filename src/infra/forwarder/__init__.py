@@ -9,9 +9,11 @@ from .connection_pool import ConnectionPool
 from .forwarder import (
     Forwarder,
     ForwarderConfig,
+    StreamResult,
     UpstreamError,
     UpstreamTimeout,
     parse_sse_stream,
+    parse_sse_stream_full,
 )
 
 __all__ = [
@@ -21,4 +23,6 @@ __all__ = [
     "UpstreamError",
     "UpstreamTimeout",
     "parse_sse_stream",
+    "parse_sse_stream_full",
+    "StreamResult",
 ]

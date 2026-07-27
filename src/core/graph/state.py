@@ -17,6 +17,9 @@ class AgentState(TypedDict, total=False):
     # === 请求上下文（parse_request 写入） ===
     messages: list[dict[str, Any]]          # 原始 messages（OpenAI 格式）
     extracted_new: list[dict[str, Any]]     # 提取出的新内容
+    tools: list[dict[str, Any]] | None        # 客户端本轮提供的工具, 仅 MAIN 可用
+    tool_choice: str | dict[str, Any] | None
+    parallel_tool_calls: bool | None
     source_user: str                        # 有效用户 ID (effective_user_id)
     current_speaker: str | None             # 模型可读的当前发言者身份（不得使用内部 UUID）
     active_participants: list[str]           # 当前短期窗口中的模型可读参与者标签
@@ -42,7 +45,9 @@ class AgentState(TypedDict, total=False):
     emotion_analysis: dict[str, Any]           # 预计算的情绪分析结果, 含 emotion/intensity/category/keywords/summary
 
     # === 主对话输出（main_dialogue 写入） ===
-    response: str                           # 生成的回复
+    response: str                           # 最终用户可见文本; 纯工具调用时为空串
+    response_message: dict[str, Any]        # 完整 assistant message (含 tool_calls)
+    finish_reason: str | None               # stop / length / tool_calls / ...
     response_chunks: list[bytes]            # 流式响应收集的 chunks（供异步存储）
     upstream_usage: dict[str, Any]          # 上游原样返回的 usage 字典 (prompt/completion/total_tokens)
 

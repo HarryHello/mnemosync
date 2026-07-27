@@ -442,29 +442,87 @@ class Forwarder:
         await self.close()
 
 
-def parse_sse_stream(chunks: list[bytes]) -> str:
-    """从 SSE 字节块列表中拼接出完整 assistant 内容.
+@dataclass
+class StreamResult:
+    """流式 SSE 累积结果.
 
-    用于流式响应的异步存储.
+    v0.3.0 起支持 tool_calls 累积, 用于纯工具调用响应的检测和持久化.
+    """
+
+    text: str
+    tool_calls: list[dict] | None  # 累积合并后的完整 tool_calls; None = 无工具调用
+    finish_reason: str | None
+
+
+def parse_sse_stream(chunks: list[bytes]) -> str:
+    """从 SSE 字节块列表中拼接出完整 assistant 文本内容.
+
+    用于流式响应的异步存储. 只返回文本, 不返回 tool_calls.
+    如需完整累积结果 (含工具调用), 使用 ``parse_sse_stream_full``.
+    """
+    return parse_sse_stream_full(chunks).text
+
+
+def parse_sse_stream_full(chunks: list[bytes]) -> StreamResult:
+    """从 SSE 字节块列表中累积完整 assistant 内容与工具调用.
+
+    同一 index 的 function.arguments 按帧顺序拼接, 处理跨帧分片.
     """
     content_parts: list[str] = []
-    for chunk in chunks:
-        # 一个 chunk 可能含多行 data:
-        text = chunk.decode("utf-8", errors="ignore")
-        for line in text.split("\n"):
-            line = line.strip()
-            if not line.startswith("data:"):
+    tool_calls: dict[int, dict] = {}
+    finish_reason: str | None = None
+
+    # HTTP 分块边界可能切在 JSON 或 UTF-8 字符中; 先合并原始字节再解码.
+    text = b"".join(chunks).decode("utf-8", errors="ignore")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            continue
+        try:
+            parsed = json.loads(data)
+            choices = parsed.get("choices", [])
+            if not choices:
                 continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                continue
-            try:
-                parsed = json.loads(data)
-                choices = parsed.get("choices", [])
-                if choices:
-                    delta = choices[0].get("delta", {})
-                    if delta.get("content"):
-                        content_parts.append(delta["content"])
-            except (json.JSONDecodeError, KeyError, IndexError):
-                continue
-    return "".join(content_parts)
+            choice = choices[0]
+            delta = choice.get("delta", {})
+            if delta.get("content"):
+                content_parts.append(delta["content"])
+            # 累积 tool_calls
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                if idx not in tool_calls:
+                    tool_calls[idx] = {
+                        "id": tc.get("id"),
+                        "type": tc.get("type", "function"),
+                        "function": {"name": "", "arguments": ""},
+                    }
+                existing = tool_calls[idx]
+                func = tc.get("function", {})
+                if func.get("name"):
+                    existing["function"]["name"] = (
+                        existing["function"]["name"] + func["name"]
+                    )
+                if func.get("arguments"):
+                    existing["function"]["arguments"] = (
+                        existing["function"]["arguments"] + func["arguments"]
+                    )
+                if tc.get("id"):
+                    existing["id"] = tc["id"]
+            # finish_reason 只在最后一条 choice 出现
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+        except (json.JSONDecodeError, KeyError, IndexError):
+            continue
+
+    result_tool_calls: list[dict] | None = None
+    if tool_calls:
+        result_tool_calls = [tool_calls[i] for i in sorted(tool_calls)]
+
+    return StreamResult(
+        text="".join(content_parts),
+        tool_calls=result_tool_calls,
+        finish_reason=finish_reason,
+    )

@@ -30,6 +30,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class MainDialogueResult:
+    """主对话 Agent 的完整响应.
+
+    v0.3.0 起保留上游完整 message, 不再压缩为 (content, usage).
+    """
+
+    message: dict[str, Any]   # 保留 content, tool_calls, reasoning_content 等
+    finish_reason: str | None
+    usage: dict[str, Any] | None
+
+
+@dataclass
 class MemoryAnalysisOutput:
     """记忆分析 Agent 的解析输出."""
 
@@ -135,20 +147,40 @@ async def run_main_dialogue(
     forwarder: MultiForwarder,
     messages: list[dict[str, Any]],
     temperature: float = 0.7,
-) -> tuple[str, dict[str, Any] | None]:
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    parallel_tool_calls: bool | None = None,
+) -> MainDialogueResult:
     """主对话 Agent: 使用 MAIN 角色候选生成回复.
 
-    Returns:
-        (content, usage) — content 为回复文本, usage 为上游原样返回的 token 计数字典
-        (可能为 None, 例如上游未返回 usage 段).
+    保留完整 assistant message 和 finish_reason, 使客户端工具调用能够
+    通过 Mnemosync 往返. 客户端工具只传给 MAIN, 不传给内部辅助 Agent.
     """
+    kwargs: dict[str, Any] = {}
+    if tools:
+        kwargs["tools"] = tools
+        if parallel_tool_calls is not None:
+            kwargs["parallel_tool_calls"] = parallel_tool_calls
+    if tool_choice is not None:
+        kwargs["tool_choice"] = tool_choice
+
     with use_agent("main_dialogue"):
         resp = await forwarder.chat(
-            ModelType.MAIN, messages=messages, temperature=temperature,
+            ModelType.MAIN,
+            messages=messages,
+            temperature=temperature,
+            **kwargs,
         )
-    content = resp["choices"][0]["message"]["content"] or ""
-    usage = resp.get("usage")
-    return content, usage
+    choice = resp["choices"][0]
+    message = dict(choice.get("message") or {})
+    message.setdefault("role", "assistant")
+    message.setdefault("content", None)
+    return MainDialogueResult(
+        message=message,
+        finish_reason=choice.get("finish_reason"),
+        usage=resp.get("usage"),
+    )
 
 
 async def run_memory_analysis(

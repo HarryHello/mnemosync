@@ -465,6 +465,9 @@ class AgentState(TypedDict, total=False):
     # 请求上下文 (parse_request 写入 + API 层预注入)
     messages: list[dict]
     extracted_new: list[dict]
+    tools: list[dict] | None      # 客户端本轮工具定义, 仅 MAIN 可用
+    tool_choice: str | dict | None
+    parallel_tool_calls: bool | None
     source_user: str               # v0.3.0: = effective_user_id (可为空 = 非归属模式)
     actor_id: str | None           # v0.3.0: 当前参与者 Actor ID
     persona: str
@@ -488,7 +491,9 @@ class AgentState(TypedDict, total=False):
 
     # 主对话输出 (main_dialogue 写入)
     main_model: str               # v0.2.3: RoleResolver 解析出的首位主候选 model
-    response: str
+    response: str                 # 最终用户可见文本; 纯工具调用时为空
+    response_message: dict        # 完整 assistant message (可含 tool_calls)
+    finish_reason: str | None     # stop / length / tool_calls / 上游扩展值
     response_chunks: list[bytes]
     upstream_usage: dict          # 上游原样 usage (prompt/completion/total_tokens)
 

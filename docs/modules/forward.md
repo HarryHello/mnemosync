@@ -186,7 +186,8 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 - **受众过滤 (v0.3.0)**: 流式与非流式路径均构建 `RetrievalContext` (含 `effective_user_id` / `actor_id` / `space_id` / `channel_type` / `relationship`), 传给 `MemoryRetriever.search` 和 `AudienceFilter.filter` 做 ChromaDB `$or` 粗筛 + `is_visible` 精筛
 - **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的决策函数控制。见 [agents.md](agents.md) §4
 - **流式字段透传**: `_handle_stream` 会把 `request` 里的 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `MultiForwarder.chat_stream(**passthrough)`
-- **客户端工具当前限制**: 上述透传目前仅在流式主路径生效。非流式请求进入 LangGraph 后, `main_dialogue_node` 调用 `run_main_dialogue` 时未传入客户端 `tools` / `tool_choice`, 且只保留上游 `message.content`, 因此会丢失 `tool_calls` / `finish_reason`。流式 SSE 虽可原样返回 `tool_calls`, `parse_sse_stream` 目前只累计 `delta.content`, 所以后台流水、幂等和记忆图仍不理解纯工具响应。完整修复见 [群聊与工具演进](../design/group-chat-and-tool-evolution.md)。
+- **客户端工具协议 (第一阶段)**: 流式与非流式主路径都会将客户端 `tools` / `tool_choice` 交给 MAIN；存在 `tools` 时同时透传 `parallel_tool_calls`。非流式使用 `MainDialogueResult` 保留完整 `message` / `finish_reason` / `usage`, 返回的 `tool_calls` 不再丢失。流式 SSE 继续原样返回客户端，同时 `parse_sse_stream_full` 按 `tool_calls[index]` 累积跨帧 `function.arguments`, 并保留 `finish_reason`。纯工具调用中间轮不会触发记忆与关系分析。
+- **仍有限制**: 客户端执行工具后回传的 `assistant.tool_calls → tool` 事务尾部尚未接入服务器侧历史；工具调用事件尚未独立持久化；幂等缓存仍只保存文本, 不能重放纯 `tool_calls` 响应。后续设计见 [群聊与工具演进](../design/group-chat-and-tool-evolution.md)。
 - **调试面板 (v0.2.5)**: `debug_hook` 模块级单例被 lifespan 注入 `set_debug_bus(bus)`, 让 forwarder 每次出/入方向都写一条 event 到 DebugEventBus; 订阅数为 0 时 emit 走惰性 gate 近似 no-op
 
 ---

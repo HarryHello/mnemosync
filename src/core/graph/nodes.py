@@ -269,11 +269,28 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
 
         logger.debug("  📝 拼装消息数: %d", len(messages))
         logger.debug("  🚀 调用 LLM 生成回复...")
-        response, usage = await run_main_dialogue(forwarder, messages)
-        logger.debug("  ✅ 生成完成, 长度: %d", len(response) if response else 0)
-        result: dict[str, Any] = {"response": response, "emotion_analysis": emotion_analysis}
-        if usage:
-            result["upstream_usage"] = usage
+        dialogue = await run_main_dialogue(
+            forwarder,
+            messages,
+            tools=state.get("tools"),
+            tool_choice=state.get("tool_choice"),
+            parallel_tool_calls=state.get("parallel_tool_calls"),
+        )
+        content = dialogue.message.get("content")
+        response = content if isinstance(content, str) else ""
+        logger.debug(
+            "  ✅ 生成完成, 长度: %d, finish_reason: %s",
+            len(response),
+            dialogue.finish_reason,
+        )
+        result: dict[str, Any] = {
+            "response": response,
+            "response_message": dialogue.message,
+            "finish_reason": dialogue.finish_reason,
+            "emotion_analysis": emotion_analysis,
+        }
+        if dialogue.usage:
+            result["upstream_usage"] = dialogue.usage
         return result
     finally:
         await forwarder.close()
@@ -281,6 +298,10 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
 
 async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
     """记忆分析 Agent: ReAct, 提取候选记忆. 衰减由确定性公式处理."""
+    if state.get("finish_reason") == "tool_calls":
+        logger.debug("🧠 [memory_analysis] 工具中间轮, 跳过")
+        return {"new_memories": [], "decay_evaluations": []}
+
     settings = get_settings()
     source_user = state["source_user"]
     # 非归属模式: 无有效用户, 不写入任何私有记忆
@@ -372,6 +393,10 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
 
 async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
     """关系分析 Agent: CoT, 计算亲密度增量."""
+    if state.get("finish_reason") == "tool_calls":
+        logger.debug("💝 [relationship_analysis] 工具中间轮, 跳过")
+        return {"relationship_delta": {}}
+
     settings = get_settings()
     source_user = state["source_user"]
     # 非归属模式: 无有效用户, 不更新关系

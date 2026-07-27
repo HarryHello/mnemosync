@@ -7,6 +7,7 @@ from .base import (
     run_simple_completion,
 )
 from .factory import (
+    MainDialogueResult,
     MemoryAnalysisOutput,
     PromptCleaningOutput,
     RelationshipAnalysisOutput,
@@ -22,6 +23,7 @@ __all__ = [
     "ReActStep",
     "run_react_loop",
     "run_simple_completion",
+    "MainDialogueResult",
     "run_main_dialogue",
     "run_memory_analysis",
     "MemoryAnalysisOutput",

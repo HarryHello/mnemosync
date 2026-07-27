@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
@@ -17,11 +17,12 @@ from fastapi.testclient import TestClient
 from src.api import api_router
 from src.api.routes.auth import get_current_user
 from src.persistence.auth_store import User
+from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.memory_store import SqliteMemoryStore
 
 
 def _user(must_change: bool) -> User:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return User(
         id="test",
         username="test",
@@ -41,15 +42,19 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     asyncio.set_event_loop(loop)
 
     memory_store = SqliteMemoryStore(str(tmp_path / "mem.db"))
+    identity_store = SqliteIdentityStore(str(tmp_path / "identity.db"))
     loop.run_until_complete(memory_store.connect())
+    loop.run_until_complete(identity_store.connect())
 
     app = FastAPI()
     app.include_router(api_router)
     app.state.memory_store = memory_store
+    app.state.identity_store = identity_store
 
     yield app
 
     loop.run_until_complete(memory_store.close())
+    loop.run_until_complete(identity_store.close())
     loop.close()
 
 

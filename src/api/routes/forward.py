@@ -49,7 +49,7 @@ from src.infra.debug_context import use_agent
 from src.infra.forwarder import (
     UpstreamError,
     UpstreamTimeout,
-    parse_sse_stream,
+    parse_sse_stream_full,
 )
 from src.infra.forwarder.multi import (
     MultiForwarder,
@@ -568,6 +568,9 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
 
     initial_state = {
         "messages": messages_dict,
+        "tools": request.tools,
+        "tool_choice": request.tool_choice,
+        "parallel_tool_calls": request.parallel_tool_calls,
         "source_user": source_user,
         "current_speaker": current_speaker,
         "actor_id": actor_id,
@@ -671,10 +674,26 @@ async def _handle_non_stream(
         raise HTTPException(status_code=500, detail=f"Graph execution failed: {e}") from e
 
     response_text = final_state.get("response", "")
+    response_message = final_state.get("response_message")
+    finish_reason = final_state.get("finish_reason") or "stop"
     reasoning = final_state.get("proxy_thinking_result") or None
     upstream_usage = final_state.get("upstream_usage") or {}
     response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     main_model = initial_state.get("main_model") or await _resolve_main_model(http_request)
+
+    # 使用完整 assistant message 构造响应 (含 tool_calls)
+    if response_message:
+        message_payload = dict(response_message)
+        message_payload["role"] = "assistant"
+        if reasoning and not message_payload.get("reasoning_content"):
+            message_payload["reasoning_content"] = reasoning
+        choice_message = ChatMessage.model_validate(message_payload)
+    else:
+        choice_message = ChatMessage(
+            role="assistant",
+            content=response_text,
+            reasoning_content=reasoning,
+        )
 
     # 回写结构化事件流。插件事件已拆分历史说话者；普通请求仍只写当前用户。
     request_id = response_id
@@ -715,26 +734,26 @@ async def _handle_non_stream(
         total_tokens=int(upstream_usage.get("total_tokens", 0)),
     )
 
-    logger.debug("📤 返回响应: %s (reasoning: %s, usage: %s)",
-                 response_id, "有" if reasoning else "无", usage_info.model_dump())
-    return JSONResponse(
-        content=ChatCompletionResponse(
-            id=response_id,
-            model=main_model,
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatMessage(
-                        role="assistant",
-                        content=response_text,
-                        reasoning_content=reasoning,
-                    ),
-                    finish_reason="stop",
-                )
-            ],
-            usage=usage_info,
-        ).model_dump(exclude_none=True)
-    )
+    logger.debug("📤 返回响应: %s (finish_reason=%s, reasoning=%s, tool_calls=%s)",
+                 response_id, finish_reason, "有" if reasoning else "无",
+                 "有" if choice_message.tool_calls else "无")
+    response_body = ChatCompletionResponse(
+        id=response_id,
+        model=main_model,
+        choices=[
+            ChatCompletionChoice(
+                index=0,
+                message=choice_message,
+                finish_reason=finish_reason,
+            )
+        ],
+        usage=usage_info,
+    ).model_dump(exclude_none=True)
+    # OpenAI 工具调用响应通常显式携带 content: null. 保留该字段避免
+    # 严格客户端把缺失 content 误判为非法 assistant message.
+    if choice_message.tool_calls and choice_message.content is None:
+        response_body["choices"][0]["message"]["content"] = None
+    return JSONResponse(content=response_body)
 
 
 async def _handle_stream(
@@ -891,15 +910,17 @@ async def _handle_stream(
 
     passthrough: dict[str, Any] = {}
     _optional_fields = (
-        "tools", "tool_choice", "response_format", "stream_options",
-        "top_p", "stop", "seed", "frequency_penalty", "presence_penalty",
-        "logit_bias", "logprobs", "top_logprobs", "n", "user",
-        "reasoning_effort", "reasoning", "thinking",
+        "tools", "tool_choice", "response_format",
+        "stream_options", "top_p", "stop", "seed", "frequency_penalty",
+        "presence_penalty", "logit_bias", "logprobs", "top_logprobs",
+        "n", "user", "reasoning_effort", "reasoning", "thinking",
     )
     for _f in _optional_fields:
         _v = getattr(request, _f, None)
         if _v is not None:
             passthrough[_f] = _v
+    if request.tools and request.parallel_tool_calls is not None:
+        passthrough["parallel_tool_calls"] = request.parallel_tool_calls
     if passthrough:
         logger.debug("  🔗 透传上游可选字段: %s", list(passthrough.keys()))
 
@@ -947,8 +968,10 @@ async def _handle_stream(
         if saw_native:
             mark_native_reasoning(main_model)
 
-        # 组装 assistant 回复文本 (从 SSE chunks 反解)
-        assistant_text = parse_sse_stream(collected_chunks) or ""
+        # 组装 assistant 回复 (从 SSE chunks 反解)
+        stream_result = parse_sse_stream_full(collected_chunks)
+        assistant_text = stream_result.text or ""
+        assistant_finish_reason = stream_result.finish_reason
 
         # 回写结构化事件流
         try:
@@ -990,7 +1013,11 @@ async def _handle_stream(
         initial_state["proxy_thinking_enabled"] = False
         if reasoning_text:
             initial_state["proxy_thinking_result"] = reasoning_text
-        asyncio.create_task(_run_memory_graph(initial_state, collected_chunks))
+        # 工具调用轮次不触发记忆/关系分析
+        if assistant_finish_reason == "tool_calls" and not assistant_text:
+            logger.debug("  ⏭️ 工具中间轮 (finish_reason=tool_calls, 无文本), 跳过")
+        else:
+            asyncio.create_task(_run_memory_graph(initial_state, collected_chunks))
 
     return StreamingResponse(
         stream_generator(),
@@ -1003,10 +1030,19 @@ async def _run_memory_graph(
     stream_chunks: list[bytes],
 ) -> None:
     """异步执行记忆图 (流式模式下后台运行)."""
-    # 补充 response 到 state (从流 chunks 中拼接)
-    response_text = parse_sse_stream(stream_chunks)
+    stream_result = parse_sse_stream_full(stream_chunks)
+    response_text = stream_result.text or ""
     initial_state["response"] = response_text
     initial_state["response_chunks"] = stream_chunks
+    # 流式响应无法获得完整的 assistant message;
+    # 但 finish_reason 可用于判断是否跳过记忆/关系分析
+    if stream_result.finish_reason:
+        initial_state["finish_reason"] = stream_result.finish_reason
+
+    # 纯工具调用 (无文本) 不需要记忆图, 直接返回
+    if not response_text and stream_result.tool_calls:
+        logger.debug("  ⏭️ 纯工具调用响应, 跳过记忆图")
+        return
 
     graph = _get_compiled_graph()
     try:
