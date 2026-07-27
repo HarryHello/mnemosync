@@ -107,9 +107,11 @@ class ToolCapabilities:
 
 ## 4. 阶段二: 事务与持久化
 
-> 目标: 工具调用不产生重复的记忆写入和关系更新，工具事件单独持久化，幂等缓存可完整重放。
+> `interaction_id` 已实现：工具续轮通过 `tool_call_id` 查回根消息的 `request_id`，同一逻辑交互的多次 HTTP 请求共享同一 `interaction_id`。工具调用和结果分别作为 `tool_call` / `tool_result` 独立持久化。幂等缓存已保留完整 `response_message`（含 `tool_calls`）和 `finish_reason`，重放时恢复完整响应。
+>
+> 剩余工作：逻辑交互的内部状态跟踪（工具调用超时、超过 N 轮的异常循环）、统一 `interaction_id` 跨请求传递（可选增强，不依赖客户端）。
 
-### 4.1 逻辑交互事务
+### 4.1 逻辑交互事务（✅ 已实现）
 
 **问题**: 一次用户输入可能触发多轮 LLM 调用（工具调用 → 结果 → 继续调用 → 最终文本），每轮 HTTP 请求都会触发 `_run_memory_graph`，导致重复写入。
 
@@ -139,7 +141,11 @@ class Interaction:
 
 不依赖客户端携带来生成 `interaction_id` 的兜底: 通过 `root_user_event_id` + `api_key_id` 的哈希派生，从客户端历史中识别 `user` 消息的 `event_fingerprint` 或 `external_event_id`。
 
-### 4.2 工具事件持久化
+### 4.2 工具事件持久化（✅ 已实现）
+
+`conversation_turns` 已扩展 `interaction_id`、`event_type`（`message` / `tool_call` / `tool_result`）和 `tool_call_id` 字段。工具调用事件作为独立 `tool_call` 事件写入，工具结果作为 `tool_result` 事件写入；查询时默认只返回 `event_type=message` 的事件，不混入自然语言短期历史。`get_interaction_for_tool_call()` 可通过 `tool_call_id` 反向查找首次生成调用的 `interaction_id`。
+
+### 4.3 幂等缓存支持工具调用（✅ 已实现）
 
 **现状**: 对话流水只存储 `role: user` 和 `role: assistant` 事件，`tool_calls` 和 `tool` 消息不存储。
 
@@ -162,21 +168,16 @@ class ConversationEvent:
 - `list_tool_events(interaction_id)` 返回特定交互的工具调用链；
 - `get_latest_tool_context(space_id, limit=5)` 获取最近工具调用摘要（供模型参考）。
 
-### 4.3 幂等缓存支持工具调用
+### 4.3 幂等缓存支持工具调用（✅ 已实现）
 
-**现状**: [_replay_json_response](src/api/routes/forward.py#L161-L179) 和 [_replay_stream_response](src/api/routes/forward.py#L182-L211) 只构造 `content` 响应，不包含 `tool_calls`。
+幂等缓存已扩展 `response_message`（完整 assistant message JSON，含 `tool_calls`）和 `finish_reason` 字段。`_replay_json_response` 和 `_replay_stream_response` 在重放时优先恢复完整响应，而非仅文本。纯工具调用响应可被正确重放，流式路径以标准 SSE `tool_calls` 帧返回。
 
-**变更**: 幂等记录存储完整响应消息，重放时保留 `message.tool_calls` 和 `finish_reason`。
+### 4.4 工具调用与应用层动作响应（✅ 已实现）
 
-```python
-@dataclass
-class IdempotencyRecord:
-    # ... 现有字段
-    response_message: dict | None  # 完整 assistant message，含 tool_calls
-    finish_reason: str | None
-```
-
-### 4.4 工具调用与应用层动作响应
+- `finish_reason="tool_calls"` 且无文本时：工具中间轮跳过记忆与关系分析（节点前置检查已实现）；
+- `finish_reason="stop"` 且有 `content` 时：正常进行记忆/关系分析；
+- 工具执行结果文本（如"已戳一戳"）不进入记忆分析（工具结果作为 `tool_result` 事件独立持久化，不混入自然语言流水）；
+- 工具结果回传后生成的最终回复正常进入记忆分析（以根消息的 `extracted_new` 为输入，跳过工具续轮的重复分析）。
 
 工具调用可能触发需要客户端执行的动作，然后客户端将结果送回。这类交互的响应可能包含：
 
