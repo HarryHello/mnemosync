@@ -25,6 +25,19 @@ function getProgressType(value: number): '' | 'success' | 'warning' | 'exception
 // 格式化显示值 (三位小数)
 const formatValue = (v: number) => v.toFixed(3)
 
+function identityName(rel: Relationship): string {
+  const account = rel.identity?.accounts[0]
+  return rel.identity?.name || account?.display_name || account?.external_key || rel.user_id
+}
+
+function identityDetail(rel: Relationship): string {
+  const accounts = rel.identity?.accounts ?? []
+  if (accounts.length === 0) return rel.user_id
+  return accounts
+    .map((account) => `${account.frontend} · ${account.external_key}`)
+    .join(' / ')
+}
+
 const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
 
 function fmtDate(s: string | null): string {
@@ -56,7 +69,10 @@ function fmtDate(s: string | null): string {
         :key="rel.user_id"
         class="user-row"
       >
-        <div class="user-id mono">{{ rel.user_id }}</div>
+        <div class="user-identity">
+          <span class="user-name">{{ identityName(rel) }}</span>
+          <span class="user-source mono">{{ identityDetail(rel) }}</span>
+        </div>
         <div class="user-metrics">
           <div class="metric-line">
             <span class="metric-label">亲密度</span>
@@ -119,11 +135,28 @@ function fmtDate(s: string | null): string {
   background: var(--el-fill-color-lighter);
 }
 
-.user-id {
-  font-size: 12px;
+.user-identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.user-name {
+  overflow: hidden;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-source {
+  overflow: hidden;
   color: var(--el-text-color-secondary);
-  word-break: break-all;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-metrics {

@@ -40,6 +40,13 @@ const editSaving = ref(false)
 
 // ─── 计算属性 ────────────────────────────────
 
+const selectedIdentity = computed(() => rel.value?.identity ?? null)
+const selectedIdentityName = computed(() => {
+  const identity = selectedIdentity.value
+  const account = identity?.accounts[0]
+  return identity?.name || account?.display_name || account?.external_key || rel.value?.user_id || '未知用户'
+})
+
 const intimacyPct = computed(() =>
   rel.value ? Math.round(clamp01(rel.value.intimacy) * 100) : 0,
 )
@@ -359,8 +366,25 @@ onMounted(refreshList)
               <el-descriptions-item label="人格 ID">
                 <span class="mono">{{ rel.persona_id }}</span>
               </el-descriptions-item>
-              <el-descriptions-item label="用户 ID">
-                <span class="mono">{{ rel.user_id }}</span>
+              <el-descriptions-item label="用户">
+                <span>{{ selectedIdentityName }}</span>
+              </el-descriptions-item>
+              <el-descriptions-item label="身份来源">
+                <div v-if="selectedIdentity?.accounts.length" class="account-list">
+                  <div
+                    v-for="account in selectedIdentity.accounts"
+                    :key="account.actor_id"
+                    class="account-item"
+                  >
+                    <el-tag size="small" type="info">{{ account.frontend }}</el-tag>
+                    <span v-if="account.display_name">{{ account.display_name }}</span>
+                    <span class="mono">{{ account.external_key }}</span>
+                  </div>
+                </div>
+                <span v-else class="muted">未关联身份数据</span>
+              </el-descriptions-item>
+              <el-descriptions-item label="内部用户 ID">
+                <span class="mono muted">{{ rel.user_id }}</span>
               </el-descriptions-item>
               <el-descriptions-item label="关系类型">
                 <el-tag v-if="rel.relationship_type" size="small">
@@ -414,6 +438,19 @@ onMounted(refreshList)
 </template>
 
 <style lang="scss" scoped>
+.account-list {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.account-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: $space-2;
+}
+
 .mb {
   margin-bottom: $space-4;
 }

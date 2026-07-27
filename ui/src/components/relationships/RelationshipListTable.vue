@@ -40,6 +40,23 @@ function typeTag(t: string | null): { label: string; type: TagType } {
   }
 }
 
+function primaryAccount(row: Relationship) {
+  return row.identity?.accounts[0] ?? null
+}
+
+function identityName(row: Relationship): string {
+  const account = primaryAccount(row)
+  return row.identity?.name || account?.display_name || account?.external_key || row.user_id
+}
+
+function identityDetail(row: Relationship): string {
+  const accounts = row.identity?.accounts ?? []
+  if (accounts.length === 0) return row.user_id
+  return accounts
+    .map((account) => `${account.frontend} · ${account.external_key}`)
+    .join(' / ')
+}
+
 function fmtDate(s: string | null): string {
   if (!s) return '—'
   const d = new Date(s)
@@ -58,9 +75,12 @@ function fmtDate(s: string | null): string {
       empty-text="暂无关系记录 (对话后会自动创建)"
       @row-click="(row: Relationship) => emit('select', row)"
     >
-      <el-table-column label="用户 ID" min-width="180" show-overflow-tooltip>
+      <el-table-column label="用户" min-width="240" show-overflow-tooltip>
         <template #default="{ row }: { row: Relationship }">
-          <span class="mono">{{ row.user_id }}</span>
+          <div class="identity-cell">
+            <span class="identity-name">{{ identityName(row) }}</span>
+            <span class="identity-detail mono">{{ identityDetail(row) }}</span>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="关系类型" width="100">
@@ -113,6 +133,29 @@ function fmtDate(s: string | null): string {
 </template>
 
 <style lang="scss" scoped>
+.identity-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.identity-name {
+  overflow: hidden;
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity-detail {
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pagination-wrap {
   margin-top: $space-4;
   display: flex;
