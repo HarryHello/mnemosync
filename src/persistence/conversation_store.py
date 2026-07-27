@@ -10,7 +10,7 @@ import hashlib
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Iterator
 
 import aiosqlite
@@ -38,6 +38,9 @@ class ConversationTurn:
     request_id: str | None = None
     committed_sequence: int | None = None
     late_arrival: bool = False
+    interaction_id: str | None = None       # 逻辑交互 ID (同一根消息的多次 HTTP 请求)
+    event_type: str = "message"             # message | tool_call | tool_result
+    tool_call_id: str | None = None         # tool_call 对应的 call id (仅 tool_call 事件)
 
 
 @dataclass
@@ -59,6 +62,9 @@ class ConversationEvent:
     event_fingerprint: str | None = None
     observed_at: datetime | None = None
     request_id: str | None = None
+    interaction_id: str | None = None
+    event_type: str = "message"             # message | tool_call | tool_result
+    tool_call_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,13 +77,13 @@ class EventInsertResult:
 def _utc_iso(value: datetime) -> str:
     """统一为 UTC ISO 文本，确保 SQLite TEXT 排序等同于时间排序."""
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 def build_event_fingerprint(event: ConversationEvent) -> str:
     """构建跨请求稳定指纹；时间按分钟归一以兼容 AstrBot 的时间精度差异."""
-    ts = (event.ts or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    ts = (event.ts or datetime.now(UTC)).astimezone(UTC)
     minute = ts.replace(second=0, microsecond=0).isoformat()
     speaker = (
         event.external_key_snapshot
@@ -101,7 +107,7 @@ _SELECT_COLUMNS = (
     "id, role, content, ts, token_count, source_frontend, actor_id, space_id, "
     "external_event_id, committed_sequence, late_arrival, effective_user_id, "
     "display_name_snapshot, external_key_snapshot, origin, event_fingerprint, "
-    "observed_at, request_id"
+    "observed_at, request_id, interaction_id, event_type, tool_call_id"
 )
 
 
@@ -174,6 +180,9 @@ class SqliteConversationStore:
             "ALTER TABLE conversation_turns ADD COLUMN event_fingerprint TEXT",
             "ALTER TABLE conversation_turns ADD COLUMN observed_at TIMESTAMP",
             "ALTER TABLE conversation_turns ADD COLUMN request_id TEXT",
+            "ALTER TABLE conversation_turns ADD COLUMN interaction_id TEXT",
+            "ALTER TABLE conversation_turns ADD COLUMN event_type TEXT NOT NULL DEFAULT 'message'",
+            "ALTER TABLE conversation_turns ADD COLUMN tool_call_id TEXT",
         )
         for ddl in migrations:
             try:
@@ -240,6 +249,14 @@ class SqliteConversationStore:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_event_fingerprint "
             "ON conversation_turns(event_fingerprint) WHERE event_fingerprint IS NOT NULL"
         )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conv_interaction "
+            "ON conversation_turns(interaction_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conv_event_type "
+            "ON conversation_turns(event_type)"
+        )
 
     async def init_db(self) -> None:
         async with self._conn() as db:
@@ -263,6 +280,9 @@ class SqliteConversationStore:
         event_fingerprint: str | None = None,
         observed_at: datetime | None = None,
         request_id: str | None = None,
+        interaction_id: str | None = None,
+        event_type: str = "message",
+        tool_call_id: str | None = None,
     ) -> int:
         """追加单条事件；高吞吐插件路径应使用 ``append_events``."""
         event = ConversationEvent(
@@ -281,6 +301,9 @@ class SqliteConversationStore:
             event_fingerprint=event_fingerprint,
             observed_at=observed_at,
             request_id=request_id,
+            interaction_id=interaction_id,
+            event_type=event_type,
+            tool_call_id=tool_call_id,
         )
         result = await self.append_events([event])
         return result.row_ids[0] if result.row_ids else 0
@@ -297,7 +320,7 @@ class SqliteConversationStore:
         duplicates = 0
         row_ids: list[int] = []
         space_state: dict[str, tuple[int, str | None]] = {}
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         async with self._conn() as db:
             for event in events:
@@ -328,8 +351,8 @@ class SqliteConversationStore:
                     "(role, content, ts, token_count, source_frontend, actor_id, space_id, "
                     "external_event_id, committed_sequence, late_arrival, effective_user_id, "
                     "display_name_snapshot, external_key_snapshot, origin, event_fingerprint, "
-                    "observed_at, request_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "observed_at, request_id, interaction_id, event_type, tool_call_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         event.role, event.content, stamp, int(event.token_count),
                         event.source_frontend, event.actor_id, event.space_id,
@@ -337,6 +360,7 @@ class SqliteConversationStore:
                         event.effective_user_id, event.display_name_snapshot,
                         event.external_key_snapshot, event.origin,
                         event.event_fingerprint, observed, event.request_id,
+                        event.interaction_id, event.event_type, event.tool_call_id,
                     ),
                 )
                 if (cur.rowcount or 0) == 0:
@@ -353,6 +377,46 @@ class SqliteConversationStore:
             await db.commit()
 
         return EventInsertResult(inserted=inserted, duplicates=duplicates, row_ids=row_ids)
+
+    async def list_by_interaction(
+        self, interaction_id: str, event_type: str | None = None
+    ) -> list[ConversationTurn]:
+        """列出同一逻辑交互中的所有事件."""
+        where = "interaction_id = ?"
+        params: list = [interaction_id]
+        if event_type:
+            where += " AND event_type = ?"
+            params.append(event_type)
+        async with self._conn() as db:
+            async with db.execute(
+                f"SELECT {_SELECT_COLUMNS} FROM conversation_turns WHERE {where} "
+                "ORDER BY ts ASC, id ASC",
+                tuple(params),
+            ) as cur:
+                return [self._row_to_turn(row) for row in await cur.fetchall()]
+
+    async def get_interaction_for_tool_call(self, tool_call_id: str) -> str | None:
+        """根据 tool_call_id 找到首次生成该调用的逻辑交互 ID."""
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT interaction_id FROM conversation_turns "
+                "WHERE tool_call_id = ? AND event_type = 'tool_call' LIMIT 1",
+                (tool_call_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                return row[0] if row else None
+
+    async def get_latest_tool_interaction(self, space_id: str, limit: int = 5) -> str | None:
+        """返回最近有工具事件的逻辑交互 ID（供参考）."""
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT DISTINCT interaction_id FROM conversation_turns "
+                "WHERE space_id = ? AND event_type != 'message' "
+                "ORDER BY ts DESC LIMIT ?",
+                (space_id, limit),
+            ) as cur:
+                rows = await cur.fetchall()
+                return rows[0][0] if rows else None
 
     async def list_for_space(
         self,
@@ -403,6 +467,8 @@ class SqliteConversationStore:
         effective_user_id: str | None = None,
         space_id: str | None = None,
         origin: str | None = None,
+        interaction_id: str | None = None,
+        event_type: str | None = None,
         sort_by: str = "ts",
         sort_order: str = "desc",
     ) -> tuple[list[ConversationTurn], int]:
@@ -421,11 +487,16 @@ class SqliteConversationStore:
             ("effective_user_id", effective_user_id),
             ("space_id", space_id),
             ("origin", origin),
+            ("interaction_id", interaction_id),
+            ("event_type", event_type),
         )
         for column, value in filters:
             if value is not None:
                 where.append(f"{column} = ?")
                 params.append(value)
+        # 默认查询不包含工具中间事件
+        if not event_type:
+            where.append("event_type = 'message'")
         where_sql = f" WHERE {' AND '.join(where)}" if where else ""
 
         async with self._conn() as db:
@@ -491,7 +562,7 @@ class SqliteConversationStore:
 
     @staticmethod
     def _row_to_turn(row: tuple) -> ConversationTurn:
-        ts = datetime.fromisoformat(row[3]) if row[3] else datetime.now(timezone.utc)
+        ts = datetime.fromisoformat(row[3]) if row[3] else datetime.now(UTC)
         observed_at = datetime.fromisoformat(row[16]) if row[16] else ts
         return ConversationTurn(
             id=row[0],
@@ -512,4 +583,7 @@ class SqliteConversationStore:
             event_fingerprint=row[15],
             observed_at=observed_at,
             request_id=row[17],
+            interaction_id=row[18] if len(row) > 18 else None,
+            event_type=row[19] if len(row) > 19 else "message",
+            tool_call_id=row[20] if len(row) > 20 else None,
         )

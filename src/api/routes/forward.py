@@ -156,6 +156,8 @@ async def _record_idempotency(
     external_event_id: str | None,
     event_id: str,
     response_text: str,
+    response_message: dict[str, Any] | None = None,
+    finish_reason: str | None = None,
 ) -> None:
     """写入幂等缓存 (首次成功响应). 失败仅告警, 不影响响应."""
     if not external_event_id or not response_text:
@@ -165,13 +167,35 @@ async def _record_idempotency(
         return
     integration_id = api_key_id or "anonymous"
     try:
-        await store.record(integration_id, external_event_id, event_id, response_text)
+        response_message_json = (
+            json.dumps(response_message, ensure_ascii=False) if response_message else None
+        )
+        await store.record(
+            integration_id, external_event_id, event_id, response_text,
+            response_message=response_message_json,
+            finish_reason=finish_reason,
+        )
     except Exception as e:
         logger.warning("幂等记录写入失败 (不影响响应): %s", e)
 
 
 def _replay_json_response(record: IdempotencyRecord, model: str) -> JSONResponse:
     """非流式幂等重放: 原样返回首次响应 (同一 id, usage 归零)."""
+    if record.response_message:
+        try:
+            message_payload = json.loads(record.response_message)
+            message_payload.setdefault("role", "assistant")
+            choice_message = ChatMessage.model_validate(message_payload)
+        except (json.JSONDecodeError, Exception):
+            choice_message = ChatMessage(
+                role="assistant",
+                content=record.response_text or "",
+            )
+    else:
+        choice_message = ChatMessage(
+            role="assistant",
+            content=record.response_text or "",
+        )
     return JSONResponse(
         content=ChatCompletionResponse(
             id=record.event_id,
@@ -179,11 +203,8 @@ def _replay_json_response(record: IdempotencyRecord, model: str) -> JSONResponse
             choices=[
                 ChatCompletionChoice(
                     index=0,
-                    message=ChatMessage(
-                        role="assistant",
-                        content=record.response_text or "",
-                    ),
-                    finish_reason="stop",
+                    message=choice_message,
+                    finish_reason=record.finish_reason or "stop",
                 )
             ],
             usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
@@ -192,10 +213,54 @@ def _replay_json_response(record: IdempotencyRecord, model: str) -> JSONResponse
 
 
 def _replay_stream_response(record: IdempotencyRecord, model: str) -> StreamingResponse:
-    """流式幂等重放: 把缓存文本拼成标准 SSE 序列 (单内容帧 + stop 帧 + [DONE])."""
+    """流式幂等重放: 把缓存响应拼成标准 SSE 序列 (内容帧 + finish 帧 + [DONE])."""
 
     async def replay_generator():
         created = int(datetime.now(UTC).timestamp())
+        finish_reason = record.finish_reason or "stop"
+        # 工具调用响应: 以 tool_calls 帧形式重放
+        if record.response_message:
+            try:
+                message = json.loads(record.response_message)
+                tool_calls = message.get("tool_calls")
+                if tool_calls:
+                    tool_chunk = {
+                        "id": record.event_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "role": "assistant",
+                                    "content": message.get("content"),
+                                    "tool_calls": tool_calls,
+                                },
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    yield f"data: {json.dumps(tool_chunk, ensure_ascii=False)}\n\n".encode()
+                    stop_chunk = {
+                        "id": record.event_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": finish_reason,
+                            }
+                        ],
+                    }
+                    yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n".encode()
+                    yield b"data: [DONE]\n\n"
+                    return
+            except (json.JSONDecodeError, Exception):
+                pass
+        # 普通文本响应
         content_chunk = {
             "id": record.event_id,
             "object": "chat.completion.chunk",
@@ -215,7 +280,7 @@ def _replay_stream_response(record: IdempotencyRecord, model: str) -> StreamingR
             "object": "chat.completion.chunk",
             "created": created,
             "model": model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
         }
         yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n".encode()
         yield b"data: [DONE]\n\n"
@@ -372,20 +437,49 @@ async def _persist_assistant_event(
     content: str,
     initial_state: dict[str, Any],
     request_id: str,
+    *,
+    response_message: dict[str, Any] | None = None,
 ) -> None:
-    if not content:
+    if not content and not (response_message and response_message.get("tool_calls")):
         return
-    await store.append(
-        role="assistant",
-        content=content,
-        token_count=token_count_for_storage(content),
-        source_frontend="mnemosync",
-        actor_id=None,
-        effective_user_id=initial_state.get("source_user"),
-        space_id=initial_state.get("space_id"),
-        origin="assistant",
-        request_id=request_id,
-    )
+    interaction_id = initial_state.get("interaction_id")
+    # 持久化 tool_calls 为独立 tool_call 事件 (不混入自然语言流水)
+    tool_calls = (response_message or {}).get("tool_calls")
+    if tool_calls:
+        for call in tool_calls:
+            call_id = call.get("id", "")
+            func = call.get("function", {})
+            if not call_id or not func.get("name"):
+                continue
+            await store.append(
+                role="assistant",
+                content=json.dumps(call, ensure_ascii=False),
+                token_count=8,
+                source_frontend="mnemosync",
+                actor_id=None,
+                effective_user_id=initial_state.get("source_user"),
+                space_id=initial_state.get("space_id"),
+                origin="assistant",
+                request_id=request_id,
+                interaction_id=interaction_id,
+                event_type="tool_call",
+                tool_call_id=call_id,
+            )
+    # 文本内容作为 message 事件持久化
+    if content:
+        await store.append(
+            role="assistant",
+            content=content,
+            token_count=token_count_for_storage(content),
+            source_frontend="mnemosync",
+            actor_id=None,
+            effective_user_id=initial_state.get("source_user"),
+            space_id=initial_state.get("space_id"),
+            origin="assistant",
+            request_id=request_id,
+            interaction_id=interaction_id,
+            event_type="message",
+        )
 
 
 # ── Models ─────────────────────────────────────────────────────
@@ -488,10 +582,36 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     logger.debug("  构建 state 完成, 消息数: %d", len(messages_dict))
 
     # 客户端工具续轮只信任标准 assistant(tool_calls) → tool 尾部；其余历史仍不可信。
+    interaction_id: str | None = None
     try:
         tool_transaction = extract_tool_transaction_tail(messages_dict, request.tools)
     except ToolTransactionError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid tool transaction: {exc}") from exc
+    # 工具续轮: 若尾部无内容 (空 tail), 不允许
+    if tool_transaction is not None and not tool_transaction.messages:
+        raise HTTPException(status_code=400, detail="Invalid tool transaction: 空尾部")
+    if tool_transaction:
+        # 通过首个 tool_call_id 查回逻辑交互 ID (需查 conversation_store)
+        conversation_store = _get_conversation_store(http_request)
+        first_call_id = next(
+            (
+                call["id"]
+                for msg in tool_transaction.messages
+                for call in (msg.get("tool_calls") or [])
+            ),
+            None,
+        )
+        if first_call_id:
+            interaction_id = await conversation_store.get_interaction_for_tool_call(first_call_id)
+        # 若无历史 interaction_id (首次 tool_calls 未落库或重启后首次续轮), 以首个 tool_call_id 派生
+        if interaction_id is None and first_call_id:
+            interaction_id = f"tool-{first_call_id[:16]}"
+            logger.debug("  🔧 派生 interaction_id: %s", interaction_id)
+        logger.debug(
+            "  🔧 工具事务尾部: %d 条协议消息 (interaction_id=%s)",
+            len(tool_transaction.messages),
+            interaction_id or "无",
+        )
     if tool_transaction:
         logger.debug(
             "  🔧 工具事务尾部: %d 条协议消息",
@@ -649,6 +769,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "parallel_tool_calls": request.parallel_tool_calls if allowed_tools else None,
         "tool_transaction": tool_transaction,
         "tool_policy": tool_policy,
+        "interaction_id": interaction_id,
         "source_user": source_user,
         "current_speaker": current_speaker,
         "actor_id": actor_id,
@@ -824,6 +945,7 @@ async def _handle_non_stream(
             response_text,
             initial_state,
             request_id,
+            response_message=response_message,
         )
     except Exception as e:
         logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
@@ -831,6 +953,8 @@ async def _handle_non_stream(
     # 幂等缓存: 首次成功响应落库, 平台重发时原样重放
     await _record_idempotency(
         http_request, api_key_id, external_event_id, response_id, response_text,
+        response_message=response_message,
+        finish_reason=finish_reason,
     )
 
     usage_info = UsageInfo(
@@ -1099,6 +1223,16 @@ async def _handle_stream(
         stream_result = parse_sse_stream_full(collected_chunks)
         assistant_text = stream_result.text or ""
         assistant_finish_reason = stream_result.finish_reason
+        assistant_tool_calls = stream_result.tool_calls
+
+        # 构造 response_message 以支持 tool_calls 持久化
+        response_message: dict[str, Any] | None = None
+        if assistant_tool_calls:
+            response_message = {
+                "role": "assistant",
+                "content": assistant_text or None,
+                "tool_calls": assistant_tool_calls,
+            }
 
         # 回写结构化事件流
         try:
@@ -1127,6 +1261,7 @@ async def _handle_stream(
                 assistant_text,
                 initial_state,
                 chatcmpl_id,
+                response_message=response_message,
             )
         except Exception as e:
             logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
@@ -1134,6 +1269,8 @@ async def _handle_stream(
         # 幂等缓存: 首次成功响应落库
         await _record_idempotency(
             http_request, api_key_id, external_event_id, chatcmpl_id, assistant_text,
+            response_message=response_message,
+            finish_reason=assistant_finish_reason,
         )
 
         logger.debug("🔄 触发后台记忆图...")
