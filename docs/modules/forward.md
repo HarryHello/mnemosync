@@ -187,7 +187,8 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 - **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的决策函数控制。见 [agents.md](agents.md) §4
 - **流式字段透传**: `_handle_stream` 会把 `request` 里的 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `MultiForwarder.chat_stream(**passthrough)`
 - **客户端工具协议 (第一阶段)**: 流式与非流式主路径都会将客户端 `tools` / `tool_choice` 交给 MAIN；存在 `tools` 时同时透传 `parallel_tool_calls`。非流式使用 `MainDialogueResult` 保留完整 `message` / `finish_reason` / `usage`, 返回的 `tool_calls` 不再丢失。流式 SSE 继续原样返回客户端，同时 `parse_sse_stream_full` 按 `tool_calls[index]` 累积跨帧 `function.arguments`, 并保留 `finish_reason`。纯工具调用中间轮不会触发记忆与关系分析。
-- **仍有限制**: 客户端执行工具后回传的 `assistant.tool_calls → tool` 事务尾部尚未接入服务器侧历史；工具调用事件尚未独立持久化；幂等缓存仍只保存文本, 不能重放纯 `tool_calls` 响应。后续设计见 [群聊与工具演进](../design/group-chat-and-tool-evolution.md)。
+- **工具结果续轮**: 当请求以 `role=tool` 结尾时，核心只从最后一条 user 之后接纳连续的 `assistant(tool_calls) → tool` 事务尾部。校验包括：函数必须在本轮 `tools` 中、call ID 唯一且匹配、arguments 为 JSON 对象、所有并行调用都有结果、消息数和体积受限。合法事务接到服务器短期历史末端；其他客户端历史继续丢弃。工具续轮不重复写入根 user 事件、不复用根事件幂等键，也不启用代理推理。
+- **仍有限制**: 工具调用和结果尚未作为独立事件持久化；幂等缓存仍只保存文本, 不能重放纯 `tool_calls` 响应；同一逻辑交互的多次 HTTP 请求尚无统一 `interaction_id`。后续设计见 [群聊与工具演进](../design/group-chat-and-tool-evolution.md)。
 - **调试面板 (v0.2.5)**: `debug_hook` 模块级单例被 lifespan 注入 `set_debug_bus(bus)`, 让 forwarder 每次出/入方向都写一条 event 到 DebugEventBus; 订阅数为 0 时 emit 走惰性 gate 近似 no-op
 
 ---

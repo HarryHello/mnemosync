@@ -468,6 +468,7 @@ class AgentState(TypedDict, total=False):
     tools: list[dict] | None      # 客户端本轮工具定义, 仅 MAIN 可用
     tool_choice: str | dict | None
     parallel_tool_calls: bool | None
+    tool_transaction: ToolTransactionTail | None  # 已校验的客户端工具续轮
     source_user: str               # v0.3.0: = effective_user_id (可为空 = 非归属模式)
     actor_id: str | None           # v0.3.0: 当前参与者 Actor ID
     persona: str

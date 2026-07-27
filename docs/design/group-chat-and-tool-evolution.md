@@ -70,61 +70,13 @@
 
 ---
 
-## 3. 阶段一: 工具事务闭环
+## 3. 阶段一: 模型候选工具能力
 
-> 基础协议保真已完成：流式和非流式路径均可将客户端工具交给 MAIN，保留并返回 `tool_calls` / `finish_reason`；流式响应可累积跨帧工具参数；纯工具调用中间轮不会触发记忆与关系分析。当前事实见 [forward.md](../modules/forward.md)。
+> 工具协议保真和标准 `assistant(tool_calls) → tool` 续轮桥接已完成。当前实现与安全边界见 [forward.md](../modules/forward.md)。
 
-本阶段剩余目标是让客户端执行工具后回传的标准 OpenAI 工具事务能够接续服务器侧上下文，同时保持“普通客户端历史不可信”的架构边界。
+本阶段剩余目标是描述不同上游候选的工具能力，避免把带工具请求发送给已知不支持相应协议的模型。
 
-### 3.1 工具事务尾部桥接
-
-```
-服务端 system
-服务端短期历史 (跨前端流水)
-[客户端工具事务尾部]   ← 新增
-当前用户消息 (本轮输入)
-```
-
-**工具事务尾部的定义**:
-
-一个合法的工具事务片段是满足以下所有条件的连续消息序列:
-
-1. 以 `role: assistant`, 含 `tool_calls` 的消息起始；
-2. 后续可选地跟随 0 到 N 条 `role: tool` 消息，每条必须有合法的 `tool_call_id`；
-3. 所有 `tool_call_id` 都能在起始消息的 `tool_calls` 中找到匹配；
-4. 所有 `tool` 消息的工具名称与客户端本轮提供的 `tools` 定义匹配；
-5. 不包含任何 `role: user` 消息（新用户输入必须单独处理）；
-6. 不包含 `role: system` 消息；
-7. 序列总长度不超过可配置的上限（默认 20 条, 约 5 轮工具调用）；
-8. 所有消息的 `tool_call_id` 不重复消耗：不允许同一个 `tool_call_id` 出现两次；
-
-**处理流程**:
-
-```
-客户端请求中的 messages:
-
-  messages[0]: assistant (tool_calls: [id: call_1, name: poke])
-  messages[1]: tool (tool_call_id: call_1, content: "success")
-  messages[2]: user ("好了，继续刚才的话题")
-
-→ 提取工具事务尾部: [assistant(tool_calls), tool]
-→ 校验通过
-→ 丢弃工具事务尾部之外的客户端历史
-→ 拼装:
-    服务端 system
-    服务端短期历史
-    assistant(tool_calls)   ← 来自工具尾部
-    tool(tool_call_id)      ← 来自工具尾部
-    user("好了，继续刚才的话题")  ← 当前用户消息
-```
-
-**无效尾部处理**:
-
-- 长度为 0: 正常流程，不插入任何额外消息；
-- 校验失败: 记录告警，丢弃整个尾部，降级为无工具上下文；
-- 部分有效（有一条 `tool` 但 `tool_call_id` 不匹配）: 丢弃尾部，不尝试部分恢复。
-
-### 3.2 模型候选能力声明
+### 3.1 模型候选能力声明
 
 在 `role_bindings` 表或 `ResolvedCandidate` 中增加工具能力元数据:
 
@@ -144,17 +96,12 @@ class ToolCapabilities:
 - `supports_stream_tools=False` 时，流式请求降级为非流式上游调用，再转为 SSE 帧返回客户端；
 - `supports_parallel_tool_calls=False` 时，`parallel_tool_calls` 强制设为 `false`。
 
-### 3.3 验证要求
+### 3.2 验证要求
 
-工具事务闭环实现时，补充 `tests/unit/test_tool_roundtrip.py`，覆盖:
-
-- 工具事务尾部校验: 合法、非法、部分有效、空序列；
-- 工具结果回传后 MAIN 能继续生成最终文本；
-- 事务尾部之外的客户端历史仍被丢弃；
-- 同一工具结果不会重复触发记忆与关系分析；
-- `tool_choice`: `"none"`, `"required"`, 指定函数；
-- 工具名称、参数和 `tool_call_id` 的非法输入；
-- 不传工具时不向上游发送 `parallel_tool_calls`。
+- 不支持工具的候选不会接收工具请求；
+- 不支持流式工具的候选可透明降级为非流式上游调用；
+- `tool_choice="required"` 只路由到明确支持的候选；
+- 不传工具时，候选排序和现有回退行为不变。
 
 ---
 

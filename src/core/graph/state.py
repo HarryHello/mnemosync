@@ -20,6 +20,7 @@ class AgentState(TypedDict, total=False):
     tools: list[dict[str, Any]] | None        # 客户端本轮提供的工具, 仅 MAIN 可用
     tool_choice: str | dict[str, Any] | None
     parallel_tool_calls: bool | None
+    tool_transaction: Any | None              # 已校验的客户端工具事务尾部
     source_user: str                        # 有效用户 ID (effective_user_id)
     current_speaker: str | None             # 模型可读的当前发言者身份（不得使用内部 UUID）
     active_participants: list[str]           # 当前短期窗口中的模型可读参与者标签

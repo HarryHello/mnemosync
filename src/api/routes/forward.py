@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,6 +30,11 @@ from src.api.schemas.forward import (
     ModelInfo,
     ModelList,
     UsageInfo,
+)
+from src.api.tool_transactions import (
+    ToolTransactionError,
+    append_tool_transaction_context,
+    extract_tool_transaction_tail,
 )
 from src.core.agents import run_prompt_cleaning, run_proxy_thinking
 from src.core.config import get_settings
@@ -460,6 +466,17 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
             m["content"] = ""
     logger.debug("  构建 state 完成, 消息数: %d", len(messages_dict))
 
+    # 客户端工具续轮只信任标准 assistant(tool_calls) → tool 尾部；其余历史仍不可信。
+    try:
+        tool_transaction = extract_tool_transaction_tail(messages_dict, request.tools)
+    except ToolTransactionError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid tool transaction: {exc}") from exc
+    if tool_transaction:
+        logger.debug(
+            "  🔧 工具事务尾部: %d 条协议消息",
+            len(tool_transaction.messages),
+        )
+
     # 身份解析：通过 API Key 绑定的策略识别参与者
     identity_ctx = await _resolve_identity_context(
         http_request, api_key, request.user, messages_dict,
@@ -494,7 +511,20 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
                     )
                     messages_dict = preprocess_result.model_messages
                     current_event = preprocess_result.current_event
-                    if current_event and current_event.external_event_id:
+                    if tool_transaction:
+                        # 工具续轮复用根 user 只为身份与内容清洗；不能把它再次视为
+                        # 当前平台事件写入，也不能复用根事件幂等键重放首次 tool_calls。
+                        if current_event:
+                            tool_transaction = replace(
+                                tool_transaction,
+                                root_user_content=current_event.content,
+                            )
+                        preprocess_result = PluginPreprocessResult(
+                            model_messages=messages_dict,
+                            events=[],
+                        )
+                        external_event_id = None
+                    elif current_event and current_event.external_event_id:
                         external_event_id = current_event.external_event_id
                     logger.debug(
                         "  插件预处理完成 (%s): %d 条模型消息, %d 个事件",
@@ -502,6 +532,11 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
                         len(messages_dict),
                         len(preprocess_result.events),
                     )
+
+    # 工具续轮没有新的平台 user 事件；不能复用根消息事件 ID 触发首次响应重放。
+    # 工具续轮自身的幂等将在交互事务持久化阶段处理。
+    if tool_transaction:
+        external_event_id = None
 
     # 幂等: 平台重发同一事件 → 直接重放首次响应 (在提示词清洗/上游调用之前,
     # 重复请求不产生任何 LLM 开销与记忆副作用)
@@ -564,6 +599,10 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
 
     main_model = await _resolve_main_model(http_request)
     use_proxy = should_use_proxy_thinking(request, settings, main_model=main_model)
+    if tool_transaction:
+        # 工具续轮已经包含 MAIN 的上一轮决策和客户端执行结果；代理推理会
+        # 在看不到完整事务语义时产生重复或冲突建议。
+        use_proxy = False
     logger.debug("  代理推理: %s (main_model=%s)", "启用" if use_proxy else "跳过", main_model)
 
     initial_state = {
@@ -571,6 +610,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "tools": request.tools,
         "tool_choice": request.tool_choice,
         "parallel_tool_calls": request.parallel_tool_calls,
+        "tool_transaction": tool_transaction,
         "source_user": source_user,
         "current_speaker": current_speaker,
         "actor_id": actor_id,
@@ -622,13 +662,15 @@ async def _handle_non_stream(
     main_candidate = await _resolve_main_candidate(http_request)
     main_ctx_length = main_candidate.context_length if main_candidate else None
 
-    # 提取本轮新用户消息
+    # 提取本轮新用户消息；工具续轮没有新的 user 输入。
     client_messages = initial_state.get("messages", [])
+    tool_transaction = initial_state.get("tool_transaction")
     new_user_content = ""
-    for m in reversed(client_messages):
-        if m.get("role") == "user":
-            new_user_content = m.get("content", "")
-            break
+    if not tool_transaction:
+        for m in reversed(client_messages):
+            if m.get("role") == "user":
+                new_user_content = m.get("content", "")
+                break
 
     # 简化: 非流式的 system 内容无法在装填前精确算 (需要 perms + retrieved),
     # 这些又是 graph 内节点做的. 保守估算: 用 persona + 一个"典型 system 长度"
@@ -637,13 +679,16 @@ async def _handle_non_stream(
     settings_persona = initial_state.get("persona") or settings.persona.prompt
     system_estimate = settings_persona + "\n\n" + ("_" * 4000)
 
+    budget_input_text = (
+        tool_transaction.root_user_content if tool_transaction else new_user_content
+    )
     built = await build_short_term_history(
         store=conversation_store,
         now=datetime.now(UTC),
         window_days=settings.storage.short_term_days,
         context_length=main_ctx_length,
         system_text=system_estimate,
-        new_user_text=new_user_content,
+        new_user_text=budget_input_text,
         max_tokens_hint=request.max_tokens,
         space_id=space_id,
     )
@@ -653,14 +698,21 @@ async def _handle_non_stream(
         built.kept, built.total_candidates, built.budget,
     )
 
-    # 用装填后的 history + 本轮新消息替换 state.messages; extracted_new 只放本轮
+    # 用装填后的 history + 当前输入替换 state.messages；工具续轮接入校验后的协议尾部。
     combined = list(built.conversation_history)
-    if new_user_content:
+    if tool_transaction:
+        combined = append_tool_transaction_context(combined, tool_transaction)
+    elif new_user_content:
         combined.append({"role": "user", "content": new_user_content})
     initial_state["messages"] = combined
-    initial_state["extracted_new"] = (
-        [{"role": "user", "content": new_user_content}] if new_user_content else []
-    )
+    if tool_transaction:
+        initial_state["extracted_new"] = [
+            {"role": "user", "content": tool_transaction.root_user_content}
+        ]
+    else:
+        initial_state["extracted_new"] = (
+            [{"role": "user", "content": new_user_content}] if new_user_content else []
+        )
 
     graph = _get_compiled_graph()
 
@@ -809,20 +861,25 @@ async def _handle_stream(
     perms = AudienceFilter.filter(perms, retrieval_ctx)
     logger.debug("  📚 永久记忆: %d 条", len(perms))
 
-    # 客户端 history 视为"不可信": 服务器有自己的跨前端流水. 只从本轮请求
-    # 中取"最后一条 user 消息"作为新输入; 其余客户端消息忽略。
+    # 客户端 history 视为"不可信": 服务器有自己的跨前端流水. 普通请求只取
+    # 最后一条 user 消息；工具续轮没有新的 user 输入，只接入已校验事务尾部。
     client_messages = initial_state.get("messages", [])
+    tool_transaction = initial_state.get("tool_transaction")
     new_user_content = ""
-    for m in reversed(client_messages):
-        if m.get("role") == "user":
-            new_user_content = m.get("content", "")
-            break
+    if not tool_transaction:
+        for m in reversed(client_messages):
+            if m.get("role") == "user":
+                new_user_content = m.get("content", "")
+                break
 
+    retrieval_query = (
+        tool_transaction.root_user_content if tool_transaction else new_user_content
+    )
     retrieved_entries: list = []
-    if new_user_content:
+    if retrieval_query:
         retriever = MemoryRetriever(multi_forwarder, vector_store, memory_store)
         results = await retriever.search(
-            new_user_content, top_k=settings.memory.retrieval_top_k,
+            retrieval_query, top_k=settings.memory.retrieval_top_k,
             retrieval_ctx=retrieval_ctx,
         )
         for r in results:
@@ -869,13 +926,16 @@ async def _handle_stream(
         space_label=space_id,
         active_participants=[],
     )
+    budget_input_text = (
+        tool_transaction.root_user_content if tool_transaction else new_user_content
+    )
     built = await build_short_term_history(
         store=conversation_store,
         now=datetime.now(UTC),
         window_days=settings.storage.short_term_days,
         context_length=main_ctx_length,
         system_text=system_text,
-        new_user_text=new_user_content,
+        new_user_text=budget_input_text,
         max_tokens_hint=request.max_tokens,
         space_id=space_id,
     )
@@ -884,9 +944,14 @@ async def _handle_stream(
         built.kept, built.total_candidates, built.budget, built.used, built.dropped_by_budget,
     )
 
-    # 拼装最终 messages: system + trimmed 跨前端历史 + 本轮新用户
+    # 拼装最终 messages: system + trimmed 跨前端历史 + 当前输入
     conversation_history = list(built.conversation_history)
-    if new_user_content:
+    if tool_transaction:
+        conversation_history = append_tool_transaction_context(
+            conversation_history,
+            tool_transaction,
+        )
+    elif new_user_content:
         conversation_history.append({"role": "user", "content": new_user_content})
 
     messages_with_memory = build_main_dialogue_messages(
@@ -903,6 +968,15 @@ async def _handle_stream(
         space_label=space_id,
         active_participants=built.active_participants,
     )
+    # 后台记忆图只分析这一逻辑交互的根 user；不重新扫描客户端完整历史。
+    if tool_transaction:
+        initial_state["extracted_new"] = [
+            {"role": "user", "content": tool_transaction.root_user_content}
+        ]
+    else:
+        initial_state["extracted_new"] = (
+            [{"role": "user", "content": new_user_content}] if new_user_content else []
+        )
 
     logger.debug("  📝 构建消息数: %d (含记忆上下文)", len(messages_with_memory))
 
