@@ -236,14 +236,26 @@ class DebugStatusResponse(BaseModel):
 
 
 class ConversationTurnItem(BaseModel):
-    """跨前端对话流水的一条记录."""
+    """跨前端对话流水的一条结构化事件."""
 
     id: int
     role: str  # user | assistant
     content: str
-    ts: str  # ISO datetime
+    ts: str  # 平台事件时间
     token_count: int
     source_frontend: str | None = None
+    actor_id: str | None = None
+    effective_user_id: str | None = None
+    display_name: str | None = None
+    external_key: str | None = None
+    space_id: str | None = None
+    external_event_id: str | None = None
+    origin: str
+    event_fingerprint: str | None = None
+    observed_at: str
+    request_id: str | None = None
+    committed_sequence: int | None = None
+    late_arrival: bool = False
 
 
 class ConversationTurnListResponse(BaseModel):

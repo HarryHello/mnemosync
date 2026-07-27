@@ -18,7 +18,6 @@ from typing import Iterator
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
 from src.persistence.auth_store import User
@@ -96,6 +95,10 @@ def test_list_returns_descending_with_total(app: FastAPI, store: SqliteConversat
     assert body["items"][0]["role"] == "user"
     assert "ts" in body["items"][0]
     assert "token_count" in body["items"][0]
+    assert body["items"][0]["origin"] == "current"
+    assert "actor_id" in body["items"][0]
+    assert "space_id" in body["items"][0]
+    assert "observed_at" in body["items"][0]
 
 
 def test_list_respects_limit(app: FastAPI, store: SqliteConversationStore) -> None:

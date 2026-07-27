@@ -8,7 +8,8 @@
 import json
 import logging
 from datetime import datetime, timezone
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -28,12 +29,9 @@ from src.api.deps import (
     get_vector_store,
 )
 from src.api.routes.auth import get_current_user
-from src.core.config import get_settings
-from src.core.models.resolver import RoleResolver
 from src.api.schemas.admin import (
     ActorListResponse,
     ActorResponse,
-    BindActorBody,
     ConversationClearResponse,
     ConversationTurnItem,
     ConversationTurnListResponse,
@@ -59,7 +57,6 @@ from src.api.schemas.admin import (
     PromptSummary,
     PromptValidateResponse,
     PromptWriteBody,
-    PruneBreakdown as PruneBreakdownSchema,
     PruneResponse,
     PruneStartBody,
     ReindexStartBody,
@@ -74,6 +71,9 @@ from src.api.schemas.admin import (
     UserGroupListResponse,
     UserGroupResponse,
 )
+from src.api.schemas.admin import (
+    PruneBreakdown as PruneBreakdownSchema,
+)
 from src.core.config import (
     _delete_persona_override,
     _load_persona_override,
@@ -81,6 +81,8 @@ from src.core.config import (
     _write_persona_override,
     get_settings,
 )
+from src.core.memory.models import Relationship
+from src.core.models.resolver import RoleResolver
 from src.core.prompts import get_prompt_store
 from src.core.prompts.registry import PROMPT_REGISTRY
 from src.infra.forwarder import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
@@ -95,7 +97,6 @@ from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
 from src.persistence.identity_store import SqliteIdentityStore
-from src.core.memory.models import Relationship
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 
@@ -186,9 +187,27 @@ class MemoryListResponse(BaseModel):
     page_size: int = 50
 
 
+class RelationshipIdentityAccount(BaseModel):
+    """关系关联的一个平台账号."""
+
+    actor_id: str
+    frontend: str
+    external_key: str
+    display_name: str | None = None
+
+
+class RelationshipIdentity(BaseModel):
+    """effective_user_id 对应的可读身份信息."""
+
+    kind: str  # actor | group
+    name: str | None = None
+    accounts: list[RelationshipIdentityAccount] = Field(default_factory=list)
+
+
 class RelationshipResponse(BaseModel):
     persona_id: str
     user_id: str
+    identity: RelationshipIdentity | None = None
     intimacy: float
     trust: float
     relationship_type: Optional[str]
@@ -326,11 +345,42 @@ def _build_health() -> HealthResponse:
     )
 
 
+def _relationship_identity_response(
+    resolved: tuple | None,
+) -> RelationshipIdentity | None:
+    """将 IdentityStore 的批量解析结果转为 API 身份视图."""
+    if resolved is None:
+        return None
+    group, actors = resolved
+    return RelationshipIdentity(
+        kind="group" if group is not None else "actor",
+        name=group.name if group is not None else None,
+        accounts=[
+            RelationshipIdentityAccount(
+                actor_id=actor.id,
+                frontend=actor.frontend,
+                external_key=actor.external_key,
+                display_name=actor.display_name,
+            )
+            for actor in actors
+        ],
+    )
+
+
+async def _relationship_identity(
+    identity_store: SqliteIdentityStore,
+    user_id: str,
+) -> RelationshipIdentity | None:
+    resolved = await identity_store.resolve_user_identities([user_id])
+    return _relationship_identity_response(resolved.get(user_id))
+
+
 def _relationship_to_response(
     rel: Relationship | None,
     target: str,
     *,
     settings_override=None,
+    identity: RelationshipIdentity | None = None,
 ) -> RelationshipResponse:
     """将关系数据转为 Response 模型, 自动处理 NULL 与 TOML 基线回退.
 
@@ -343,6 +393,7 @@ def _relationship_to_response(
         return RelationshipResponse(
             persona_id=_persona_id(),
             user_id=target,
+            identity=identity,
             intimacy=0.0,
             trust=0.0,
             relationship_type="stranger",
@@ -355,6 +406,7 @@ def _relationship_to_response(
     return RelationshipResponse(
         persona_id=rel.persona_id,
         user_id=rel.user_id,
+        identity=identity,
         intimacy=rel.intimacy_score,
         trust=rel.trust_level,
         relationship_type=rel.type,
@@ -512,6 +564,7 @@ async def get_relationship(
     user_id: str | None = Query(None, min_length=1, description="用户标识 (effective_user_id)"),
     actor_id: str | None = Query(None, min_length=1, description="Actor ID, 自动解析为 effective_user_id"),
     store: SqliteMemoryStore = Depends(get_memory_store),
+    identity_store: SqliteIdentityStore = Depends(get_identity_store),
 ):
     """获取关系状态.
 
@@ -526,7 +579,8 @@ async def get_relationship(
     """
     target = await _resolve_relationship_target(request, user_id, actor_id)
     rel = await store.get_relationship(_persona_id(), target)
-    return _relationship_to_response(rel, target)
+    identity = await _relationship_identity(identity_store, target)
+    return _relationship_to_response(rel, target, identity=identity)
 
 
 @router.get("/relationships", response_model=RelationshipListResponse)
@@ -539,6 +593,7 @@ async def list_relationships(
     ),
     sort_order: str = Query("desc", description="asc | desc"),
     store: SqliteMemoryStore = Depends(get_memory_store),
+    identity_store: SqliteIdentityStore = Depends(get_identity_store),
 ):
     """分页列出当前人格的所有关系 (v0.3.0 多用户).
 
@@ -553,8 +608,16 @@ async def list_relationships(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+    identities = await identity_store.resolve_user_identities([r.user_id for r in rows])
     return RelationshipListResponse(
-        items=[_relationship_to_response(r, r.user_id) for r in rows],
+        items=[
+            _relationship_to_response(
+                r,
+                r.user_id,
+                identity=_relationship_identity_response(identities.get(r.user_id)),
+            )
+            for r in rows
+        ],
         total=total,
         page=page,
         page_size=page_size,
@@ -596,7 +659,12 @@ async def update_relationship_addressing(
         )
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
-    return await get_relationship(request=request, user_id=target, store=store)
+    return await get_relationship(
+        request=request,
+        user_id=target,
+        store=store,
+        identity_store=request.app.state.identity_store,
+    )
 
 
 @router.get("/relationship/audit", response_model=RelationshipAuditResponse)
@@ -1197,9 +1265,16 @@ async def list_conversation_turns(
     page_size: int = Query(50, ge=1, le=500),
     role: str | None = Query(None, description="user | assistant, 省略=全部"),
     source_frontend: str | None = Query(
-        None, description="精确匹配来源标签 (api_key.note), 省略=全部"
+        None, description="精确匹配来源平台, 省略=全部"
     ),
-    sort_by: str = Query("ts", description="ts | role | token_count | source_frontend | id"),
+    actor_id: str | None = Query(None),
+    effective_user_id: str | None = Query(None),
+    space_id: str | None = Query(None),
+    origin: str | None = Query(None, description="current | history_snapshot | assistant | legacy"),
+    sort_by: str = Query(
+        "ts",
+        description="ts | role | token_count | source_frontend | origin | display_name_snapshot | committed_sequence | id",
+    ),
     sort_order: str = Query("desc", description="asc | desc"),
     store: SqliteConversationStore = Depends(get_conversation_store),
 ):
@@ -1214,6 +1289,10 @@ async def list_conversation_turns(
         offset=offset,
         role=role,
         source_frontend=source_frontend,
+        actor_id=actor_id,
+        effective_user_id=effective_user_id,
+        space_id=space_id,
+        origin=origin,
         sort_by=sort_by,
         sort_order=sort_order,
     )
@@ -1225,6 +1304,18 @@ async def list_conversation_turns(
             ts=t.ts.isoformat(),
             token_count=t.token_count,
             source_frontend=t.source_frontend,
+            actor_id=t.actor_id,
+            effective_user_id=t.effective_user_id,
+            display_name=t.display_name_snapshot,
+            external_key=t.external_key_snapshot,
+            space_id=t.space_id,
+            external_event_id=t.external_event_id,
+            origin=t.origin,
+            event_fingerprint=t.event_fingerprint,
+            observed_at=(t.observed_at or t.ts).isoformat(),
+            request_id=t.request_id,
+            committed_sequence=t.committed_sequence,
+            late_arrival=t.late_arrival,
         )
         for t in turns
     ]
@@ -1417,7 +1508,7 @@ async def create_identity_strategy(
     store: SqliteIdentityStore = Depends(get_identity_store),
 ):
     """创建身份识别策略."""
-    if body.strategy_type not in ("direct", "api_key_bound", "regex", "llm"):
+    if body.strategy_type not in ("direct", "api_key_bound", "regex", "llm", "plugin"):
         raise HTTPException(400, detail=f"无效策略类型: {body.strategy_type}")
     s = await store.create_strategy(
         name=body.name, strategy_type=body.strategy_type, config=body.config,
@@ -1458,12 +1549,12 @@ async def update_identity_strategy(
     if s is None:
         raise HTTPException(404, detail="策略不存在")
     # 当前 store 没有 update 方法, 通过 create 覆盖 (同 id)
-    import json
     config = body.config if body.config is not None else s.config
     name = body.name if body.name is not None else s.name
     is_active = body.is_active if body.is_active is not None else s.is_active
     # 重建策略行
-    from datetime import datetime, timezone as _tz
+    from datetime import datetime
+    from datetime import timezone as _tz
     now = datetime.now(_tz)
     async with store._conn() as db:
         await db.execute(

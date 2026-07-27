@@ -13,7 +13,6 @@ from typing import Iterator
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
 from src.core.memory.models import Relationship
@@ -195,6 +194,7 @@ def test_relationship_requires_user_or_actor_id(app: FastAPI) -> None:
 def test_relationship_resolves_actor_to_group(app: FastAPI) -> None:
     """绑定 UserGroup 的 Actor → 查到的是组关系 (effective_user_id 收敛)."""
     import asyncio
+
     from src.persistence.identity_store import SqliteIdentityStore
 
     loop = asyncio.new_event_loop()
@@ -233,6 +233,7 @@ def test_relationship_resolves_actor_to_group(app: FastAPI) -> None:
 def test_relationship_actor_without_group_uses_actor_id(app: FastAPI) -> None:
     """未绑组的 Actor → effective_user_id 就是 actor_id 本身."""
     import asyncio
+
     from src.persistence.identity_store import SqliteIdentityStore
 
     loop = asyncio.new_event_loop()
@@ -255,6 +256,7 @@ def test_relationship_actor_without_group_uses_actor_id(app: FastAPI) -> None:
 def test_put_and_audit_by_actor_id(app: FastAPI) -> None:
     """PUT 支持 actor_id 定位; 审计也能按 actor_id 查."""
     import asyncio
+
     from src.persistence.identity_store import SqliteIdentityStore
 
     loop = asyncio.new_event_loop()
@@ -327,6 +329,71 @@ def test_list_relationships_returns_all(app: FastAPI) -> None:
     assert body["items"][0]["user_id"] == "bob"
     assert body["items"][1]["user_id"] == "alice"
     assert body["items"][2]["user_id"] == "carol"
+    assert all(item["identity"] is None for item in body["items"])
+
+
+def test_list_relationships_enriches_actor_identity(app: FastAPI) -> None:
+    """Actor 关系应包含平台、外部账号和昵称，而不是只暴露内部 ID."""
+    import asyncio
+
+    from src.persistence.identity_store import SqliteIdentityStore
+
+    loop = asyncio.new_event_loop()
+    identity_store: SqliteIdentityStore = app.state.identity_store
+    memory_store: SqliteMemoryStore = app.state.memory_store
+    try:
+        actor = loop.run_until_complete(
+            identity_store.find_or_create_actor("123456", "astrbot", "小明")
+        )
+        rel = Relationship.create("default", actor.id)
+        loop.run_until_complete(memory_store.save_relationship(rel))
+    finally:
+        loop.close()
+
+    body = TestClient(app).get("/panel/admin/relationships").json()
+    identity = body["items"][0]["identity"]
+    assert identity["kind"] == "actor"
+    assert identity["name"] is None
+    assert identity["accounts"] == [{
+        "actor_id": actor.id,
+        "frontend": "astrbot",
+        "external_key": "123456",
+        "display_name": "小明",
+    }]
+
+
+def test_relationship_enriches_group_identity(app: FastAPI) -> None:
+    """UserGroup 关系应显示组名及其全部跨平台账号."""
+    import asyncio
+
+    from src.persistence.identity_store import SqliteIdentityStore
+
+    loop = asyncio.new_event_loop()
+    identity_store: SqliteIdentityStore = app.state.identity_store
+    memory_store: SqliteMemoryStore = app.state.memory_store
+    try:
+        qq = loop.run_until_complete(
+            identity_store.find_or_create_actor("10001", "astrbot", "小明QQ")
+        )
+        discord = loop.run_until_complete(
+            identity_store.find_or_create_actor("discord-1", "discord", "小明DC")
+        )
+        group = loop.run_until_complete(identity_store.create_group("张三"))
+        loop.run_until_complete(identity_store.bind_actor_to_group(qq.id, group.id))
+        loop.run_until_complete(identity_store.bind_actor_to_group(discord.id, group.id))
+        rel = Relationship.create("default", group.id)
+        loop.run_until_complete(memory_store.save_relationship(rel))
+    finally:
+        loop.close()
+
+    body = TestClient(app).get(
+        f"/panel/admin/relationship?user_id={group.id}"
+    ).json()
+    assert body["identity"]["kind"] == "group"
+    assert body["identity"]["name"] == "张三"
+    assert {a["external_key"] for a in body["identity"]["accounts"]} == {
+        "10001", "discord-1",
+    }
 
 
 def test_list_relationships_pagination(app: FastAPI) -> None:
