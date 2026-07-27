@@ -68,6 +68,7 @@ async def _run_non_stream(question: str, source_user: str, persona: str, persona
     initial_state = {
         "messages": [{"role": "user", "content": question}],
         "source_user": source_user,
+        "current_speaker": source_user,
         "persona": persona,
         "persona_name": persona_name,
         "proxy_thinking_enabled": False,
@@ -142,6 +143,8 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
             retrieved_memories=retrieved_entries,
             conversation_history=[{"role": "user", "content": question}],
             relationship=rel,
+            current_speaker=source_user,
+            channel_type="direct",
         )
 
         print(f"💬 [{source_user} → {persona_name}] {question}\n", file=sys.stderr)
@@ -192,6 +195,7 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
     memory_state = {
         "messages": [{"role": "user", "content": question}],
         "source_user": source_user,
+        "current_speaker": source_user,
         "persona": persona,
         "persona_name": persona_name,
         "proxy_thinking_enabled": False,

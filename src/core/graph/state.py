@@ -18,6 +18,8 @@ class AgentState(TypedDict, total=False):
     messages: list[dict[str, Any]]          # 原始 messages（OpenAI 格式）
     extracted_new: list[dict[str, Any]]     # 提取出的新内容
     source_user: str                        # 有效用户 ID (effective_user_id)
+    current_speaker: str | None             # 模型可读的当前发言者身份（不得使用内部 UUID）
+    active_participants: list[str]           # 当前短期窗口中的模型可读参与者标签
     actor_id: str | None                    # 当前 Actor ID (v0.3.0)
     persona: str                            # 人格 system prompt
     persona_name: str                       # 人格名称

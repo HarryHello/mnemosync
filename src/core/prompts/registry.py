@@ -37,6 +37,8 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         name="memory_analysis",
         placeholders=(
             "SOURCE_USER",
+            "CURRENT_SPEAKER",
+            "CHANNEL_TYPE",
             "CONVERSATION",
             "PERSONA_NAME",
             "PERSONA_ADDRESSING",
@@ -50,6 +52,8 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         name="relationship_analysis",
         placeholders=(
             "CURRENT_REL",
+            "CURRENT_SPEAKER",
+            "CHANNEL_TYPE",
             "CONVERSATION",
             "PERSONA_NAME",
             "PERSONA_ADDRESSING",
@@ -71,7 +75,9 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
     ),
     "proxy_thinking": PromptSpec(
         name="proxy_thinking",
-        placeholders=("USER_NAME", "RELATIONSHIP", "MEMORIES", "USER_MESSAGE"),
+        placeholders=(
+            "CURRENT_SPEAKER", "CHANNEL_TYPE", "RELATIONSHIP", "MEMORIES", "USER_MESSAGE",
+        ),
         description="代理推理 Agent",
     ),
     "main_dialogue_frame": PromptSpec(
@@ -79,7 +85,10 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         placeholders=(
             "PERSONA_NAME",
             "PERSONA_PROMPT",
-            "USER_NAME",
+            "CURRENT_SPEAKER",
+            "CHANNEL_TYPE",
+            "SPACE_LABEL",
+            "ACTIVE_PARTICIPANTS",
             "RELATIONSHIP",
             "PERMANENT_MEMORIES",
             "RETRIEVED_MEMORIES",

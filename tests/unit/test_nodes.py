@@ -101,5 +101,9 @@ async def test_main_dialogue_node_generates_when_response_missing():
         "emotion_analysis": {"emotion": "neutral", "intensity": 0.0, "category": "other", "keywords": [], "summary": ""},
     }
     build.assert_called_once()
+    build_kwargs = build.call_args.kwargs
+    assert build_kwargs["user_name"] == "未知参与者"
+    assert build_kwargs["current_speaker"] is None
+    assert build_kwargs["active_participants"] is None
     run_main.assert_awaited_once_with(forwarder, [])
     forwarder.close.assert_awaited_once()

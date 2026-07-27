@@ -22,6 +22,7 @@ from src.core.memory import (
     build_main_dialogue_messages,
     format_relationship,
 )
+from src.core.memory.audience import RetrievalContext
 from src.core.models.resolver import RoleResolver
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.store import LLMServiceStore
@@ -33,7 +34,6 @@ from src.tools import (
     make_update_addressing_tool,
     make_vector_search_tool,
 )
-from src.tools.emotion_analyzer import analyze_emotion
 
 from .state import AgentState
 
@@ -61,13 +61,12 @@ def _resolve_addressing(rel, settings) -> tuple[str, str, str]:
     )
 
 
-def _retrieval_context(state: AgentState, rel=None) -> "RetrievalContext":
+def _retrieval_context(state: AgentState, rel=None) -> RetrievalContext:
     """从图状态构建受众上下文 (v0.3.0).
 
     rel 传入时用于 FRIENDS_ONLY / CONFIDENTIAL 门槛判定; 调用方应在检索前
     先加载关系 (一次索引查询, 开销可忽略)。
     """
-    from src.core.memory.audience import RetrievalContext
     return RetrievalContext(
         effective_user_id=state.get("source_user") or None,
         actor_id=state.get("actor_id"),
@@ -167,11 +166,12 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
         logger.debug("  🚀 调用代理思考 Agent...")
         result = await run_proxy_thinking(
             forwarder=forwarder,
-            user_name=state["source_user"],
+            user_name=state.get("current_speaker") or "未知参与者",
             relationship=format_relationship(rel),
             memories=memories_text,
             user_message=user_msg,
             tools=None,
+            channel_type=state.get("channel_type"),
         )
         logger.debug("  ✅ 代理思考完成")
         logger.debug("  📤 思考结果: %s", result[:100] if result else "(空)")
@@ -255,12 +255,16 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
         messages = build_main_dialogue_messages(
             persona_prompt=state.get("persona") or settings.persona.prompt,
             persona_name=state.get("persona_name") or settings.persona.name,
-            user_name=source_user,
+            user_name=state.get("current_speaker") or "未知参与者",
             permanent_memories=perms,
             retrieved_memories=retrieved_entries,
             relationship=rel,
             conversation_history=conversation_history,
             proxy_thinking_result=state.get("proxy_thinking_result"),
+            current_speaker=state.get("current_speaker"),
+            channel_type=state.get("channel_type"),
+            space_label=state.get("space_id"),
+            active_participants=state.get("active_participants"),
         )
 
         logger.debug("  📝 拼装消息数: %d", len(messages))
@@ -331,6 +335,8 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             user_addressing=user_addr,
             relation_context=rel_ctx,
             emotion_analysis=emotion_text,
+            current_speaker=state.get("current_speaker") or "未知参与者",
+            channel_type=state.get("channel_type"),
         )
 
         logger.debug("  ✅ 记忆分析完成: 新记忆 %d 条", len(out.new_memories))
@@ -420,6 +426,8 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
             user_addressing=user_addr,
             relation_context=rel_ctx,
             emotion_analysis=emotion_text,
+            current_speaker=state.get("current_speaker") or "未知参与者",
+            channel_type=state.get("channel_type"),
         )
 
         logger.debug("  ✅ 关系分析完成: 亲密 %+.2f, 信任 %+.2f",

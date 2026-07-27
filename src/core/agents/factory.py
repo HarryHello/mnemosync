@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.core.agents.base import (
-    ReActResult,
     run_react_loop,
     run_simple_completion,
 )
@@ -164,6 +163,8 @@ async def run_memory_analysis(
     user_addressing: str,
     relation_context: str,
     emotion_analysis: str = "",
+    current_speaker: str = "未知参与者",
+    channel_type: str | None = None,
 ) -> MemoryAnalysisOutput:
     """记忆分析 Agent: ReAct 循环, 提取候选记忆.
 
@@ -180,6 +181,8 @@ async def run_memory_analysis(
         user_addressing=user_addressing,
         relation_context=relation_context,
         emotion_analysis=emotion_analysis,
+        current_speaker=current_speaker,
+        channel_type=channel_type,
     )
     with use_agent("memory_analysis"):
         result = await run_react_loop(
@@ -223,6 +226,8 @@ async def run_relationship_analysis(
     user_addressing: str,
     relation_context: str,
     emotion_analysis: str = "",
+    current_speaker: str = "未知参与者",
+    channel_type: str | None = None,
 ) -> RelationshipAnalysisOutput:
     """关系分析 Agent: CoT, 调用 emotion_analyzer 后输出亲密度增量.
 
@@ -236,6 +241,8 @@ async def run_relationship_analysis(
         user_addressing=user_addressing,
         relation_context=relation_context,
         emotion_analysis=emotion_analysis,
+        current_speaker=current_speaker,
+        channel_type=channel_type,
     )
     try:
         with use_agent("relationship_analysis"):
@@ -326,6 +333,7 @@ async def run_proxy_thinking(
     user_message: str,
     tools: list | None = None,
     max_iterations: int = 3,
+    channel_type: str | None = None,
 ) -> str:
     """代理思考 Agent: CoT, 输出推理过程供主对话参考."""
     user_prompt = build_proxy_thinking_prompt(
@@ -333,6 +341,7 @@ async def run_proxy_thinking(
         relationship=relationship,
         memories=memories or "（无）",
         user_message=user_message,
+        channel_type=channel_type,
     )
     if tools:
         with use_agent("proxy_thinking"):

@@ -22,6 +22,8 @@ def build_memory_analysis_prompt(
     user_addressing: str,
     relation_context: str,
     emotion_analysis: str = "",
+    current_speaker: str = "未知参与者",
+    channel_type: str | None = None,
 ) -> str:
     """构建记忆分析 Agent 的完整 prompt.
 
@@ -31,8 +33,11 @@ def build_memory_analysis_prompt(
     emotion_analysis 由 graph 层预计算, 取代 Agent 自行调用 emotion_analyzer.
     """
     tmpl = get_prompt_store().load("memory_analysis")
+    channel_label = "群聊" if channel_type == "group" else "私聊" if channel_type == "direct" else "未标明"
     return (
         tmpl.replace("__SOURCE_USER__", source_user)
+        .replace("__CURRENT_SPEAKER__", current_speaker)
+        .replace("__CHANNEL_TYPE__", channel_label)
         .replace("__CONVERSATION__", conversation)
         .replace("__EMOTION_ANALYSIS__", emotion_analysis)
         .replace("__PERSONA_NAME__", persona_name)
