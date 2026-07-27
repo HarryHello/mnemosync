@@ -1,0 +1,840 @@
+# 群聊拟人化与工具调用协议演进
+
+> 状态: 方向性架构提案 · 中期演进路线图（非迭代任务清单）
+> 日期: 2026-07-27
+> 关联: [future-persona-architecture.md](future-persona-architecture.md)
+> 关键词: 拟人化, 表达改写, 工具调用, 平台动作, 多轮事务, 伪服务商边界
+
+本文用于确定能力边界、目标架构、阶段依赖和需要先验证的假设。它**不应直接拆成开发任务执行**：工具事务、流式协议、幂等语义和持久化模型都需要先形成独立 RFC／ADR，并通过真实前台兼容性验证，之后再转化为版本计划。文中的阶段与工作量只表达先后关系和规模，不构成排期承诺。
+
+---
+
+## 1. 目标与约束
+
+### 1.1 目标
+
+让 Mnemosync 在群聊场景中表现出更自然的社交存在感，同时完整支持客户端工具协议闭环，使平台原生动作（戳一戳、表情反应、表情包等）成为模型可用的表达维度。
+
+### 1.2 不可违背的架构约束
+
+- **伪·模型服务商定位**：Mnemosync 是 OpenAI 兼容 API 端点，不是 Chat 框架。不控制客户端行为（发送时机、消息拆分、延迟、平台动作的最终执行权限）。
+- **服务器优先人格**：人格定义在服务端，客户端 system 消息不可信。
+- **服务器侧短期记忆**：客户端历史不可信，对话流水由服务端跨前端事件流重建。
+- **不修改客户端**：所有功能不能依赖客户端专用适配。
+- **单人格多用户**：人格只有一个，关系按用户独立演变。
+
+### 1.3 设计原则
+
+- **受控信任**：客户端工具事务是唯一被信任的临时协议片段，其余历史仍不可信。
+- **能力声明非命令**：前台上传的 `tools` 是当前轮的能力声明，模型的 `tool_calls` 是请求，不是指令。
+- **动作与话语平权**：平台动作和文本回复是同一份行动计划的并列选择，不是互斥补救。
+- **隐私跨模态**：受众和隐私约束同时覆盖文本、工具参数、表情包搜索关键词等所有输出形式。
+- **可观测性优先**：模型选择文本、工具、或沉默的决策过程应可追踪可调试。
+
+---
+
+## 2. 架构总览
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     客户端（AstrBot 等）                  │
+│  tools: [poke, react, search_emoji]                     │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Mnemosync (伪服务商)                              │   │
+│  │                                                    │   │
+│  │  1. 身份解析 + 受众过滤                             │   │
+│  │  2. 插件事件规范化 + 对话流水                        │   │
+│  │  3. 工具能力解析 + 策略过滤                          │   │
+│  │  4. 服务器人格 + 记忆装填 + 工具事务尾部              │   │
+│  │  5. 上游 MAIN 模型调用                               │   │
+│  │  6. 响应消化 (工具调用/文本/混合)                     │   │
+│  │  7. [可选] Expressor 改写 (仅文本部分)               │   │
+│  │  8. 后台记忆与关系图 (单事务一次)                     │   │
+│  └──────────────────────────────────────────────────┘   │
+│         ↓ 响应 (content + tool_calls)                    │
+│  AstrBot 执行工具 → 再次提交工具结果                     │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 2.1 分层职责
+
+| 层 | 职责 | 归属 |
+|---|---|---|
+| 能力声明层 | 解析本轮 `tools`，派生能力元数据 | Mnemosync |
+| 策略层 | 工具黑白名单、频率限制、安全规则 | Mnemosync |
+| 提示词层 | 将平台能力注入模型，约束隐私边界 | Mnemosync |
+| 上游调用层 | 透传工具定义，保留完整响应 | Mnemosync |
+| 事务桥接层 | 接纳客户端工具事务尾部，保持 `tool_call_id` 关联 | Mnemosync |
+| 执行层 | 校验并执行 `tool_calls` | 客户端 |
+| 表达改写层 | 仅改写最终文本，不改动工具调用协议消息 | Mnemosync |
+
+---
+
+## 3. 阶段一: 协议正确性
+
+> 目标: 流式和非流式路径都能完整通过工具调用，不丢失 `tool_calls`，不破坏现有语义。
+
+### 3.1 非流式主对话保留完整响应
+
+**现状**: [run_main_dialogue](src/core/agents/factory.py#L134-L151) 将上游响应压缩为 `(content, usage)`，丢弃 `tool_calls` 和 `finish_reason`。
+
+**变更**:
+
+```python
+@dataclass
+class MainDialogueResult:
+    message: dict[str, Any]      # 保留 content, tool_calls, reasoning_content 等
+    finish_reason: str | None
+    usage: dict[str, Any] | None
+```
+
+`graph.state.AgentState` 增加 `response_message: dict | None` 字段，非流式 `main_dialogue_node` 写入完整 message 而非纯文本。
+
+**影响**:
+
+- `ChatCompletionResponse` 构造可直接使用 `response_message`，不再需要手动拼装 `ChatMessage`。
+- `reasoning_content` 也通过 message 自然携带，无需额外字段。
+- 反映到 `AgentState.response` 的语义从"纯文本"变为"最终用户可见文本"（优先取 `response_message.content`）。
+
+### 3.2 流式工具调用累积解析
+
+**现状**: [parse_sse_stream](src/infra/forwarder/forwarder.py#L445-L470) 只提取 `delta.content`，丢弃 `delta.tool_calls`。
+
+**变更**: 扩展 `parse_sse_stream` 以区分纯文本流和工具调用流:
+
+```python
+@dataclass
+class StreamResult:
+    text: str
+    tool_calls: list[dict] | None  # 累积合并后的完整 tool_calls
+    finish_reason: str | None
+```
+
+核心逻辑:
+
+- `delta.tool_calls` 的 `index` 字段用于区分多个并行工具；
+- 同一 `index` 的 `function.arguments` 按 SSE 帧顺序拼接；
+- 处理 `function.arguments` 可能跨帧分片、跨帧 JSON 不完整的问题；
+- `finish_reason: "tool_calls"` 时停止累积文本，标记存在工具调用。
+
+**影响**:
+
+- `_run_memory_graph` 可以感知当前响应是文本还是工具调用；
+- 纯工具调用响应（`finish_reason=tool_calls`, 无文本）不触发记忆分析；
+- 幂等缓存可重放 `tool_calls` 而不仅是文本。
+
+### 3.3 补全透传字段
+
+**现状**: [forward.py:892-904](src/api/routes/forward.py#L892-L898) 的 `_optional_fields` 未包含 `parallel_tool_calls`。
+
+**变更**: 将 `parallel_tool_calls` 加入透传白名单。
+
+同时确认 `tool_choice` 的透传逻辑: 当 `tool_choice="required"` 时，上游必须返回工具调用。若上游不支持，应通过 `UpstreamError` 错误帧告知客户端，而非静默忽略。
+
+### 3.4 工具事务尾部桥接
+
+这是最关键的架构变更，需要仔细定义受控范围。
+
+**核心思路**: 在服务器侧短期历史之后，当前用户消息之前，插入一个**被校验过的客户端工具事务片段**。
+
+```
+服务端 system
+服务端短期历史 (跨前端流水)
+[客户端工具事务尾部]   ← 新增
+当前用户消息 (本轮输入)
+```
+
+**工具事务尾部的定义**:
+
+一个合法的工具事务片段是满足以下所有条件的连续消息序列:
+
+1. 以 `role: assistant`, 含 `tool_calls` 的消息起始；
+2. 后续可选地跟随 0 到 N 条 `role: tool` 消息，每条必须有合法的 `tool_call_id`；
+3. 所有 `tool_call_id` 都能在起始消息的 `tool_calls` 中找到匹配；
+4. 所有 `tool` 消息的工具名称与客户端本轮提供的 `tools` 定义匹配；
+5. 不包含任何 `role: user` 消息（新用户输入必须单独处理）；
+6. 不包含 `role: system` 消息；
+7. 序列总长度不超过可配置的上限（默认 20 条, 约 5 轮工具调用）；
+8. 所有消息的 `tool_call_id` 不重复消耗：不允许同一个 `tool_call_id` 出现两次；
+
+**处理流程**:
+
+```
+客户端请求中的 messages:
+
+  messages[0]: assistant (tool_calls: [id: call_1, name: poke])
+  messages[1]: tool (tool_call_id: call_1, content: "success")
+  messages[2]: user ("好了，继续刚才的话题")
+
+→ 提取工具事务尾部: [assistant(tool_calls), tool]
+→ 校验通过
+→ 丢弃工具事务尾部之外的客户端历史
+→ 拼装:
+    服务端 system
+    服务端短期历史
+    assistant(tool_calls)   ← 来自工具尾部
+    tool(tool_call_id)      ← 来自工具尾部
+    user("好了，继续刚才的话题")  ← 当前用户消息
+```
+
+**无效尾部处理**:
+
+- 长度为 0: 正常流程，不插入任何额外消息；
+- 校验失败: 记录告警，丢弃整个尾部，降级为无工具上下文；
+- 部分有效（有一条 `tool` 但 `tool_call_id` 不匹配）: 丢弃尾部，不尝试部分恢复。
+
+**模型候选声明**:
+
+在 `role_bindings` 表或 `ResolvedCandidate` 中增加工具能力元数据:
+
+```python
+@dataclass
+class ToolCapabilities:
+    supports_tools: bool = True
+    supports_stream_tools: bool = True        # stream + tools 同时可用
+    supports_parallel_tool_calls: bool = True
+    supports_tool_choice_required: bool = True  # tool_choice="required"
+    max_tool_calls_per_round: int = 10
+```
+
+当客户端请求携带 `tools` 时，MAIN 候选按此字段排序:
+
+- `supports_tools=True` 优先；
+- `supports_stream_tools=False` 时，流式请求降级为非流式上游调用，再转为 SSE 帧返回客户端；
+- `supports_parallel_tool_calls=False` 时，`parallel_tool_calls` 强制设为 `false`。
+
+### 3.5 测试覆盖
+
+新增测试文件 `tests/unit/test_tool_roundtrip.py`，覆盖:
+
+- 工具事务尾部校验: 合法、非法、部分有效、空序列；
+- 流式工具调用累积: 单工具、多并行、arguments 分片、纯工具无文本；
+- 非流式工具调用: 完整 message 保留；
+- `tool_choice` 透传: `"auto"`, `"none"`, `"required"`, `{"type": "function", "function": {"name": "poke"}}`；
+- 隐私约束: 工具参数中出现私有记忆内容时的检测；
+- `parallel_tool_calls` 透传: 请求与上游 payload 一致。
+
+---
+
+## 4. 阶段二: 事务与持久化
+
+> 目标: 工具调用不产生重复的记忆写入和关系更新，工具事件单独持久化，幂等缓存可完整重放。
+
+### 4.1 逻辑交互事务
+
+**问题**: 一次用户输入可能触发多轮 LLM 调用（工具调用 → 结果 → 继续调用 → 最终文本），每轮 HTTP 请求都会触发 `_run_memory_graph`，导致重复写入。
+
+**解决方案**: 引入 `interaction_id`，标识一组逻辑上属于同一个用户输入的所有消息。
+
+```python
+@dataclass
+class Interaction:
+    interaction_id: str
+    root_user_event_id: str          # 触发整个交互的用户消息 event_id
+    started_at: datetime
+    events: list[ConversationEvent]  # 属于该交互的所有事件
+    committed: bool = False
+```
+
+**规则**:
+
+- 同一 `interaction_id` 的后续请求（工具结果回传）不触发新的记忆/关系分析；
+- 后台记忆图只在 `finish_reason=stop` 或事务超时（默认 120s）后执行一次；
+- 工具调用事件和工具结果事件单独存储为 `event_type: "tool_call"` / `event_type: "tool_result"`，不混入自然语言对话流水；
+- 关系 `interaction_count` 按 `root_user_event_id` 去重，不计工具中间轮；
+- 幂等缓存按 `interaction_id` 存储完整响应序列，重放时按顺序回放。
+
+**ID 传递**:
+
+客户端首次请求时，Mnemosync 生成 `interaction_id` 并随响应返回（作为自定义响应头 `X-Mnemosync-Interaction-Id` 或 SSE 首帧扩展字段）。客户端后续提交工具结果时，在请求中携带该 ID（通过 `Idempotency-Key` 头或自定义头）。
+
+不依赖客户端携带来生成 `interaction_id` 的兜底: 通过 `root_user_event_id` + `api_key_id` 的哈希派生，从客户端历史中识别 `user` 消息的 `event_fingerprint` 或 `external_event_id`。
+
+### 4.2 工具事件持久化
+
+**现状**: 对话流水只存储 `role: user` 和 `role: assistant` 事件，`tool_calls` 和 `tool` 消息不存储。
+
+**变更**: `conversation_store` 增加 `event_type` 维度:
+
+```python
+class ConversationEvent:
+    # ... 现有字段
+    event_type: Literal["message", "tool_call", "tool_result"] = "message"
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    tool_arguments: dict | None = None
+    tool_result: str | None = None
+    interaction_id: str | None = None
+```
+
+**查询接口**:
+
+- `list_for_space(space_id, ...)` 默认只返回 `event_type=message` 的事件（短期历史装填不包含工具事件）；
+- `list_tool_events(interaction_id)` 返回特定交互的工具调用链；
+- `get_latest_tool_context(space_id, limit=5)` 获取最近工具调用摘要（供模型参考）。
+
+### 4.3 幂等缓存支持工具调用
+
+**现状**: [_replay_json_response](src/api/routes/forward.py#L161-L179) 和 [_replay_stream_response](src/api/routes/forward.py#L182-L211) 只构造 `content` 响应，不包含 `tool_calls`。
+
+**变更**: 幂等记录存储完整响应消息，重放时保留 `message.tool_calls` 和 `finish_reason`。
+
+```python
+@dataclass
+class IdempotencyRecord:
+    # ... 现有字段
+    response_message: dict | None  # 完整 assistant message，含 tool_calls
+    finish_reason: str | None
+```
+
+### 4.4 工具调用与应用层动作响应
+
+工具调用可能触发需要客户端执行的动作，然后客户端将结果送回。这类交互的响应可能包含：
+
+- 工具调用建议（tool_calls）
+- 执行后的确认文本
+- 或仅工具调用无文本
+
+**关键规则**：
+
+- 当 `finish_reason="tool_calls"` 且 `content` 为空或 `null` 时，后台不触发记忆分析；
+- 当 `finish_reason="stop"` 且有 `content` 时，才进行记忆/关系分析；
+- 工具调用结果文本（如"已戳一戳"）如果是工具返回的确认信息，不应作为对话记忆提取；
+- 模型在工具结果后生成的最终回复才进入记忆分析。
+
+---
+
+## 5. 阶段三: 拟人化表达
+
+> 目标: 在群聊中减少 AI 味，让模型在短回复、平台动作、话题观察之间自然切换。
+
+### 5.1 Expressor 表达改写层
+
+**位置**: MAIN 模型返回纯文本响应之后，返回客户端之前。
+
+**只改最终文本**: 不处理 `tool_calls` 消息，不改写协议控制消息。
+
+**必须清除动作描写**: 即使 prompt 中已禁止，模型仍可能输出括号动作或角色扮演指令。Expressor 的提示词必须明确要求删除这些内容，作为确定性约束的补充防线:
+
+```text
+- 删除所有括号动作描写，如“（蹭了蹭你）”“（戳了戳）”“（笑）”
+- 删除所有星号动作描写，如“*拍拍*”“*摸头*”“*叹气*”
+- 删除所有类似“[发送表情包]”“[戳一戳]”的自我描述
+- 如果动作意图确实存在，应转换为自然短句，而不是描述动作
+```
+
+这条规则在 Expressor 的提示词中保持稳定，不随工具能力变化——即使没有工具可用，动作描写同样不应出现在输出中。
+
+**设计**:
+
+```python
+@dataclass
+class ExpressorConfig:
+    enabled: bool = False
+    model_role: ModelType = ModelType.ASSIST  # 可独立配置，也可复用 MAIN
+    temperature: float = 0.4                  # 低温度，保持语义稳定
+    max_input_length: int = 2000
+```
+
+**触发条件**:
+
+- 仅群聊（`channel_type=group`）；
+- 仅最终文本（`finish_reason=stop` 且 `content` 非空）；
+- 非工具调用轮次；
+- 文本长度 > 10 字符（太短的文本不需要改写）；
+- 可在调试面板逐条开关。
+
+**提示词框架**:
+
+```text
+你是一名表达改写助手。你的任务是将以下回复改写成适合在群聊中发送的消息。
+
+规则:
+- 保持核心语义不变
+- 缩短句子，使用口语化表达
+- 不使用 Markdown、LaTeX 或列表格式
+- 消息末尾通常不加句号
+- 如果一句话较长，可以拆分为多个短句
+- 使用当前空间自然的表达习惯
+- 不要改变事实性信息
+- 不要添加原文没有的内容
+
+当前空间类型: {channel_type}
+当前发言者: {current_speaker}
+关系: {relationship_summary}
+
+原始回复:
+{original_text}
+
+改写后的回复:
+```
+
+**性能考虑**:
+
+- Expressor 是可选 LLM 调用，增加一次上游延迟；
+- 当 `max_input_length` 内的文本较短时，可考虑复用当前 MAIN 模型的同一轮次（在 system prompt 中一次性要求"先想说什么，再用群聊风格表达"），避免额外调用；
+- 默认配置下 Expressor 可用低成本的 ASSIST 角色模型（如 qwen-turbo），降低延迟和成本；
+- 在调试面板中显示改写前后的对比。
+
+### 5.2 触发原因注入
+
+**现状**: 模型不知道"为什么这次被唤醒"，导致无法区分被点名、被回复、被引用、还是旁观后被触发。
+
+**变更**: 在 `main_dialogue_frame.md` 中增加 `__TRIGGER_REASON__` 占位符，在 `forward.py` 的 `initial_state` 中传递。
+
+**触发原因来源**:
+
+- 身份插件 `preprocess` 返回的 `NormalizedEvent` 中的 `trigger_reason` 字段；
+- 无插件时，通过客户端消息结构推断：
+
+```python
+def _infer_trigger_reason(
+    messages: list[dict],
+    current_speaker: str,
+    channel_type: str | None,
+) -> str:
+    if channel_type != "group":
+        return "私聊消息"
+    # 检查最后一条消息是否提及当前说话者
+    last_msg = messages[-1] if messages else {}
+    # 最后一条消息是 assistant（机器人上一条回复后被群友回复）
+    # 最后一条消息是 user 且包含 @ 当前说话者
+    # 最后一条消息是 user 是回复当前说话者的上一条消息
+    # 默认: 群聊新消息
+```
+
+**触发原因类型**:
+
+```text
+被 @ 点名: "群友 @{name} 在群聊中直接提及了你"
+被回复: "群友 {name} 回复了你上一条消息"
+群聊消息: "群聊中有新消息，你可以选择是否参与"
+话题延续: "你上一条消息后，群聊仍在继续这个话题"
+空闲续话: "群聊已有一段时间无人发言，你可以选择是否主动开启话题"
+```
+
+**注入提示词**:
+
+```text
+## 本次触发原因
+{trigger_reason}
+```
+
+放在 `__CHANNEL_TYPE__` 之后，`__CURRENT_SPEAKER__` 之前。
+
+### 5.3 平台能力提示
+
+**现状**: 模型不知道当前轮有哪些可用的轻量动作。
+
+**变更**: 在 system prompt 中增加动态能力提示段。
+
+**生成逻辑**:
+
+```python
+def _build_capability_hint(tools: list[dict] | None, tool_policies: dict) -> str:
+    if not tools:
+        return ""
+    # 从 tools 中提取社交类工具
+    social_actions = []
+    for t in tools:
+        name = t.get("function", {}).get("name", "")
+        policy = tool_policies.get(name, {})
+        if policy.get("category") == "social_action":
+            social_actions.append(name)
+    if not social_actions:
+        return ""
+    return (
+        f"本轮提供了一些平台原生动作: {', '.join(social_actions)}。\n"
+        "这些工具表示你当前确实可以执行的动作，不代表必须使用。\n"
+        "当一个轻量动作比文字回复更自然时，可以选择工具调用，"
+        "但在发动作前先确认目标是否合适。\n"
+        "不得假设或调用未在下方 tools 中提供的动作。\n"
+        "工具参数也遵循与正文相同的受众和隐私规则。"
+    )
+```
+
+**放置位置**: 在 `__PROXY_THINKING_SECTION__` 之后，对话历史之前。
+
+### 5.4 选择性参与提示
+
+**现状**: 模型每轮都生成回复，客户端即使不发送空消息也发送短消息。
+
+**约束**: 伪服务商架构无法真正"不回复"——客户端调用 API 就期望得到一个响应。
+
+**可做的**: 在提示词中指导模型在群聊中何时应该简短回应或观察。
+
+```text
+## 群聊参与指南
+- 并非每一条消息都需要完整回复
+- 当话题与你无关、或已有人回答时，可以只发简短回应
+- 如果一条消息已经过去较长时间，不需要详细回应
+- 被 @ 点名时通常需要回应
+- 对你上一条消息的回复，通常需要继续
+- 老话题已经被新话题盖过时，不需要回去回复
+- 没人问你的时候，不要主动回答梗图、截图或链接里的问题
+- 绝不使用括号动作、舞台指令、旁白或 RolePlay 动作文本模拟现实互动
+```
+
+**与工具联动**: 当本轮确实提供轻量社交工具时，可以进一步指导:
+
+```text
+- 当前可用的平台动作工具: {social_action_names}
+- 只有通过对应的 tool call 才能请求执行平台动作；工具不存在时，该动作能力即不存在
+- 轻量动作可以替代文字参与，但不得同时用正文复述或表演该动作
+- 严禁输出“（蹭了蹭你）”“（戳了戳）”“*拍拍*”“[发送表情]”等动作描写
+- 不确定是否应调用工具时，选择自然的简短文字；不要把工具能力改写成 RolePlay 文本
+```
+
+这里必须区分**平台动作**与**动作描写**：前者是客户端实际执行的结构化 `tool_calls`，后者只是模型在文本中扮演动作，会强化角色扮演感，违背拟人化目标。即使动作工具不可用，也不允许退化为括号动作。
+
+### 5.5 表达习惯学习（远期）
+
+**问题**: 固定提示词无法适应不同群聊的独特表达风格。
+
+**方案**: 新增 `MemoryType.EXPRESSION_STYLE`，存储抽象表达规律。
+
+**数据形态**:
+
+```json
+{
+  "scope": "space-xxx",
+  "situation": "朋友自嘲失误",
+  "intent": "轻度调侃并安慰",
+  "style": "先短促吐槽，再弱化严重性",
+  "confidence": 0.82,
+  "source_count": 6
+}
+```
+
+**检索条件**: `current_space + relationship_intimacy + detected_intent`
+
+**检索窗口**: 默认 Top 3，按 confidence 降序。
+
+**注入方式**: 作为 Expressor 的参考，不作为 MAIN 模型的直接约束。
+
+**不覆盖**: 不学习个人身份、不模仿具体用户、不存储原始对话文本。
+
+**实现前提**:
+
+- 需要意图检测能力（可由记忆分析 Agent 扩展或独立分类器）；
+- 需要空间级而非用户级的记忆作用域；
+- 需要衰减机制（表达习惯会过时，confidence 应随时间衰减）；
+- 需要管理员控制（在管理面板中可查看、删除、禁用特定空间的表达习惯）。
+
+---
+
+## 6. 阶段四: 私隐与安全边界
+
+> 目标: 工具调用不成为私有记忆泄露的新通道，社交动作不产生越权行为。
+
+### 6.1 工具参数隐私检查
+
+**位置**: 在 `tool_calls` 返回客户端前进行确定性检查。
+
+**检查项**:
+
+```python
+def validate_tool_calls(
+    tool_calls: list[dict],
+    available_tools: list[dict],
+    max_tool_calls: int = 5,
+) -> list[dict]:
+    # 1. 工具名称必须在本轮 tools 定义中
+    # 2. 每个工具的 arguments 必须是合法 JSON
+    # 3. tool_call_id 必须唯一
+    # 4. 工具调用数量不超过上限
+    # 5. 参数内容不包含内部 UUID 格式
+    # 6. 参数长度不超过上限（默认 2000 字符）
+    # 7. 目标用户/空间在当前平台范围内
+    pass
+```
+
+**不通过的处理**:
+
+- 非法工具名称: 移除该工具调用，记录告警；
+- 非法 JSON: 返回错误帧给客户端，记录告警；
+- 参数含内部 UUID: 移除该工具调用，记录告警；
+- 超过数量上限: 截断至上限，记录告警。
+
+### 6.2 API Key 级工具策略
+
+**新增配置**: 在 `api_keys` 表或 `identity_strategies` 配置中增加工具策略:
+
+```json
+{
+  "tool_policies": {
+    "allowed_tools": ["poke", "react", "search_emoji"],
+    "denied_tools": ["send_message", "recall", "mute", "kick", "ban"],
+    "max_tool_calls_per_round": 3,
+    "allow_parallel_calls": false,
+    "social_action_cooldown_seconds": 30,
+    "require_confirmation": ["send_message", "recall"]
+  }
+}
+```
+
+**策略层级**: API Key 级策略 > 全局默认策略。未配置时，所有工具默认允许，但管理类工具默认禁止。
+
+**执行时机**: 在 `tool_calls` 返回客户端前，按策略过滤:
+
+- `denied_tools` 中的工具直接移除；
+- `allowed_tools` 非空时，不在列表中的工具移除；
+- 超过 `max_tool_calls_per_round` 时截断；
+- `allow_parallel_calls=false` 时，只保留第一个工具调用。
+
+### 6.3 隐私约束跨模态
+
+**现状**: 主提示词中的隐私约束只覆盖文本回复，未明确覆盖工具参数。
+
+**变更**: 在 `main_dialogue_frame.md` 中增加:
+
+```text
+## 隐私与输出边界
+- 工具参数也是对外输出的一部分，遵循与正文相同的受众和隐私规则
+- 不得通过工具参数传递私有记忆中的内容
+- 在群聊中使用工具时，不得向其他参与者披露当前发言者的私密信息
+- 不得将当前空间的信息通过工具发送到另一个空间
+- 工具调用不代表可以绕过正常表达中的隐私约束
+```
+
+### 6.4 频率限制与冷却
+
+**社交动作**:
+
+- 同一工具对同一目标用户，每 N 秒内只能调用一次；
+- 全局社交动作频率按 API Key 统计；
+- 冷却状态需在 `tool_policies` 中持久化，重启后仍有效；
+- 冷却命中时，在调试面板记录"因冷却被拦截"。
+
+---
+
+## 7. 调试与可观测性
+
+### 7.1 调试面板扩展
+
+**现有基础**: `DebugEventBus` + SSE 调试事件流 + 上游请求/响应详情。
+
+**新增展示**:
+
+- 工具调用决策: 模型选择工具还是文本，以及可能的其他候选；
+- Expressor 改写前后对比: 原始文本 ↔ 改写文本；
+- 工具事务尾部: 提取的尾部片段、校验结果、是否被丢弃及原因；
+- 触发原因: 本次推理的触发原因类型；
+- 工具策略命中: 哪些工具被策略过滤及原因；
+- 交互事务: 同一 `interaction_id` 的所有轮次聚合展示。
+
+### 7.2 评估维度
+
+参考调研中的评估维度，对 Mnemosync 群聊回复进行分维度评估:
+
+| 维度 | 评估方式 | 数据来源 |
+|---|---|---|
+| 是否该回复 | 触发原因 + 参与决策 | 日志 |
+| 回复目标是否正确 | 工具参数中的 target | 日志 |
+| 人格与关系一致性 | 关系增量 + 表达风格 | 关系分析 + Expressor |
+| 表达是否符合当前空间 | 表达习惯匹配度 | EXPRESSION_STYLE 检索 |
+| 是否过度解释 | 回复长度 / 历史平均长度 | 统计 |
+| 工具使用是否自然 | 工具调用上下文 | 日志 |
+| 隐私是否越界 | 工具参数检查 | 确定性检查日志 |
+
+---
+
+## 8. 中长期遗留能力
+
+以下能力来自已完成的单人格多用户架构阶段，但尚未实现。它们与工具调用和拟人化共享空间事件流基础，因此并入本路线图，不再维护独立的历史计划文档。
+
+### 8.1 SpaceState 与 Checkpoint
+
+**目标**：在原始空间事件流和长期记忆之间增加可重建的短中期空间状态。
+
+```text
+SpaceState(space_id)
+├── current_topics[]
+├── pending_questions[]
+├── active_threads[]
+├── waiting_for[]
+├── recent_decisions[]
+├── temporary_mood
+└── version
+```
+
+Checkpoint 应记录：
+
+- 覆盖的事件范围；
+- 当前公开话题和已确认事实；
+- 未回答问题及提问者；
+- 回复关系或争议点；
+- 生成模型、Prompt 版本和空间版本。
+
+原始事件不得因摘要或检查点生成而删除；空间摘要不得读取用户私聊记忆。
+
+### 8.2 并发与一致性
+
+当前已有 `committed_sequence`、`late_arrival` 和幂等重放基础，但尚未完成：
+
+- 同一空间内严格串行、并行生成/顺序提交或快照隔离的产品语义；
+- 回复生成期间空间版本发生变化时的冲突处理；
+- 后台 Agent 结果携带输入事件范围与基础版本；
+- 多进程部署下的消息队列、数据库锁或分布式锁选型；
+- 工具事务与空间事件的统一提交顺序。
+
+实现前需先形成一致性 RFC，不能直接引入消息队列或分布式锁。
+
+### 8.3 跨平台身份绑定
+
+UserGroup 已支持管理员手动归并多个 Actor，但尚未实现：
+
+- 跨平台身份自动或半自动绑定；
+- 用户确认与撤销绑定；
+- 冲突身份的拆分；
+- 绑定变更后的记忆与关系迁移；
+- 身份绑定审计。
+
+未经明确绑定，不得根据昵称、自然语言自述或 LLM 猜测合并身份。
+
+### 8.4 用户记忆治理
+
+尚需提供最终用户可用的：
+
+- 查看人格关于自己的记忆；
+- 纠正、删除或限制记忆；
+- 限制记忆可用空间和受众；
+- 请求解除跨平台身份绑定；
+- 查看记忆来源和提取上下文。
+
+管理员权限不能自动覆盖个人隐私，具体授权模型需要单独设计。
+
+### 8.5 依赖关系
+
+```text
+工具协议正确性
+    ↓
+工具事务 + interaction_id
+    ↓
+统一空间事件类型
+    ├── SpaceState / Checkpoint
+    ├── 并发与版本一致性
+    └── 用户记忆治理审计
+```
+
+这些能力均为中长期方向，不应与当前工具协议修复同时实现。
+
+---
+
+## 9. 实现路线图
+
+### 9.1 阶段依赖关系
+
+```
+阶段一 (协议正确性)
+  ├─ 非流式完整消息保留        ← 对阶段二无依赖
+  ├─ 流式工具累积解析          ← 对阶段二无依赖
+  ├─ 补全透传字段              ← 对阶段二无依赖
+  ├─ 工具事务尾部桥接          ← 依赖流式工具累积解析（解析方式复用）
+  └─ 模型候选工具能力声明      ← 对阶段二无依赖
+       ↓
+阶段二 (事务与持久化)
+  ├─ 逻辑事务跟踪              ← 依赖工具事务尾部桥接（尾部定义中的 interaction_id）
+  ├─ 工具事件持久化            ← 依赖逻辑事务跟踪
+  ├─ 幂等缓存工具调用支持      ← 依赖非流式完整消息保留
+  └─ 工具轮次不触发记忆分析    ← 依赖逻辑事务跟踪
+       ↓
+阶段三 (拟人化表达)
+  ├─ Expressor 改写层          ← 依赖阶段一（需要完整的 message 结构）
+  ├─ 触发原因注入              ← 对阶段一、二无依赖
+  ├─ 平台能力提示              ← 依赖阶段一（tools 解析）
+  ├─ 选择性参与提示            ← 依赖触发原因注入
+  └─ 表达习惯学习              ← 依赖阶段二（持久化基础设施）
+       ↓
+阶段四 (隐私与安全)
+  ├─ 工具参数检查              ← 依赖阶段一（需要 tool_calls 结构）
+  ├─ API Key 工具策略          ← 对阶段一、二、三无依赖
+  ├─ 隐私约束跨模态扩展        ← 对阶段一、二、三无依赖
+  └─ 频率限制与冷却            ← 依赖阶段二（持久化）
+```
+
+### 9.2 推荐顺序
+
+并非严格串行，以下标注了可并行项:
+
+```
+Q3 2026:
+  ├─ 阶段一: 协议正确性 (核心, 4-6 周)
+  │   ├─ 3.1 非流式完整消息保留           (1 周)
+  │   ├─ 3.2 流式工具累积解析             (1.5 周)
+  │   ├─ 3.3 补全透传字段                  (0.5 周)
+  │   ├─ 3.4 工具事务尾部桥接             (2 周)
+  │   ├─ 3.5 模型候选工具能力声明         (1 周)
+  │   └─ 3.6 测试覆盖                     (1 周, 与其他并行)
+  │
+  ├─ 5.2 触发原因注入                     (1 周, 与阶段一并行)
+  ├─ 6.2 API Key 工具策略                 (1 周, 与阶段一并行)
+  └─ 6.3 隐私约束跨模态扩展               (0.5 周, 与阶段一并行)
+
+Q4 2026:
+  ├─ 阶段二: 事务与持久化 (3-4 周)
+  │   ├─ 4.1 逻辑事务跟踪                 (1.5 周)
+  │   ├─ 4.2 工具事件持久化              (1 周)
+  │   ├─ 4.3 幂等缓存工具调用支持         (0.5 周)
+  │   └─ 4.4 工具轮次不触发记忆分析       (0.5 周)
+  │
+  ├─ 5.1 Expressor 表达改写层            (2 周, 与阶段二并行)
+  ├─ 5.3 平台能力提示                     (0.5 周, 与阶段二并行)
+  └─ 5.4 选择性参与提示                   (0.5 周, 与阶段二并行)
+
+Q1 2027:
+  ├─ 阶段四: 隐私与安全 (2-3 周)
+  │   ├─ 6.1 工具参数检查                 (1 周)
+  │   └─ 6.4 频率限制与冷却              (1 周)
+  │
+  ├─ 5.5 表达习惯学习                     (3-4 周, 远期)
+  └─ 7. 调试面板扩展                      (2 周, 各阶段完成后补充)
+```
+
+### 9.3 风险与降级
+
+| 风险 | 影响 | 缓解 |
+|---|---|---|
+| 工具事务尾部桥接导致误判 | 客户端历史被错误信任 | 严格校验规则 + 降级为无工具上下文 + 可观测性告警 |
+| Expressor 改写改变语义 | 回复内容失真 | 仅可选启用 + 仅改写 >10 字符文本 + 调试面板对比 |
+| 上游模型不支持工具 | 整个工具链路不可用 | 模型候选能力声明 + 客户端 `tool_choice` 错误帧 |
+| 表达习惯学习引入隐私风险 | 群内表达被泄露到其他空间 | 仅学习抽象规律 + 空间级作用域 + 管理控制 |
+| 工具调用增加延迟 | 用户体验下降 | 异步工具调用 + 非流式上游降级 + 超时控制 |
+
+---
+
+## 9. 与其他设计的关系
+
+### 9.1 与现有架构的兼容性
+
+- 所有变更保持向后兼容: 现有客户端不传 `tools` 时，行为不变；
+- Expressor 默认关闭；
+- 工具策略默认允许所有工具；
+- 阶段一、二、四的变更不会影响纯文本对话流程。
+
+### 9.2 与现有多用户架构的关系
+
+- 工具事务尾部桥接中的 `space_id` 校验复用现有单人格多用户架构；
+- 表达习惯学习的空间级作用域复用现有空间 ID 体系；
+- 工具调用时的隐私约束复用现有的受众过滤模型；
+- 当前架构事实见 [architecture.md](../architecture.md)、[identity.md](../modules/identity.md)、[memory-system.md](../modules/memory-system.md) 和 [forward.md](../modules/forward.md)。
+
+### 9.3 调研来源
+
+本方案中的 Expressor、触发原因、表达习惯学习、结构化行动和选择性参与等设计，来自对 MaiBot 与 ChatLuna Character 群聊机制的独立调研。调研资料不作为仓库内维护的架构文档；本路线图已经包含落地 Mnemosync 所需的设计结论。
+
+---
+
+## 10. 未解决的问题
+
+1. **工具调用阶段的交互 ID 传递**：需要客户端（如 AstrBot）在工具结果回传时携带 `X-Mnemosync-Interaction-Id` 头。如果客户端不携带，需要通过哈希匹配兜底，但哈希匹配的可靠性取决于客户端历史的完整性。需要在不同平台（AstrBot、Koishi、NoneBot）上验证这部分行为。
+
+2. **Expressor 的模型选择**：Expressor 是否复用 MAIN 模型（额外一次调用），还是可以用更便宜的 ASSIST 模型？如果复用 MAIN 模型，是否可以在同一个 LLM 调用中完成"生成 + 改写"（通过 prompt 一次性要求）？这需要原型验证。
+
+3. **工具策略的粒度**：API Key 级策略是否足够，还是需要更细的粒度（空间级、用户级、身份策略级）？过度细粒度的策略可能导致配置爆炸。
+
+4. **表达习惯的衰减**：表达习惯的 confidence 如何衰减？是按时间衰减还是按未见次数衰减？衰减公式需要与现有记忆衰减公式对齐。
+
+5. **工具调用与流式兼容性**：部分服务商（如 DashScope 兼容端点）不支持 `stream=True` 与 `tools` 同时使用。当 `supports_stream_tools=False` 时，Mnemosync 应将流式请求降级为非流式上游调用，再将结果转为 SSE 帧返回。这增加了首帧延迟，但协议上对客户端透明。需要评估这种延迟是否可以接受。
+
+6. **工具调用后的记忆写入时机**：当 `finish_reason=tool_calls` 且无文本时，当前实现会跳过记忆分析。但如果工具调用是"搜索表情包"这类信息工具，工具结果返回后模型生成的最终回复应进入记忆分析。这需要等到工具结果回传、第二轮 LLM 调用完成后才触发，但此时后台记忆图可能已经执行。需要设计一种"延迟触发"或"重新触发"机制，确保工具结果回传后的最终回复被正确处理。

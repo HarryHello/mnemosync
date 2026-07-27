@@ -185,7 +185,8 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 - **短期记忆装填 (v0.2.6)**: 主 Forwarder 调用前, forward.py 用 `main_candidate.context_length` 从 `conversation_turns` 双窗裁剪历史, 传入 `space_id` 做空间分区; 主对话结束后同步写 user + assistant 两条 turn, 传入 `actor_id` / `space_id` / `external_event_id`
 - **受众过滤 (v0.3.0)**: 流式与非流式路径均构建 `RetrievalContext` (含 `effective_user_id` / `actor_id` / `space_id` / `channel_type` / `relationship`), 传给 `MemoryRetriever.search` 和 `AudienceFilter.filter` 做 ChromaDB `$or` 粗筛 + `is_visible` 精筛
 - **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的决策函数控制。见 [agents.md](agents.md) §4
-- **流式字段透传**: `_handle_stream` 会把 `request` 里所有 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `MultiForwarder.chat_stream(**passthrough)`
+- **流式字段透传**: `_handle_stream` 会把 `request` 里的 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `MultiForwarder.chat_stream(**passthrough)`
+- **客户端工具当前限制**: 上述透传目前仅在流式主路径生效。非流式请求进入 LangGraph 后, `main_dialogue_node` 调用 `run_main_dialogue` 时未传入客户端 `tools` / `tool_choice`, 且只保留上游 `message.content`, 因此会丢失 `tool_calls` / `finish_reason`。流式 SSE 虽可原样返回 `tool_calls`, `parse_sse_stream` 目前只累计 `delta.content`, 所以后台流水、幂等和记忆图仍不理解纯工具响应。完整修复见 [群聊与工具演进](../design/group-chat-and-tool-evolution.md)。
 - **调试面板 (v0.2.5)**: `debug_hook` 模块级单例被 lifespan 注入 `set_debug_bus(bus)`, 让 forwarder 每次出/入方向都写一条 event 到 DebugEventBus; 订阅数为 0 时 emit 走惰性 gate 近似 no-op
 
 ---

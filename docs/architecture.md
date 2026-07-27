@@ -112,7 +112,9 @@ class AgentState(TypedDict, total=False):
     proxy_thinking_enabled: bool
     space_id: str | None            # v0.3.0: 会话空间 (群聊分区)
     channel_type: str | None        # v0.3.0: "direct" | "group" | None
-    prompt_cleaning_result: dict | None  # v0.2.1: 客户端 system 剥离结果
+    current_speaker: str | None     # v0.3.0: 模型可读的当前发言者身份
+    active_participants: list[str]  # v0.3.0: 裁剪后短期历史中的活跃参与者
+    prompt_cleaning_result: dict | None  # v0.2.1: {clean_prompt, reasoning}
 
     # proxy_thinking 写入
     proxy_thinking_result: str | None

@@ -310,7 +310,7 @@ v0.2.9 的 `[persona]` 段只能改 `config.local.toml` 后重启, 面板无法�
 
 ### 背景
 
-v0.2.x 单人格单用户: `source_user` 恒为 `"default"`, 所有记忆/关系/对话共享一桶。群聊场景 (AstrBot QQ 群) 要求识别不同参与者、按人隔离记忆、群聊上下文不串台; 且客户端是不可控黑盒 ("你永远无法要求前台为你适配"), 身份必须在服务器侧解决。设计预留见 [design/single-persona-multi-user-group-chat.md](design/single-persona-multi-user-group-chat.md), 无实际部署者, 决定**不兼容 v0.2.x 的 `"default"` 用户**, 直接移除全部硬编码。
+v0.2.x 单人格单用户: `source_user` 恒为 `"default"`, 所有记忆/关系/对话共享一桶。群聊场景 (AstrBot QQ 群) 要求识别不同参与者、按人隔离记忆、群聊上下文不串台; 且客户端是不可控黑盒 ("你永远无法要求前台为你适配"), 身份必须在服务器侧解决。当前实现见 [modules/identity.md](modules/identity.md), 无实际部署者, 决定**不兼容 v0.2.x 的 `"default"` 用户**, 直接移除全部硬编码。
 
 ### 决策
 

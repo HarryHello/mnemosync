@@ -426,7 +426,11 @@ reranker 精排后:
 └─────────────────────────────────────────┘
 ```
 
-**上下文框架可自定义**: 从 v0.2.1 起, system 框架文本 (行为准则、section 标题、记忆容器格式) 从 Python 硬编码迁到 `main_dialogue_frame` 提示词模板 ([defaults/main_dialogue_frame.md](../../src/core/agents/prompts/defaults/main_dialogue_frame.md)), 允许通过 `data/prompts/main_dialogue_frame.md` 覆盖。占位符包含 `__PERSONA_NAME__`, `__PERSONA_PROMPT__`, `__USER_NAME__`, `__RELATIONSHIP__`, `__PERMANENT_MEMORIES__`, `__RETRIEVED_MEMORIES__`, `__PROXY_THINKING_SECTION__`。见 [agents.md §7](agents.md#7-自定义-agent-提示词)。
+**上下文框架可自定义**: 从 v0.2.1 起, system 框架文本 (行为准则、section 标题、记忆容器格式) 从 Python 硬编码迁到 `main_dialogue_frame` 提示词模板 ([defaults/main_dialogue_frame.md](../../src/core/agents/prompts/defaults/main_dialogue_frame.md)), 允许通过 `data/prompts/main_dialogue_frame.md` 覆盖。占位符包含 `__PERSONA_NAME__`, `__PERSONA_PROMPT__`, `__CURRENT_SPEAKER__`, `__CHANNEL_TYPE__`, `__SPACE_LABEL__`, `__ACTIVE_PARTICIPANTS__`, `__RELATIONSHIP__`, `__PERMANENT_MEMORIES__`, `__RETRIEVED_MEMORIES__`, `__PROXY_THINKING_SECTION__`。见 [agents.md §7](agents.md#7-自定义-agent-提示词)。
+
+**多说话者上下文** (v0.3.0): `build_short_term_history` 将每条带身份快照的用户消息格式化为 `[显示名 | 前台 external_key]: 内容`; `active_participants` 从裁剪后的短期历史按最近出现顺序去重 (最多 12 人), 并与 `current_speaker` 一起注入主对话 system。内部 actor / group UUID 不进入 Prompt。
+
+**记忆作用域标签**: 受众过滤在装填前完成；通过过滤的记忆还会附加模型可读标签 `[公开]`, `[当前空间共享]`, `[当前发言者私有]` 或 `[受限可见；谨慎使用]`。群聊中的 `SOURCE_RESTRICTED` 记忆额外标记为“群聊中勿主动披露”。标签是模型行为提示, 不能替代 `AudienceFilter` 的确定性过滤。
 
 ### 5.2 装填顺序
 

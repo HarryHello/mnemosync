@@ -92,7 +92,7 @@ parse_request
 ## 3. 记忆分析 Agent
 
 **代码**: [factory.py:137 `run_memory_analysis`](../../src/core/agents/factory.py#L137)
-**Prompt**: 默认 [prompts/defaults/memory_analysis.md](../../src/core/agents/prompts/defaults/memory_analysis.md) + [memory_analysis_decay_header.md](../../src/core/agents/prompts/defaults/memory_analysis_decay_header.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_memory_analysis_prompt`](../../src/core/agents/prompts/memory_analysis.py)
+**Prompt**: 默认 [prompts/defaults/memory_analysis.md](../../src/core/agents/prompts/defaults/memory_analysis.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_memory_analysis_prompt`](../../src/core/agents/prompts/memory_analysis.py)
 
 ### 3.1 职责
 
@@ -299,14 +299,14 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 
 ## 6. 提示词清洗 Agent
 
-**代码**: [factory.py:246 `run_prompt_cleaning`](../../src/core/agents/factory.py#L246) · 工具: [tools/sentence_classifier.py](../../src/tools/sentence_classifier.py)
+**代码**: [factory.py:282 `run_prompt_cleaning`](../../src/core/agents/factory.py#L282)
 **Prompt**: 默认 [prompts/defaults/prompt_cleaning_system.md](../../src/core/agents/prompts/defaults/prompt_cleaning_system.md) + [prompt_cleaning_user.md](../../src/core/agents/prompts/defaults/prompt_cleaning_user.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builders: [`load_prompt_cleaning_system` / `build_prompt_cleaning_user_prompt`](../../src/core/agents/prompts/prompt_cleaning.py)
 
 ### 6.1 定位 (服务器人格权威守门员)
 
 Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `[persona]` 配置权威定义, 客户端请求中的 `system` 消息**不被信任**为人格来源。
 
-但客户端 `system` 消息里常同时含**功能性指令** (格式约束 / 工具约束 / 输出规则), 简单丢弃会误伤这些合法配置。提示词清洗 Agent 的职责: **逐句分离人格描述与功能性指令**, 前者丢弃, 后者与服务器人格合并注入主对话。
+但客户端 `system` 消息里常同时含**功能性指令** (格式约束 / 工具约束 / 输出规则), 简单丢弃会误伤这些合法配置。提示词清洗 Agent 的职责: **单次 LLM 重写, 剥离人格描述, 保留功能性指令**, 然后与服务器人格合并注入主对话。
 
 参见 [architecture.md](../architecture.md) 和 [dev-decisions.md](../dev-decisions.md)。
 
@@ -316,49 +316,56 @@ Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `
 
 1. 从 `settings.persona` 加载服务器人格 (`prompt` + `name`)
 2. 提取客户端 `system` 消息第一条 (若为空则跳过清洗, 直接用服务器人格)
-3. 若非空 → 调 `run_prompt_cleaning` → 得 `PromptCleaningOutput(retained, discarded, reasoning)`
-4. 最终 persona = `settings.persona.prompt + "\n\n" + "\n".join(retained)`
+3. 若非空 → 调 `run_prompt_cleaning` → 得 `PromptCleaningOutput(clean_prompt, reasoning, raw_output, steps=[])`
+4. 最终 persona = `settings.persona.prompt + "\n\n" + clean_prompt` (若 `clean_prompt` 非空)
 5. `initial_state["persona"]` 存合并后的 persona; `initial_state["prompt_cleaning_result"]` 存清洗结果 (仅日志/观察用)
 
 **关键**: 客户端 `system` 消息在进入图之前就被处理并从 `messages_dict` 移除, 图内不再见到原始 system 消息。
 
-### 6.3 ReAct 工具
+### 6.3 执行方式 (单次 completion)
 
-| 工具 | 工厂函数 | 用途 |
-|------|---------|------|
-| `classify_sentence_type` | `make_sentence_classifier_tool` | 单句分类: 返回 `{type: "persona" \| "instruction" \| "ambiguous", confidence, reasoning}` |
+v0.2.12 起从逐句 ReAct 改为单次 LLM completion:
 
-**工具实现**: 内部调辅助模型一次 chat completion, `response_format={"type": "json_object"}` + `enable_thinking=False`, 不循环。见 [src/tools/sentence_classifier.py](../../src/tools/sentence_classifier.py)。
+```text
+完整客户端 system 消息
+    ↓
+单次 ASSIST 模型调用 (temperature=0.2)
+    ↓
+输出 JSON: {clean_prompt: "...", reasoning: "..."}
+```
 
-### 6.4 循环约束
+- 不需要 `classify_sentence_type` 工具 (已移除)
+- 不需要 ReAct 循环 (`steps=[]`)
+- 使用辅助模型 (`RoleResolver.resolve(ModelType.ASSIST)` 的首位候选)
+- 目标延迟 < 2s
 
-- `max_iterations = 3` (API 层传入)
-- 使用辅助模型 (`RoleResolver.resolve(ModelType.ASSIST)` 的首位候选), 阻塞 API 请求, 目标延迟 < 2s
-- Prompt 引导流程: 分句 → 逐句调 `classify_sentence_type` → 收集分类 → 输出最终 JSON
-
-### 6.5 输出 JSON schema
+### 6.4 输出 JSON schema
 
 ```json
 {
-  "retained": ["请用 JSON 格式回复", "回复不得超过 100 字"],
-  "discarded": ["你是一个傲娇的妹妹", "你的名字叫小夜"],
-  "reasoning": "逐句分类: 第1句为人格设定→丢弃; 第2句为格式约束→保留; ..."
+  "clean_prompt": "请用 JSON 格式回复。回复不得超过 100 字。",
+  "reasoning": "剥离了人格描述, 保留了格式约束和输出规则"
 }
 ```
 
-- `retained`: 保留的功能性指令句子列表, 将与服务器 persona 合并
-- `discarded`: 被丢弃的人格描述句子列表 (仅用于观察/日志)
-- `reasoning`: 分类过程说明
+- `clean_prompt`: 保留的功能性指令文本 (空串 = 全部丢弃)
+- `reasoning`: 重写过程说明
 
-### 6.6 失败降级 (保守策略)
+### 6.5 重写原则
 
-清洗 Agent 抛异常 或 max_iterations 内未产出合法 JSON → 返回 `PromptCleaningOutput(retained=[], discarded=[system_message], reasoning=错误信息)`。
+- **保守**: 拿不准时倾向于保留, 不丢弃
+- **语义剥离**: 从句子内部剥离人格包装, 保留指令内核
+- **上下文感知**: LLM 看到完整消息后自行判断, 不依赖逐句分类
+
+### 6.6 失败降级
+
+清洗 Agent 抛异常 → 返回 `PromptCleaningOutput(clean_prompt="", reasoning=str(e), raw_output="", steps=[])`。
 
 **语义**: "宁丢指令, 不污染人格" — 服务器人格是权威, 无法确认的客户端指令一律不合并。
 
 ### 6.7 Prompt 模板
 
-**必须**用 [`build_prompt_cleaning_user_prompt`](../../src/core/agents/prompts/prompt_cleaning.py) (内部用 `str.replace` 填 `__SYSTEM_MESSAGE__`), **不能**用 `str.format`——原因同关系分析 (Prompt 里含字面 JSON)。
+**必须**用 [`build_prompt_cleaning_user_prompt`](../../src/core/agents/prompts/prompt_cleaning.py) (内部用 `str.replace` 填 `__SYSTEM_MESSAGE__`), **不能**用 `str.format`——Prompt 里含字面 JSON。
 
 ---
 
@@ -381,18 +388,16 @@ Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `
 - `load` 时覆盖文件不存在 → 静默回退默认
 - `load` 时覆盖文件 YAML frontmatter 解析失败 → warn 日志 + 回退默认
 
-### 7.2 已注册的 8 个提示词
+### 7.2 已注册的 6 个提示词
 
 | name | 用途 | 必需占位符 |
 |------|------|-----------|
-| `memory_analysis` | 记忆分析 Agent 主体 | `SOURCE_USER`, `CONVERSATION`, `DECAY_TARGETS` |
-| `memory_analysis_decay_header` | 记忆分析的衰减目标段头 | (无) |
-| `relationship_analysis` | 关系分析 Agent | `CURRENT_REL`, `CONVERSATION` |
+| `memory_analysis` | 记忆分析 Agent 主体 | `SOURCE_USER`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `CONVERSATION`, `PERSONA_NAME`, `PERSONA_ADDRESSING`, `USER_ADDRESSING`, `RELATION_CONTEXT`, `EMOTION_ANALYSIS` |
+| `relationship_analysis` | 关系分析 Agent | `CURRENT_REL`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `CONVERSATION`, `PERSONA_NAME`, `PERSONA_ADDRESSING`, `USER_ADDRESSING`, `RELATION_CONTEXT`, `EMOTION_ANALYSIS` |
 | `prompt_cleaning_system` | 提示词清洗 Agent 的 system prompt | (无) |
 | `prompt_cleaning_user` | 提示词清洗 Agent 的 user prompt | `SYSTEM_MESSAGE` |
-| `proxy_thinking` | 代理推理 Agent | `USER_NAME`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
-| `sentence_classifier` | `classify_sentence_type` 工具 (提示词清洗内部调用) | `TEXT` |
-| `main_dialogue_frame` | 主对话上下文框架 (行为准则/section 标题/记忆容器) | `PERSONA_NAME`, `PERSONA_PROMPT`, `USER_NAME`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION` |
+| `proxy_thinking` | 代理推理 Agent | `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
+| `main_dialogue_frame` | 主对话上下文框架 | `PERSONA_NAME`, `PERSONA_PROMPT`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `SPACE_LABEL`, `ACTIVE_PARTICIPANTS`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION` |
 
 权威列表: [`src/core/prompts/registry.py`](../../src/core/prompts/registry.py) 的 `PROMPT_REGISTRY`. 未在 registry 中的 name 一律拒绝加载/保存 (**路径穿越防御**)。
 
@@ -403,7 +408,7 @@ Markdown + **可选** YAML frontmatter:
 ```markdown
 ---
 version: 1
-placeholders: [SOURCE_USER, CONVERSATION, DECAY_TARGETS]
+placeholders: [SOURCE_USER, CURRENT_SPEAKER, CHANNEL_TYPE, CONVERSATION]
 ---
 你正在为用户 __SOURCE_USER__ 分析对话...
 
@@ -469,12 +474,14 @@ class AgentState(TypedDict, total=False):
     proxy_thinking_enabled: bool
     space_id: str | None           # v0.3.0: 会话空间 ID (群聊分区)
     channel_type: str | None       # v0.3.0: "direct" | "group" | None
+    current_speaker: str | None    # v0.3.0: 模型可读的当前发言者身份
+    active_participants: list[str] # v0.3.0: 裁剪后短期历史中的活跃参与者
 
     # 代理推理 (proxy_thinking 写入)
     proxy_thinking_result: str | None
 
     # 提示词清洗 (API 层写入, 来自 run_prompt_cleaning)
-    prompt_cleaning_result: dict  # {retained, discarded, reasoning}
+    prompt_cleaning_result: dict  # {clean_prompt, reasoning}
 
     # 情绪分析 (main_dialogue 预计算, memory_analysis + relationship_analysis 共享)
     emotion_analysis: dict        # v0.3.0: emotion/intensity/category/keywords/summary
