@@ -93,6 +93,34 @@ parse_request
 
 `src/core/memory/trigger_reason.py` 从本轮消息推断触发上下文（@提及/回复/常规），通过 `__TRIGGER_REASON__` 占位符注入 `main_dialogue_frame`，使 MAIN 理解为什么被呼叫。不依赖客户端专用适配；reply_to 元数据优先，其次为 `@开头` 模式的提及检测，最后为常规发言。
 
+## 3. Expressor 表达改写 Agent
+
+`src/core/agents/prompts/defaults/expressor.md` + `run_expressor()` (factory.py:196)：将 MAIN 最终文本改写为适合当前聊天场景（尤其是群聊）的表达形式。
+
+### 3.1 触发条件
+
+Expressor 仅在同时满足以下条件时调用：
+
+- `finish_reason == "stop"`（非工具调用中间轮）
+- `content` 非空且长度 ≥ `min_rewrite_length`（默认 10 字符）
+- `channel_type == "group"`（仅群聊；私聊不启用）
+- `enabled=True`（当前通过代码开关，未来可通过配置）
+
+### 3.2 职责边界
+
+- 只处理最终文本，不处理 `tool_calls` 消息
+- 使用 ASSIST 角色（低成本模型）
+- 失败时返回原文，不影响主回复
+- 改写后长度异常膨胀时返回原文
+- 超过 `max_input_length`（默认 2000 字符）时截断输入
+
+### 3.3 禁止内容（与 MAIN Prompt 一致）
+
+- 删除括号动作描写：`（蹭了蹭你）` `（戳了戳）`
+- 删除星号动作描写：`*拍拍*` `*摸头*`
+- 删除自我描述：`[发送表情包]` `[戳一戳]`
+- 删除舞台指令或旁白
+
 ## 3. 记忆分析 Agent
 
 **代码**: [factory.py:137 `run_memory_analysis`](../../src/core/agents/factory.py#L137)

@@ -198,7 +198,9 @@ class ConversationEvent:
 
 > 目标: 在群聊中减少 AI 味，让模型在短回复、平台动作、话题观察之间自然切换。
 
-### 5.1 Expressor 表达改写层
+### 5.1 Expressor 表达改写层（✅ 已实现）
+
+Expressor 已在非流式路径实现（`main_dialogue_node`）：仅当 `finish_reason=stop`、有最终文本且 `channel_type=group` 时调用。使用 ASSIST 角色（低成本），失败时返回原文。`expressor.md` 提示词已包含 RolePlay 动作文本清除规则。流式路径暂不改写（SSE 已发出，无法回改已发送帧）。
 
 **位置**: MAIN 模型返回纯文本响应之后，返回客户端之前。
 
