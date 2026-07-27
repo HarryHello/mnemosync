@@ -414,6 +414,8 @@ def _build_capability_hint(tools: list[dict] | None, tool_policies: dict) -> str
 
 ## 6. 阶段四: 私隐与安全边界
 
+> API Key 级工具策略（6.2）已实现：白名单/黑名单、每轮最大调用数、冷却时间、入站和出站双重过滤。当前事实见 [forward.md](../modules/forward.md)。剩余工作为工具参数隐私检查和跨模态隐私约束。
+>
 > 目标: 工具调用不成为私有记忆泄露的新通道，社交动作不产生越权行为。
 
 ### 6.1 工具参数隐私检查
@@ -445,31 +447,24 @@ def validate_tool_calls(
 - 参数含内部 UUID: 移除该工具调用，记录告警；
 - 超过数量上限: 截断至上限，记录告警。
 
-### 6.2 API Key 级工具策略
+### 6.2 API Key 级工具策略（✅ 已实现）
 
-**新增配置**: 在 `api_keys` 表或 `identity_strategies` 配置中增加工具策略:
+已通过 `src/api/tool_policies.py` 实现，策略从身份策略配置的 `tool_policy` 字段读取:
 
 ```json
 {
-  "tool_policies": {
-    "allowed_tools": ["poke", "react", "search_emoji"],
-    "denied_tools": ["send_message", "recall", "mute", "kick", "ban"],
-    "max_tool_calls_per_round": 3,
-    "allow_parallel_calls": false,
-    "social_action_cooldown_seconds": 30,
-    "require_confirmation": ["send_message", "recall"]
-  }
+  "allowed_tools": ["poke", "react", "search_emoji"],
+  "denied_tools": ["send_message", "recall", "mute", "kick", "ban"],
+  "max_calls_per_round": 3,
+  "cooldown_seconds": {"poke": 30}
 }
 ```
 
-**策略层级**: API Key 级策略 > 全局默认策略。未配置时，所有工具默认允许，但管理类工具默认禁止。
-
-**执行时机**: 在 `tool_calls` 返回客户端前，按策略过滤:
-
-- `denied_tools` 中的工具直接移除；
-- `allowed_tools` 非空时，不在列表中的工具移除；
-- 超过 `max_tool_calls_per_round` 时截断；
-- `allow_parallel_calls=false` 时，只保留第一个工具调用。
+已实现的过滤机制：
+- **入站过滤**: 在模型看到工具定义之前，从 `request.tools` 中移除策略禁止的工具；
+- **出站过滤**: 在响应返回客户端前，从 `tool_calls` 中移除模型违反策略生成的调用；
+- 工具续轮涉及被禁止工具时整轮拒绝；
+- 所有工具被策略移除时降级为普通文本响应。
 
 ### 6.3 隐私约束跨模态
 
