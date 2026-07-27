@@ -42,6 +42,16 @@ class MainDialogueResult:
 
 
 @dataclass
+class ExpressorConfig:
+    """Expressor 表达改写配置."""
+
+    enabled: bool = False
+    temperature: float = 0.4
+    max_input_length: int = 2000
+    min_rewrite_length: int = 10  # 低于此长度不改写
+
+
+@dataclass
 class MemoryAnalysisOutput:
     """记忆分析 Agent 的解析输出."""
 
@@ -181,6 +191,71 @@ async def run_main_dialogue(
         finish_reason=choice.get("finish_reason"),
         usage=resp.get("usage"),
     )
+
+
+async def run_expressor(
+    forwarder: MultiForwarder,
+    original_text: str,
+    current_speaker: str,
+    channel_type: str | None,
+    relationship_summary: str,
+    *,
+    config: ExpressorConfig | None = None,
+) -> str:
+    """Expressor: 将最终文本改写为适合当前聊天场景的表达.
+
+    只处理最终文本, 不处理 tool_calls 消息. 调用方必须确保:
+    - 原文是 MAIN 最终文本 (finish_reason=stop)
+    - 原文不含 tool_calls
+
+    Args:
+        forwarder: 多候选转发器 (使用 ASSIST 角色, 低成本)
+        original_text: 待改写的原始文本
+        current_speaker: 当前发言者标签 (如 "马达 | astrbot 486394990")
+        channel_type: 会话类型 (group / direct)
+        relationship_summary: 关系状态摘要
+        config: Expressor 配置; 为 None 时直接使用默认
+
+    Returns:
+        改写后的文本; 原文过短或启用失败时返回原文
+    """
+    cfg = config or ExpressorConfig()
+    if not cfg.enabled:
+        return original_text
+    if len(original_text) < cfg.min_rewrite_length:
+        return original_text
+    if len(original_text) > cfg.max_input_length:
+        # 超过最大输入长度: 截断后半句不改写, 保持语义完整
+        original_text = original_text[:cfg.max_input_length]
+
+    from src.core.prompts import get_prompt_store
+
+    tmpl = get_prompt_store().load("expressor")
+    prompt = (
+        tmpl.replace("__ORIGINAL_TEXT__", original_text)
+        .replace("__CURRENT_SPEAKER__", current_speaker)
+        .replace("__CHANNEL_TYPE__", "群聊" if channel_type == "group" else "私聊" if channel_type == "direct" else "未标明")
+        .replace("__RELATIONSHIP_SUMMARY__", relationship_summary)
+    )
+
+    try:
+        with use_agent("expressor"):
+            content = await run_simple_completion(
+                forwarder=forwarder,
+                role=ModelType.ASSIST,
+                system_prompt="你是一名表达改写助手。将输入文本改写为口语化、适合群聊发送的消息。",
+                user_prompt=prompt,
+                temperature=cfg.temperature,
+            )
+        rewritten = content.strip()
+        if not rewritten or len(rewritten) > len(original_text) * 2:
+            # 空结果或长度异常膨胀: 返回原文
+            logger.debug("Expressor 输出异常, 返回原文: %d → %d", len(original_text), len(rewritten))
+            return original_text
+        return rewritten
+    except Exception as e:
+        logger.warning("Expressor 改写失败, 返回原文: %s", e)
+        return original_text
 
 
 async def run_memory_analysis(

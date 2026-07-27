@@ -97,6 +97,16 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         ),
         description="主对话框架 (行为准则 / section 标题 / 记忆容器)",
     ),
+    "expressor": PromptSpec(
+        name="expressor",
+        placeholders=(
+            "ORIGINAL_TEXT",
+            "CURRENT_SPEAKER",
+            "CHANNEL_TYPE",
+            "RELATIONSHIP_SUMMARY",
+        ),
+        description="Expressor 表达改写 (仅最终文本, 不改写工具调用)",
+    ),
 }
 
 

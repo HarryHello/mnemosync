@@ -7,10 +7,12 @@ from .base import (
     run_simple_completion,
 )
 from .factory import (
+    ExpressorConfig,
     MainDialogueResult,
     MemoryAnalysisOutput,
     PromptCleaningOutput,
     RelationshipAnalysisOutput,
+    run_expressor,
     run_main_dialogue,
     run_memory_analysis,
     run_prompt_cleaning,
@@ -23,7 +25,9 @@ __all__ = [
     "ReActStep",
     "run_react_loop",
     "run_simple_completion",
+    "ExpressorConfig",
     "MainDialogueResult",
+    "run_expressor",
     "run_main_dialogue",
     "run_memory_analysis",
     "MemoryAnalysisOutput",

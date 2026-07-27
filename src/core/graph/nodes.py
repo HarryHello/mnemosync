@@ -292,6 +292,33 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
         )
         content = dialogue.message.get("content")
         response = content if isinstance(content, str) else ""
+
+        # Expressor 表达改写 (仅群聊最终文本, 不改写工具调用)
+        if (
+            dialogue.finish_reason == "stop"
+            and response
+            and state.get("channel_type") == "group"
+        ):
+            from src.core.agents import ExpressorConfig, run_expressor
+
+            expressor_cfg = ExpressorConfig(enabled=True)
+            relationship_summary = format_relationship(rel)
+            rewritten = await run_expressor(
+                forwarder,
+                response,
+                state.get("current_speaker") or "未知参与者",
+                state.get("channel_type"),
+                relationship_summary,
+                config=expressor_cfg,
+            )
+            if rewritten != response:
+                logger.debug(
+                    "  ✨ Expressor 改写: %d → %d",
+                    len(response), len(rewritten),
+                )
+                response = rewritten
+                dialogue.message["content"] = rewritten
+
         logger.debug(
             "  ✅ 生成完成, 长度: %d, finish_reason: %s",
             len(response),
