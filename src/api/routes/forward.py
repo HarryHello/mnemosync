@@ -31,6 +31,12 @@ from src.api.schemas.forward import (
     ModelList,
     UsageInfo,
 )
+from src.api.tool_policies import (
+    ToolPolicy,
+    filter_client_tools,
+    filter_tool_calls,
+    load_tool_policy,
+)
 from src.api.tool_transactions import (
     ToolTransactionError,
     append_tool_transaction_context,
@@ -448,6 +454,21 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     api_key = await _verify_api_key(http_request)
     api_key_id = api_key.id if api_key else None
     source_frontend = await _resolve_source_frontend(http_request, api_key_id)
+
+    # 加载工具策略 (从 identity strategy config 的 tool_policy 字段读取)
+    tool_policy: ToolPolicy | None = None
+    if api_key and api_key.strategy_id:
+        identity_store = _get_identity_store(http_request)
+        if identity_store:
+            try:
+                strategy = await identity_store.get_strategy(api_key.strategy_id)
+                if strategy and strategy.config:
+                    import json as _json
+                    cfg = _json.loads(strategy.config)
+                    if isinstance(cfg, dict) and "tool_policy" in cfg:
+                        tool_policy = load_tool_policy(_json.dumps(cfg["tool_policy"]))
+            except Exception:
+                pass
     if source_frontend:
         logger.debug("  🔖 source_frontend: %s", source_frontend)
 
@@ -605,12 +626,29 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         use_proxy = False
     logger.debug("  代理推理: %s (main_model=%s)", "启用" if use_proxy else "跳过", main_model)
 
+    # 入站工具过滤: 在模型看到之前移除策略禁止的工具
+    allowed_tools = filter_client_tools(request.tools, tool_policy)
+    # 工具续轮必须使用本轮允许的工具; 若续轮涉及已被策略禁止的工具则整轮拒绝
+    if tool_transaction and allowed_tools is not request.tools:
+        allowed_names = {f.get("function", {}).get("name") for f in (allowed_tools or [])}
+        for msg in tool_transaction.messages:
+            for call in msg.get("tool_calls") or []:
+                name = call.get("function", {}).get("name", "")
+                if name and name not in allowed_names:
+                    raise HTTPException(400, f"工具续轮使用了被策略禁止的工具: {name}")
+    if request.tools and allowed_tools is None:
+        logger.debug("  🔧 工具策略: 所有工具被拒绝, 本轮无工具可用")
+    elif allowed_tools != request.tools:
+        logger.debug("  🔧 工具策略: 入站过滤, 原 %d 工具 → 剩 %d",
+                     len(request.tools or []), len(allowed_tools or []))
+
     initial_state = {
         "messages": messages_dict,
-        "tools": request.tools,
-        "tool_choice": request.tool_choice,
-        "parallel_tool_calls": request.parallel_tool_calls,
+        "tools": allowed_tools,
+        "tool_choice": request.tool_choice if allowed_tools else None,
+        "parallel_tool_calls": request.parallel_tool_calls if allowed_tools else None,
         "tool_transaction": tool_transaction,
+        "tool_policy": tool_policy,
         "source_user": source_user,
         "current_speaker": current_speaker,
         "actor_id": actor_id,
@@ -733,12 +771,27 @@ async def _handle_non_stream(
     response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     main_model = initial_state.get("main_model") or await _resolve_main_model(http_request)
 
+    # 出站工具过滤: 移除模型违反策略生成的工具调用
+    policy = initial_state.get("tool_policy")
+    removed_calls: list[str] = []
+    if response_message and response_message.get("tool_calls") and policy:
+        kept, removed_calls = filter_tool_calls(response_message["tool_calls"], policy)
+        response_message = {**response_message, "tool_calls": kept or None}
+        if removed_calls:
+            logger.debug("  🔧 工具策略: 出站过滤, 移除 %s", removed_calls)
+
     # 使用完整 assistant message 构造响应 (含 tool_calls)
     if response_message:
         message_payload = dict(response_message)
         message_payload["role"] = "assistant"
         if reasoning and not message_payload.get("reasoning_content"):
             message_payload["reasoning_content"] = reasoning
+        # 若所有工具调用被策略移除, 降级为普通文本
+        if not message_payload.get("content") and not message_payload.get("tool_calls"):
+            message_payload["content"] = ""
+            if removed_calls:
+                message_payload["content"] = "(动作不可用)"
+            finish_reason = "stop"
         choice_message = ChatMessage.model_validate(message_payload)
     else:
         choice_message = ChatMessage(
