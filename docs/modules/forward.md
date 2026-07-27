@@ -190,6 +190,7 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 - **工具结果续轮**: 当请求以 `role=tool` 结尾时，核心只从最后一条 user 之后接纳连续的 `assistant(tool_calls) → tool` 事务尾部。校验包括：函数必须在本轮 `tools` 中、call ID 唯一且匹配、arguments 为 JSON 对象、所有并行调用都有结果、消息数和体积受限。合法事务接到服务器短期历史末端；其他客户端历史继续丢弃。工具续轮不重复写入根 user 事件、不复用根事件幂等键，也不启用代理推理。
 - **API Key 工具策略**: 每个身份策略的 `tool_policy` 配置支持 `allowed_tools`（白名单）、`denied_tools`（黑名单）、`max_calls_per_round`（每轮最大调用数）和 `cooldown_seconds`（每工具冷却秒数）。策略对工具定义做入站过滤（模型不知道被禁工具的存在），对响应 `tool_calls` 做出站过滤（模型违反时作为最后防线移除）。被策略移除的工具调用不会到达客户端。
 - **工具参数隐私检查**: 在响应返回客户端前，对 `tool_calls` 的每个参数执行确定性验证：工具名称必须在本轮 `tools` 中、arguments 必须是合法 JSON 对象、参数体积不超过 2000 字节、参数不得包含内部 UUID 格式（防止泄露内部 actor/group ID）。不符合检查的调用被移除并记录日志。
+- **模型候选工具能力**: `ResolvedCandidate` 增加 `supports_tools` / `supports_stream_tools` / `supports_parallel_tool_calls` / `supports_tool_choice_required` 字段（默认全部为 True）。当请求携带 `tools` 时，`RoleResolver.first_for_tools()` 优先选择支持工具的候选，不支持工具的候选跳过而非视为失败。流式请求额外要求 `supports_stream_tools=True`。
 - **逻辑交互事务**: `interaction_id` 将同一根消息引发的多次 HTTP 请求（工具调用 → 工具结果 → 继续生成 → 最终文本）绑定为同一逻辑事务。根消息的 `request_id` 即 `interaction_id`；工具续轮通过首个 `tool_call_id` 查回该 ID。工具调用和结果分别作为 `event_type=tool_call` / `tool_result` 独立持久化，不混入自然语言流水。
 - **幂等重放**: 幂等缓存现在保留完整 `response_message`（含 `tool_calls`）和 `finish_reason`，重放时优先恢复完整响应而不只是文本。纯工具调用响应可被正确重放。
 - **仍有限制**: 上游候选工具能力声明尚未实现；工具续轮自身尚无幂等重放（仅根消息事件）。后续设计见 [群聊与工具演进](../design/group-chat-and-tool-evolution.md)。

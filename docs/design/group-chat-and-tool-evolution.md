@@ -70,13 +70,13 @@
 
 ---
 
-## 3. 阶段一: 模型候选工具能力
+## 3. 阶段一: 模型候选工具能力（✅ 已实现）
 
 > 工具协议保真和标准 `assistant(tool_calls) → tool` 续轮桥接已完成。当前实现与安全边界见 [forward.md](../modules/forward.md)。
 
-本阶段剩余目标是描述不同上游候选的工具能力，避免把带工具请求发送给已知不支持相应协议的模型。
+`ResolvedCandidate` 已增加工具能力元数据（`supports_tools` / `supports_stream_tools` / `supports_parallel_tool_calls` / `supports_tool_choice_required`，默认全部为 True）。当请求携带 `tools` 时，`RoleResolver.first_for_tools()` 优先选择支持工具的候选；流式请求额外要求 `supports_stream_tools=True`。不支持工具的候选跳过而非视为失败。
 
-### 3.1 模型候选能力声明
+### 3.1 模型候选能力声明（✅ 已实现）
 
 在 `role_bindings` 表或 `ResolvedCandidate` 中增加工具能力元数据:
 
