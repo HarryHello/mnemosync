@@ -48,15 +48,44 @@ function fmtDate(s: string | null): string {
               {{ roleLabel(item.role) }}
             </el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="来源">
-            <span class="mono muted">{{ item.source_frontend || '—' }}</span>
+          <el-descriptions-item label="事件类型">{{ item.origin }}</el-descriptions-item>
+          <el-descriptions-item label="说话者">
+            {{ item.display_name || (item.role === 'assistant' ? '人格' : '未识别用户') }}
           </el-descriptions-item>
-          <el-descriptions-item label="时间">
+          <el-descriptions-item label="平台账号">
+            <span class="mono muted">
+              {{ item.source_frontend || '—' }}<template v-if="item.external_key"> · {{ item.external_key }}</template>
+            </span>
+          </el-descriptions-item>
+          <el-descriptions-item label="事件时间">
             <span class="mono muted">{{ fmtDate(item.ts) }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="token">
-            {{ item.token_count }}
+          <el-descriptions-item label="观察时间">
+            <span class="mono muted">{{ fmtDate(item.observed_at) }}</span>
           </el-descriptions-item>
+          <el-descriptions-item label="空间">
+            <span class="mono muted">{{ item.space_id || '私聊 / 全局' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="空间序号">
+            {{ item.committed_sequence ?? '—' }}
+            <el-tag v-if="item.late_arrival" size="small" type="warning">迟到</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="Actor ID">
+            <span class="mono muted">{{ item.actor_id || '未匹配' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="有效用户 ID">
+            <span class="mono muted">{{ item.effective_user_id || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="请求 ID">
+            <span class="mono muted">{{ item.request_id || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="平台事件 ID">
+            <span class="mono muted">{{ item.external_event_id || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="事件指纹" :span="2">
+            <span class="mono muted fingerprint">{{ item.event_fingerprint || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="token">{{ item.token_count }}</el-descriptions-item>
         </el-descriptions>
       </div>
       <div class="detail-text">
@@ -99,6 +128,10 @@ function fmtDate(s: string | null): string {
   color: var(--el-text-color-primary);
   max-height: 60vh;
   overflow-y: auto;
+}
+
+.fingerprint {
+  overflow-wrap: anywhere;
 }
 
 .muted {

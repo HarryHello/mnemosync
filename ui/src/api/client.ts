@@ -262,6 +262,10 @@ export interface ConversationTurnListParams {
   page_size?: number
   role?: 'user' | 'assistant'
   source_frontend?: string
+  actor_id?: string
+  effective_user_id?: string
+  space_id?: string
+  origin?: 'current' | 'history_snapshot' | 'assistant' | 'legacy'
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }
@@ -274,6 +278,10 @@ export async function listConversationTurns(
   if (params.page_size) q.set('page_size', String(params.page_size))
   if (params.role) q.set('role', params.role)
   if (params.source_frontend) q.set('source_frontend', params.source_frontend)
+  if (params.actor_id) q.set('actor_id', params.actor_id)
+  if (params.effective_user_id) q.set('effective_user_id', params.effective_user_id)
+  if (params.space_id) q.set('space_id', params.space_id)
+  if (params.origin) q.set('origin', params.origin)
   if (params.sort_by) q.set('sort_by', params.sort_by)
   if (params.sort_order) q.set('sort_order', params.sort_order)
   const qs = q.toString()

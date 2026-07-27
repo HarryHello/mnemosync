@@ -46,6 +46,34 @@ const TURN_ROLE_FILTERS = [
   { text: '助手', value: 'assistant' },
 ]
 
+function originTag(origin: ConversationTurn['origin']): 'primary' | 'success' | 'warning' | 'info' {
+  if (origin === 'current') return 'primary'
+  if (origin === 'history_snapshot') return 'warning'
+  if (origin === 'assistant') return 'success'
+  return 'info'
+}
+
+function originLabel(origin: ConversationTurn['origin']): string {
+  const labels: Record<ConversationTurn['origin'], string> = {
+    current: '当前消息',
+    history_snapshot: '历史快照',
+    assistant: '助手回复',
+    legacy: '旧版记录',
+  }
+  return labels[origin]
+}
+
+function speakerLabel(row: ConversationTurn): string {
+  if (row.role === 'assistant') return '人格'
+  return row.display_name || row.external_key || '未识别用户'
+}
+
+function speakerDetail(row: ConversationTurn): string {
+  if (row.role === 'assistant') return row.source_frontend || 'mnemosync'
+  if (!row.external_key) return row.actor_id ? '已匹配 Actor' : '未匹配 Actor'
+  return `${row.source_frontend || 'unknown'} · ${row.external_key}`
+}
+
 function normalizeOrder(order: string | null | undefined): 'asc' | 'desc' | null {
   if (order === 'ascending') return 'asc'
   if (order === 'descending') return 'desc'
@@ -114,7 +142,22 @@ function contentPreview(content: string): string {
         </el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="内容" min-width="360">
+    <el-table-column label="说话者" min-width="190">
+      <template #default="{ row }: { row: ConversationTurn }">
+        <div class="speaker-cell">
+          <span class="speaker-name">{{ speakerLabel(row) }}</span>
+          <span class="mono mini">{{ speakerDetail(row) }}</span>
+        </div>
+      </template>
+    </el-table-column>
+    <el-table-column label="事件类型" width="110" prop="origin" sortable="custom">
+      <template #default="{ row }: { row: ConversationTurn }">
+        <el-tag :type="originTag(row.origin)" size="small">
+          {{ originLabel(row.origin) }}
+        </el-tag>
+      </template>
+    </el-table-column>
+    <el-table-column label="内容" min-width="320">
       <template #default="{ row }">
         <el-tooltip :content="row.content" placement="top" :disabled="!row.content">
           <div class="mem-content-preview" @click="$emit('openDetail', row)">
@@ -142,6 +185,11 @@ function contentPreview(content: string): string {
     >
       <template #default="{ row }">
         <span class="mono muted">{{ row.source_frontend || '—' }}</span>
+      </template>
+    </el-table-column>
+    <el-table-column label="空间" min-width="130" show-overflow-tooltip>
+      <template #default="{ row }: { row: ConversationTurn }">
+        <span class="mono muted">{{ row.space_id || '私聊 / 全局' }}</span>
       </template>
     </el-table-column>
     <el-table-column
@@ -184,6 +232,20 @@ function contentPreview(content: string): string {
 </template>
 
 <style lang="scss" scoped>
+.speaker-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.speaker-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mem-content-preview {
   white-space: nowrap;
   overflow: hidden;

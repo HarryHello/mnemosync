@@ -72,8 +72,8 @@ function contentPreview(content: string): string {
     row-key="id"
     empty-text="暂无记忆"
     :default-sort="{ prop: sortBy, order: toElOrder(sortOrder || 'desc') }"
-    @sort-change="(evt) => emit('sortChange', evt)"
-    @filter-change="(filters) => emit('filterChange', filters)"
+    @sort-change="(evt: { prop: string | null; order: string | null }) => emit('sortChange', evt)"
+    @filter-change="(filters: Record<string, unknown[]>) => emit('filterChange', filters)"
     max-height="calc(100vh - 340px)"
   >
     <el-table-column label="内容" min-width="360">

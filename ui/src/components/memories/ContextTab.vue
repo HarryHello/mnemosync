@@ -185,7 +185,7 @@ watch(() => props.active, (active) => {
   <div class="context-tab">
     <PageHeader
       title="短期记忆（上下文）"
-      subtitle="跨前端汇聚的连续对话，供装填上游用。列头可点击排序 / 过滤。"
+      subtitle="按说话者拆分的结构化事件流，历史快照会去重并保留平台身份、空间与事件时间。"
     >
       <template #actions>
         <el-button
@@ -205,7 +205,7 @@ watch(() => props.active, (active) => {
             <span>跨前端上下文</span>
             <el-tag size="small" type="info">共 {{ total }} 条</el-tag>
             <span class="hint">
-              服务器视角的连续对话流, 装填时按时间窗 + 模型窗从这里裁剪
+              服务器规范化事件流，按空间隔离并在装填模型前重新编译说话者身份
             </span>
           </div>
           <div class="header-right">

@@ -133,9 +133,21 @@ export interface ConversationTurn {
   id: number
   role: string  // 'user' | 'assistant'
   content: string
-  ts: string  // ISO datetime
+  ts: string  // 平台事件时间
   token_count: number
   source_frontend: string | null
+  actor_id: string | null
+  effective_user_id: string | null
+  display_name: string | null
+  external_key: string | null
+  space_id: string | null
+  external_event_id: string | null
+  origin: 'current' | 'history_snapshot' | 'assistant' | 'legacy'
+  event_fingerprint: string | null
+  observed_at: string
+  request_id: string | null
+  committed_sequence: number | null
+  late_arrival: boolean
 }
 
 export interface ConversationTurnListResponse {
@@ -149,9 +161,23 @@ export interface ConversationTurnListResponse {
 // Relationship
 // ============================================================================
 
+export interface RelationshipIdentityAccount {
+  actor_id: string
+  frontend: string
+  external_key: string
+  display_name: string | null
+}
+
+export interface RelationshipIdentity {
+  kind: 'actor' | 'group'
+  name: string | null
+  accounts: RelationshipIdentityAccount[]
+}
+
 export interface Relationship {
   persona_id: string
   user_id: string
+  identity: RelationshipIdentity | null
   intimacy: number
   trust: number
   relationship_type: string | null
@@ -560,7 +586,7 @@ export interface UserGroupCreateBody {
   name?: string | null
 }
 
-export type IdentityStrategyType = 'direct' | 'api_key_bound' | 'regex' | 'llm'
+export type IdentityStrategyType = 'direct' | 'api_key_bound' | 'regex' | 'llm' | 'plugin'
 
 /** 身份识别策略, 绑定到 API Key, 定义如何从请求中提取身份. */
 export interface IdentityStrategy {
