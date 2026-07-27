@@ -36,6 +36,7 @@ from src.api.tool_policies import (
     filter_client_tools,
     filter_tool_calls,
     load_tool_policy,
+    validate_tool_arguments,
 )
 from src.api.tool_transactions import (
     ToolTransactionError,
@@ -895,11 +896,22 @@ async def _handle_non_stream(
     # 出站工具过滤: 移除模型违反策略生成的工具调用
     policy = initial_state.get("tool_policy")
     removed_calls: list[str] = []
-    if response_message and response_message.get("tool_calls") and policy:
-        kept, removed_calls = filter_tool_calls(response_message["tool_calls"], policy)
-        response_message = {**response_message, "tool_calls": kept or None}
+    if response_message and response_message.get("tool_calls"):
+        # 确定性隐私检查: UUID 泄露、参数体积、JSON 合法性
+        valid_calls, privacy_issues = validate_tool_arguments(
+            response_message["tool_calls"], initial_state.get("tools"),
+        )
+        if privacy_issues:
+            logger.debug("  🔧 工具参数检查: 移除 %s", privacy_issues)
+            removed_calls.extend(privacy_issues)
+        # 策略过滤: 白名单/黑名单/冷却
+        if policy:
+            kept, policy_removed = filter_tool_calls(valid_calls, policy)
+            removed_calls.extend(policy_removed)
+            valid_calls = kept
+        response_message = {**response_message, "tool_calls": valid_calls or None}
         if removed_calls:
-            logger.debug("  🔧 工具策略: 出站过滤, 移除 %s", removed_calls)
+            logger.debug("  🔧 出站过滤, 移除 %s", removed_calls)
 
     # 使用完整 assistant message 构造响应 (含 tool_calls)
     if response_message:

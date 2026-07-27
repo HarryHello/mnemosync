@@ -9,6 +9,7 @@ from src.api.tool_policies import (
     filter_client_tools,
     filter_tool_calls,
     load_tool_policy,
+    validate_tool_arguments,
 )
 
 TOOLS = [
@@ -111,3 +112,67 @@ def test_none_policy_passes_through():
     kept, removed = filter_tool_calls(calls, None)
     assert len(kept) == 1
     assert removed == []
+
+
+def test_validate_tool_arguments_uuid_leak():
+    """UUID 泄露检测: 包含 UUID 的参数被移除."""
+    calls = [
+        {
+            "id": "call_1",
+            "function": {
+                "name": "poke",
+                "arguments": '{"user_id": "550e8400-e29b-41d4-a716-446655440000"}',
+            },
+        }
+    ]
+    valid, issues = validate_tool_arguments(calls, TOOLS)
+    assert len(valid) == 0
+    assert any("UUID" in issue for issue in issues)
+
+
+def test_validate_tool_arguments_valid_json():
+    """合法 JSON 参数通过检查."""
+    calls = [
+        {
+            "id": "call_1",
+            "function": {
+                "name": "poke",
+                "arguments": '{"user_id": "123"}',
+            },
+        }
+    ]
+    valid, issues = validate_tool_arguments(calls, TOOLS)
+    assert len(valid) == 1
+    assert issues == []
+
+
+def test_validate_tool_arguments_unknown_tool():
+    """不在本轮 tools 中的工具被移除."""
+    calls = [
+        {
+            "id": "call_1",
+            "function": {
+                "name": "unknown_tool",
+                "arguments": "{}",
+            },
+        }
+    ]
+    valid, issues = validate_tool_arguments(calls, TOOLS)
+    assert len(valid) == 0
+    assert any("不在本轮定义" in issue for issue in issues)
+
+
+def test_validate_tool_arguments_invalid_json():
+    """非法 JSON 参数被移除."""
+    calls = [
+        {
+            "id": "call_1",
+            "function": {
+                "name": "poke",
+                "arguments": "{invalid json",
+            },
+        }
+    ]
+    valid, issues = validate_tool_arguments(calls, TOOLS)
+    assert len(valid) == 0
+    assert any("JSON" in issue for issue in issues)

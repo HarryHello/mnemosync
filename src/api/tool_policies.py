@@ -4,6 +4,8 @@
 1. 入站过滤: 从请求 tools 中移除被策略禁止的函数, 避免模型知道其存在
 2. 出站过滤: 从响应 tool_calls 中移除被策略禁止的函数, 作为模型未遵守时的最后防线
 
+同时提供确定性工具参数隐私检查, 防止私有记忆通过工具参数泄露。
+
 策略配置通过 API Key 的 note 字段或 identity strategy config 携带。
 不需要客户端修改, 纯服务器侧策略。
 """
@@ -11,9 +13,17 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
+
+# UUID 格式 (含连字符或不带连字符)
+_UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}\b"
+)
+# 参数体积上限
+MAX_TOOL_ARG_BYTES = 2000
 
 
 @dataclass(frozen=True)
@@ -65,6 +75,61 @@ def filter_client_tools(
         if name and policy.is_tool_allowed(name):
             filtered.append(tool)
     return filtered if filtered else None
+
+
+def validate_tool_arguments(
+    tool_calls: list[dict[str, Any]] | None,
+    available_tools: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """确定性工具参数隐私检查.
+
+    在响应返回客户端前验证工具参数的安全性:
+    - 工具名称必须在本轮 tools 定义中
+    - arguments 必须是合法 JSON 对象
+    - 参数长度不超过上限
+    - 参数不得包含内部 UUID (可能泄露内部身份)
+
+    Returns:
+        (valid_calls, issues) - 通过检查的调用和被移除的调用及原因
+    """
+    if not tool_calls:
+        return [], []
+    valid: list[dict[str, Any]] = []
+    issues: list[str] = []
+    available_names = {
+        t.get("function", {}).get("name")
+        for t in (available_tools or [])
+        if isinstance(t, dict)
+    }
+    for call in tool_calls:
+        func = call.get("function", {}) if isinstance(call, dict) else {}
+        name = func.get("name", "") if isinstance(func, dict) else ""
+        if available_names and name not in available_names:
+            issues.append(f"{name}: 工具不在本轮定义中")
+            continue
+        args_str = func.get("arguments", "") if isinstance(func, dict) else ""
+        if not args_str:
+            issues.append(f"{name}: arguments 为空")
+            continue
+        try:
+            args = json.loads(args_str)
+            if not isinstance(args, dict):
+                issues.append(f"{name}: arguments 不是 JSON 对象")
+                continue
+        except json.JSONDecodeError:
+            issues.append(f"{name}: arguments 不是合法 JSON")
+            continue
+        # 参数体积检查
+        if len(args_str.encode()) > MAX_TOOL_ARG_BYTES:
+            issues.append(f"{name}: 参数体积超过 {MAX_TOOL_ARG_BYTES} bytes")
+            continue
+        # UUID 泄露检查: 内部 actor/group UUID 不应出现在对外参数中
+        uuid_matches = _UUID_RE.findall(args_str)
+        if uuid_matches:
+            issues.append(f"{name}: 参数包含疑似内部 UUID ({len(uuid_matches)} 个)")
+            continue
+        valid.append(call)
+    return valid, issues
 
 
 def filter_tool_calls(
