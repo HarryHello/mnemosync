@@ -17,6 +17,7 @@ class StrategyType(str, Enum):
     API_KEY_BOUND = "api_key_bound"  # 固定身份
     REGEX = "regex"             # 从消息内容正则提取
     LLM = "llm"                 # 用辅助模型提取
+    PLUGIN = "plugin"           # 第三方插件 (v0.3.1)
 
 
 @dataclass

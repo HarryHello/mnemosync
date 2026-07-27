@@ -117,6 +117,11 @@ async def app_lifespan(app: FastAPI):
     await identity_store.connect()
     await idempotency_store.connect()
 
+    # 加载身份解析插件 (v0.3.1)
+    from src.core.identity.plugin_registry import discover_plugins
+    identity_plugins = discover_plugins()
+    logger.info("已加载 %d 个身份解析插件: %s", len(identity_plugins), list(identity_plugins.keys()))
+
     resolver = RoleResolver(llm_service_store)
     multi_forwarder = MultiForwarder(resolver)
 
@@ -161,6 +166,7 @@ async def app_lifespan(app: FastAPI):
     app.state.notification_store = notification_store
     app.state.identity_store = identity_store
     app.state.idempotency_store = idempotency_store
+    app.state.identity_plugins = identity_plugins
 
     # 后台任务: 每 24h 清理窗外对话流水
     from src.core.config import get_settings as _gs

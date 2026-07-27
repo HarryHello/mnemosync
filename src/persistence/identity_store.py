@@ -5,7 +5,6 @@ actors / user_groups / actor_group_memberships / identity_strategies 四张表�
 
 from __future__ import annotations
 
-import json
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -13,7 +12,11 @@ from typing import Iterator
 
 import aiosqlite
 
-from src.core.identity.models import Actor, ActorGroupMembership, IdentityContext, IdentityStrategy, UserGroup
+from src.core.identity.models import (
+    Actor,
+    IdentityStrategy,
+    UserGroup,
+)
 
 
 class SqliteIdentityStore:
@@ -164,6 +167,28 @@ class SqliteIdentityStore:
                 created_at=_parse_dt(row[5]), updated_at=_parse_dt(row[6]),
             )
 
+    async def find_unique_actor_by_display_name(
+        self,
+        frontend: str,
+        display_name: str,
+    ) -> Actor | None:
+        """昵称在指定平台内唯一时返回 Actor；歧义或不存在时返回 None."""
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT id, external_key, frontend, display_name, metadata, created_at, updated_at "
+                "FROM actors WHERE frontend = ? AND display_name = ? LIMIT 2",
+                (frontend, display_name),
+            ) as cur:
+                rows = await cur.fetchall()
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        return Actor(
+            id=row[0], external_key=row[1], frontend=row[2],
+            display_name=row[3], metadata=row[4],
+            created_at=_parse_dt(row[5]), updated_at=_parse_dt(row[6]),
+        )
+
     async def list_actors(self, limit: int = 50, offset: int = 0) -> tuple[list[Actor], int]:
         async with self._conn() as db:
             async with db.execute("SELECT COUNT(*) FROM actors") as cur:
@@ -296,6 +321,77 @@ class SqliteIdentityStore:
                        created_at=_parse_dt(r[5]), updated_at=_parse_dt(r[6]))
                 for r in rows
             ]
+
+    async def resolve_user_identities(
+        self,
+        user_ids: list[str],
+    ) -> dict[str, tuple[UserGroup | None, list[Actor]]]:
+        """批量解析关系中的 effective_user_id 为可读身份.
+
+        未绑定 UserGroup 的关系 ID 指向 Actor；绑定后的关系 ID 指向
+        UserGroup，并返回该组下的全部平台账号。无法识别的旧 ID 不返回。
+        """
+        unique_ids = list(dict.fromkeys(user_ids))
+        if not unique_ids:
+            return {}
+
+        actor_ids = [uid for uid in unique_ids if uid.startswith("actor_")]
+        group_ids = [uid for uid in unique_ids if uid.startswith("group_")]
+        resolved: dict[str, tuple[UserGroup | None, list[Actor]]] = {}
+
+        async with self._conn() as db:
+            if actor_ids:
+                placeholders = ",".join("?" for _ in actor_ids)
+                async with db.execute(
+                    "SELECT id, external_key, frontend, display_name, metadata, created_at, updated_at "
+                    f"FROM actors WHERE id IN ({placeholders})",
+                    actor_ids,
+                ) as cur:
+                    rows = await cur.fetchall()
+                for r in rows:
+                    actor = Actor(
+                        id=r[0], external_key=r[1], frontend=r[2],
+                        display_name=r[3], metadata=r[4],
+                        created_at=_parse_dt(r[5]), updated_at=_parse_dt(r[6]),
+                    )
+                    resolved[actor.id] = (None, [actor])
+
+            if group_ids:
+                placeholders = ",".join("?" for _ in group_ids)
+                async with db.execute(
+                    "SELECT id, name, created_at, updated_at "
+                    f"FROM user_groups WHERE id IN ({placeholders})",
+                    group_ids,
+                ) as cur:
+                    group_rows = await cur.fetchall()
+                for r in group_rows:
+                    group = UserGroup(
+                        id=r[0], name=r[1],
+                        created_at=_parse_dt(r[2]), updated_at=_parse_dt(r[3]),
+                    )
+                    resolved[group.id] = (group, [])
+
+                async with db.execute(
+                    "SELECT m.group_id, a.id, a.external_key, a.frontend, a.display_name, "
+                    "a.metadata, a.created_at, a.updated_at "
+                    "FROM actor_group_memberships m "
+                    "JOIN actors a ON a.id = m.actor_id "
+                    f"WHERE m.group_id IN ({placeholders}) "
+                    "ORDER BY m.created_at ASC",
+                    group_ids,
+                ) as cur:
+                    member_rows = await cur.fetchall()
+                for r in member_rows:
+                    entry = resolved.get(r[0])
+                    if entry is None:
+                        continue
+                    entry[1].append(Actor(
+                        id=r[1], external_key=r[2], frontend=r[3],
+                        display_name=r[4], metadata=r[5],
+                        created_at=_parse_dt(r[6]), updated_at=_parse_dt(r[7]),
+                    ))
+
+        return resolved
 
     # ============ IdentityStrategy CRUD ============
 

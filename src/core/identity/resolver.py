@@ -16,6 +16,7 @@ from src.infra.llm_service.models import ModelType
 
 if TYPE_CHECKING:
     from src.persistence.identity_store import SqliteIdentityStore
+    from src.core.identity.plugin import IdentityPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,19 @@ SEARCH_SYSTEM = "system"
 class IdentityResolver:
     """从请求中解析身份，按 API Key 绑定的策略执行。"""
 
-    def __init__(self, store: "SqliteIdentityStore", forwarder: MultiForwarder | None = None):
+    def __init__(
+        self,
+        store: "SqliteIdentityStore",
+        forwarder: MultiForwarder | None = None,
+        plugins: dict[str, "IdentityPlugin"] | None = None,
+    ):
         self.store = store
         self.forwarder = forwarder
+        self._plugins = plugins or {}
+
+    @property
+    def plugins(self) -> dict[str, "IdentityPlugin"]:
+        return self._plugins
 
     async def resolve(
         self,
@@ -76,6 +87,8 @@ class IdentityResolver:
                     return await self._resolve_regex(messages, strategy_config, strategy_name)
                 case StrategyType.LLM.value:
                     return await self._resolve_llm(messages, strategy_config, strategy_name)
+                case StrategyType.PLUGIN.value:
+                    return await self._resolve_plugin(messages, strategy_config, strategy_name)
                 case _:
                     logger.warning("未知策略类型: %s", strategy_type)
                     return self._unattributed()
@@ -235,6 +248,42 @@ class IdentityResolver:
         except Exception as e:
             logger.warning("LLM 身份解析失败: %s", e)
             return self._unattributed()
+
+    async def _resolve_plugin(
+        self, messages: list[dict], config: dict, strategy_name: str | None,
+    ) -> IdentityContext:
+        """用第三方插件提取身份."""
+        plugin_name = config.get("plugin_name", "")
+        plugin = self._plugins.get(plugin_name)
+        if plugin is None:
+            logger.warning("插件 %s 未加载, 进入非归属模式", plugin_name)
+            return self._unattributed()
+
+        from src.core.identity.plugin import PluginResult
+
+        result: PluginResult | None = await plugin.extract(messages, config, self.store)
+        if result is None:
+            return self._unattributed()
+
+        frontend = result.metadata.get("frontend", plugin.name)
+        actor = await self.store.find_or_create_actor(
+            external_key=result.external_key,
+            frontend=frontend,
+            display_name=result.display_name,
+        )
+        effective_id = await self.store.get_effective_user_id(actor.id)
+        return IdentityContext(
+            actor_id=actor.id,
+            actor=actor,
+            effective_user_id=effective_id,
+            frontend=frontend,
+            external_key=result.external_key,
+            display_name=result.display_name or result.external_key,
+            space_id=result.space_id,
+            channel_type=result.channel_type,
+            strategy_name=strategy_name or plugin.name,
+            external_event_id=result.external_event_id,
+        )
 
     # ============ 辅助方法 ============
 
