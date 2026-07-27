@@ -114,6 +114,30 @@ def _participants_label(
     return "、".join(participants) if participants else "暂无可识别参与者"
 
 
+def _tool_capability_hint(tools: list[dict[str, Any]] | None) -> str:
+    """生成平台能力提示段.
+
+    当本轮提供工具时, 告知模型工具的存在及其使用边界;
+    不假设未提供的工具存在, 也不把可用工具列表当作必须使用.
+    """
+    if not tools:
+        return ""
+    tool_names = []
+    for tool in tools:
+        func = tool.get("function", {}) if isinstance(tool, dict) else {}
+        name = func.get("name", "") if isinstance(func, dict) else ""
+        if name:
+            tool_names.append(name)
+    if not tool_names:
+        return ""
+    return (
+        f"本轮可用工具: {', '.join(tool_names)}。\n"
+        "这些工具表示你当前确实可以执行的动作，不代表必须使用。"
+        "当一个轻量动作比文字回复更自然时，可以选择工具调用；"
+        "但在调用前先确认目标是否合适。不得假设或调用未提供的动作。"
+    )
+
+
 def render_main_dialogue_system(
     persona_prompt: str,
     persona_name: str,
@@ -128,6 +152,7 @@ def render_main_dialogue_system(
     space_label: str | None = None,
     active_participants: list[str] | None = None,
     trigger_reason: TriggerReason | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> str:
     """渲染主对话 system 段；user_name 仅保留为旧调用方的显示名兜底."""
     frame = get_prompt_store().load("main_dialogue_frame")
@@ -145,6 +170,7 @@ def render_main_dialogue_system(
         .replace("__SPACE_LABEL__", space_label or "无独立空间")
         .replace("__ACTIVE_PARTICIPANTS__", _participants_label(active_participants, speaker))
         .replace("__TRIGGER_REASON__", format_trigger_reason(reason))
+        .replace("__TOOL_CAPABILITY_HINT__", _tool_capability_hint(tools))
         .replace("__RELATIONSHIP__", format_relationship(relationship))
         .replace(
             "__PERMANENT_MEMORIES__",
@@ -173,6 +199,7 @@ def build_main_dialogue_messages(
     space_label: str | None = None,
     active_participants: list[str] | None = None,
     trigger_reason: TriggerReason | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """拼装主对话 Agent 的完整 messages.
 
@@ -206,6 +233,7 @@ def build_main_dialogue_messages(
         space_label=space_label,
         active_participants=active_participants,
         trigger_reason=trigger_reason,
+        tools=tools,
     )
 
     messages: list[dict[str, Any]] = [

@@ -90,6 +90,7 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
             "SPACE_LABEL",
             "ACTIVE_PARTICIPANTS",
             "TRIGGER_REASON",
+            "TOOL_CAPABILITY_HINT",
             "RELATIONSHIP",
             "PERMANENT_MEMORIES",
             "RETRIEVED_MEMORIES",

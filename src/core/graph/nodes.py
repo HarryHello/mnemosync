@@ -279,6 +279,7 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
             space_label=state.get("space_id"),
             active_participants=state.get("active_participants"),
             trigger_reason=trigger,
+            tools=state.get("tools"),
         )
 
         logger.debug("  📝 拼装消息数: %d", len(messages))
