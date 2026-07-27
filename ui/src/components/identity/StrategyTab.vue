@@ -38,6 +38,11 @@ const STRATEGY_TYPES: Array<{ value: IdentityStrategyType; label: string; hint: 
     label: 'llm — 辅助模型提取',
     hint: '身份格式不固定, 需要语义理解的前台',
   },
+  {
+    value: 'plugin',
+    label: 'plugin — 第三方插件',
+    hint: '社区开发的平台适配器, 支持消息预处理和群聊上下文合并',
+  },
 ]
 
 const CONFIG_TEMPLATES: Record<IdentityStrategyType, string> = {
@@ -73,6 +78,13 @@ const CONFIG_TEMPLATES: Record<IdentityStrategyType, string> = {
     null,
     2,
   ),
+  plugin: JSON.stringify(
+    {
+      plugin_name: 'astrbot',
+    },
+    null,
+    2,
+  ),
 }
 
 const TYPE_TAG: Record<IdentityStrategyType, '' | 'success' | 'warning' | 'info' | 'danger'> = {
@@ -80,6 +92,7 @@ const TYPE_TAG: Record<IdentityStrategyType, '' | 'success' | 'warning' | 'info'
   api_key_bound: 'success',
   regex: 'warning',
   llm: 'info',
+  plugin: 'danger',
 }
 
 const items = ref<IdentityStrategy[]>([])

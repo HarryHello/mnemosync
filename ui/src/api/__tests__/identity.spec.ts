@@ -46,7 +46,9 @@ beforeEach(() => {
 })
 
 function last(): FetchCall {
-  return calls[calls.length - 1]
+  const call = calls[calls.length - 1]
+  if (!call) throw new Error('Expected fetch to have been called')
+  return call
 }
 
 describe('identity strategy endpoints', () => {
