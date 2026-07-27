@@ -429,7 +429,7 @@ v0.2.12 起从逐句 ReAct 改为单次 LLM completion:
 | `prompt_cleaning_system` | 提示词清洗 Agent 的 system prompt | (无) |
 | `prompt_cleaning_user` | 提示词清洗 Agent 的 user prompt | `SYSTEM_MESSAGE` |
 | `proxy_thinking` | 代理推理 Agent | `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
-| `main_dialogue_frame` | 主对话上下文框架 | `PERSONA_NAME`, `PERSONA_PROMPT`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `SPACE_LABEL`, `ACTIVE_PARTICIPANTS`, `TRIGGER_REASON`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION` |
+| `main_dialogue_frame` | 主对话上下文框架 | `PERSONA_NAME`, `PERSONA_PROMPT`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `SPACE_LABEL`, `ACTIVE_PARTICIPANTS`, `TRIGGER_REASON`, `TOOL_CAPABILITY_HINT`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION` |
 
 权威列表: [`src/core/prompts/registry.py`](../../src/core/prompts/registry.py) 的 `PROMPT_REGISTRY`. 未在 registry 中的 name 一律拒绝加载/保存 (**路径穿越防御**)。
 

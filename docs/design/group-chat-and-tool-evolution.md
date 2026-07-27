@@ -314,46 +314,24 @@ def _infer_trigger_reason(
 
 放在 `__CHANNEL_TYPE__` 之后，`__CURRENT_SPEAKER__` 之前。
 
-### 5.3 平台能力提示
+### 5.3 平台能力提示（✅ 已实现）
 
-**现状**: 模型不知道当前轮有哪些可用的轻量动作。
+当客户端请求携带 `tools` 时，`_tool_capability_hint()` 将工具名列表注入 `main_dialogue_frame` 的 `__TOOL_CAPABILITY_HINT__` 占位符：
 
-**变更**: 在 system prompt 中增加动态能力提示段。
-
-**生成逻辑**:
-
-```python
-def _build_capability_hint(tools: list[dict] | None, tool_policies: dict) -> str:
-    if not tools:
-        return ""
-    # 从 tools 中提取社交类工具
-    social_actions = []
-    for t in tools:
-        name = t.get("function", {}).get("name", "")
-        policy = tool_policies.get(name, {})
-        if policy.get("category") == "social_action":
-            social_actions.append(name)
-    if not social_actions:
-        return ""
-    return (
-        f"本轮提供了一些平台原生动作: {', '.join(social_actions)}。\n"
-        "这些工具表示你当前确实可以执行的动作，不代表必须使用。\n"
-        "当一个轻量动作比文字回复更自然时，可以选择工具调用，"
-        "但在发动作前先确认目标是否合适。\n"
-        "不得假设或调用未在下方 tools 中提供的动作。\n"
-        "工具参数也遵循与正文相同的受众和隐私规则。"
-    )
+```text
+本轮可用工具: poke, react, search_emoji。
+这些工具表示你当前确实可以执行的动作，不代表必须使用。
+当一个轻量动作比文字回复更自然时，可以选择工具调用；
+但在调用前先确认目标是否合适。不得假设或调用未提供的动作。
 ```
 
-**放置位置**: 在 `__PROXY_THINKING_SECTION__` 之后，对话历史之前。
+无工具时不注入任何内容（空字符串）。策略过滤后实际可用的工具会进入提示，模型不会知道被策略禁止的工具的存在。
 
-### 5.4 选择性参与提示
+### 5.4 选择性参与提示（✅ 已实现）
 
-**现状**: 模型每轮都生成回复，客户端即使不发送空消息也发送短消息。
+**约束**: 伪服务商架构无法真正"不回复"——客户端调用 API 就期望得到一个响应。指南引导模型在必要时给出简短自然的回应，而非完整的分析式回复。
 
-**约束**: 伪服务商架构无法真正"不回复"——客户端调用 API 就期望得到一个响应。
-
-**可做的**: 在提示词中指导模型在群聊中何时应该简短回应或观察。
+**已实现内容**（`main_dialogue_frame.md` 中的"群聊参与指南"段）:
 
 ```text
 ## 群聊参与指南
