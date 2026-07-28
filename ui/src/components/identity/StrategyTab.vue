@@ -108,7 +108,22 @@ const form = reactive({
   name: '',
   strategy_type: 'regex' as IdentityStrategyType,
   config: CONFIG_TEMPLATES.regex,
+  tool_policy: {
+    enabled: false,
+    allowed_tools: '',
+    denied_tools: '',
+    max_calls_per_round: 5,
+    cooldown_seconds: 0,
+  },
 })
+
+interface ToolPolicyForm {
+  enabled: boolean
+  allowed_tools: string
+  denied_tools: string
+  max_calls_per_round: number
+  cooldown_seconds: number
+}
 
 const rules: FormRules = {
   name: [{ required: true, message: '请填写策略名称', trigger: 'blur' }],
@@ -186,12 +201,56 @@ async function refresh() {
   }
 }
 
+function parseToolPolicy(config: string): ToolPolicyForm {
+  try {
+    const parsed = JSON.parse(config)
+    const tp = parsed.tool_policy || {}
+    return {
+      enabled: !!tp && Object.keys(tp).length > 0,
+      allowed_tools: (tp.allowed_tools || []).join(', '),
+      denied_tools: (tp.denied_tools || []).join(', '),
+      max_calls_per_round: tp.max_calls_per_round ?? 5,
+      cooldown_seconds: tp.cooldown_seconds ?? 0,
+    }
+  } catch {
+    return { enabled: false, allowed_tools: '', denied_tools: '', max_calls_per_round: 5, cooldown_seconds: 0 }
+  }
+}
+
+function buildConfigWithToolPolicy(): string {
+  const config = JSON.parse(form.config.trim() || '{}')
+  if (form.tool_policy.enabled) {
+    const policy: Record<string, unknown> = {}
+    if (form.tool_policy.allowed_tools.trim()) {
+      policy.allowed_tools = form.tool_policy.allowed_tools.split(',').map(s => s.trim()).filter(Boolean)
+    }
+    if (form.tool_policy.denied_tools.trim()) {
+      policy.denied_tools = form.tool_policy.denied_tools.split(',').map(s => s.trim()).filter(Boolean)
+    }
+    if (form.tool_policy.max_calls_per_round > 0 && form.tool_policy.max_calls_per_round !== 5) {
+      policy.max_calls_per_round = form.tool_policy.max_calls_per_round
+    }
+    if (form.tool_policy.cooldown_seconds > 0) {
+      policy.cooldown_seconds = form.tool_policy.cooldown_seconds
+    }
+    if (Object.keys(policy).length > 0) {
+      config.tool_policy = policy
+    } else {
+      delete config.tool_policy
+    }
+  } else {
+    delete config.tool_policy
+  }
+  return JSON.stringify(config, null, 2)
+}
+
 function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
   form.name = ''
   form.strategy_type = 'regex'
   form.config = CONFIG_TEMPLATES.regex
+  form.tool_policy = { enabled: false, allowed_tools: '', denied_tools: '', max_calls_per_round: 5, cooldown_seconds: 0 }
   resetAiFields()
   dialogVisible.value = true
   void nextTick(() => formRef.value?.clearValidate())
@@ -203,6 +262,7 @@ function openEdit(row: IdentityStrategy) {
   form.name = row.name
   form.strategy_type = row.strategy_type
   form.config = prettyConfig(row.config)
+  form.tool_policy = parseToolPolicy(row.config)
   resetAiFields()
   dialogVisible.value = true
   void nextTick(() => formRef.value?.clearValidate())
@@ -235,7 +295,7 @@ async function submit() {
 
   submitting.value = true
   try {
-    const config = form.config.trim() ? form.config.trim() : '{}'
+    const config = buildConfigWithToolPolicy()
     if (dialogMode.value === 'create') {
       await createIdentityStrategy({
         name: form.name,
@@ -285,6 +345,15 @@ async function remove(row: IdentityStrategy) {
   }
 }
 
+function hasToolPolicy(config: string): boolean {
+  try {
+    const parsed = JSON.parse(config)
+    return !!parsed.tool_policy && Object.keys(parsed.tool_policy).length > 0
+  } catch {
+    return false
+  }
+}
+
 function formatDate(value: string | null): string {
   if (!value) return '—'
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
@@ -331,7 +400,17 @@ onMounted(refresh)
           />
         </template>
       </el-table-column>
-      <el-table-column label="配置" min-width="260">
+      <el-table-column label="工具策略" width="100" align="center">
+        <template #default="{ row }">
+          <el-tag
+            :type="hasToolPolicy(row.config) ? 'success' : 'info'"
+            size="small"
+          >
+            {{ hasToolPolicy(row.config) ? '已配置' : '未配置' }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="配置" min-width="200">
         <template #default="{ row }">
           <el-tooltip placement="top" :show-after="300" popper-class="config-popper">
             <template #content>
@@ -454,6 +533,44 @@ onMounted(refresh)
             </el-button>
           </p>
         </el-form-item>
+        <el-divider content-position="left">工具策略（可选）</el-divider>
+        <el-form-item label="启用工具策略">
+          <el-switch v-model="form.tool_policy.enabled" />
+          <span class="form-item-hint">限制该策略绑定的 API Key 可用的工具</span>
+        </el-form-item>
+        <template v-if="form.tool_policy.enabled">
+          <el-form-item label="允许工具">
+            <el-input
+              v-model="form.tool_policy.allowed_tools"
+              placeholder="白名单: poke, react (逗号分隔, 留空=全部允许)"
+            />
+          </el-form-item>
+          <el-form-item label="禁止工具">
+            <el-input
+              v-model="form.tool_policy.denied_tools"
+              placeholder="黑名单: kick, ban, mute (逗号分隔)"
+            />
+          </el-form-item>
+          <el-form-item label="每轮上限">
+            <el-input-number
+              v-model="form.tool_policy.max_calls_per_round"
+              :min="1"
+              :max="10"
+              controls-position="right"
+            />
+            <span class="form-item-hint">单次请求最大工具调用数</span>
+          </el-form-item>
+          <el-form-item label="冷却秒数">
+            <el-input-number
+              v-model="form.tool_policy.cooldown_seconds"
+              :min="0"
+              :max="3600"
+              :step="10"
+              controls-position="right"
+            />
+            <span class="form-item-hint">同一工具两次调用间的最小间隔（0=不限制）</span>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button :disabled="submitting" @click="dialogVisible = false">取消</el-button>
