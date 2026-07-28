@@ -7,6 +7,7 @@
   * GET    /panel/admin/debug/events/stream — SSE, 实时推送新事件
   * GET    /panel/admin/debug/events/{id}  — 单条完整 body (含流式 assembled)
   * DELETE /panel/admin/debug/events       — 清空 buffer
+  * GET    /panel/admin/debug/evaluation   - 评估维度统计
 
 所有端点通过父 admin router 的 `Depends(get_current_user)` 已获得鉴权。
 """
@@ -21,7 +22,7 @@ from datetime import datetime, UTC
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
-from src.api.deps import get_api_key_store
+from src.api.deps import get_api_key_store, get_conversation_store
 from src.api.routes.auth import get_current_user
 from src.api.schemas.admin import (
     DebugEventDetailResponse,
@@ -29,6 +30,7 @@ from src.api.schemas.admin import (
     DebugEventSummary,
     DebugSessionKeyResponse,
     DebugStatusResponse,
+    EvaluationStats,
 )
 from src.infra.debug_bus import DebugEventBus
 from src.persistence.api_key_store import (
@@ -36,6 +38,7 @@ from src.persistence.api_key_store import (
     ApiKey,
     SqliteApiKeyStore,
 )
+from src.persistence.conversation_store import SqliteConversationStore
 
 logger = logging.getLogger(__name__)
 
@@ -156,3 +159,19 @@ async def get_event(request: Request, event_id: str) -> DebugEventDetailResponse
     if full is None:
         raise HTTPException(status_code=404, detail=f"event {event_id} not found")
     return DebugEventDetailResponse(**full)
+
+
+@router.get("/evaluation", response_model=EvaluationStats)
+async def evaluation_stats(
+    store: SqliteConversationStore = Depends(get_conversation_store),
+) -> EvaluationStats:
+    """群聊回复评估维度统计.
+
+    从 conversation_turns 聚合:
+    - assistant 回复平均长度 (是否过度解释)
+    - 工具调用次数和分布 (工具使用是否自然)
+    - 含工具调用的交互比例
+    - 交互事务总数
+    """
+    stats = await store.get_evaluation_stats(limit=500)
+    return EvaluationStats(**stats)

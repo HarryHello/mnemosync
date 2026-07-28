@@ -441,24 +441,22 @@ def _infer_trigger_reason(
 
 同时 `trigger_reason.py` 已实现触发上下文识别，`__TRIGGER_REASON__` 已注入 `main_dialogue_frame`。
 
-### 6.4 频率限制与冷却（⚠️ 部分实现）
+### 6.4 频率限制与冷却（✅ 已实现）
 
 已实现：持久化冷却检查（`check_persisted_cooldowns` 通过 `tool_name` 列精确查询 `conversation_turns`，跨请求/重启生效）、入站+出站策略过滤、每轮最大调用数限制。
 
-剩余工作：
-
-**社交动作**:
+已实现：
 
 - ~~同一工具对同一目标用户，每 N 秒内只能调用一次~~ ✅；
-- 全局社交动作频率按 API Key 统计；
+- ~~全局社交动作频率按 API Key 统计~~ ✅ (`global_max_per_window` / `global_window_seconds`)；
 - ~~冷却状态需在 `tool_policies` 中持久化，重启后仍有效~~ ✅；
-- 冷却命中时，在调试面板记录"因冷却被拦截"。
+- ~~冷却命中时，在调试面板记录"因冷却被拦截"~~ ✅ (`cooldown_blocked` 管线事件)。
 
 ---
 
 ## 7. 调试与可观测性
 
-### 7.1 调试面板扩展（⚠️ 部分实现）
+### 7.1 调试面板扩展（✅ 已实现）
 
 **现有基础**: `DebugEventBus` + SSE 调试事件流 + 上游请求/响应详情。
 
@@ -471,7 +469,7 @@ def _infer_trigger_reason(
 - ~~工具策略命中: 哪些工具被策略过滤及原因~~ ✅ `tool_policy` 事件 (入站过滤结果);
 - 交互事务: 同一 `interaction_id` 的所有轮次聚合展示 — 尚未实现。
 
-### 7.2 评估维度
+### 7.2 评估维度（✅ 已实现）
 
 参考调研中的评估维度，对 Mnemosync 群聊回复进行分维度评估:
 

@@ -277,6 +277,27 @@ class InteractionListResponse(BaseModel):
     total: int
 
 
+class EvaluationStats(BaseModel):
+    """群聊回复评估维度统计."""
+
+    # 回复长度
+    avg_reply_length: float = 0.0
+    reply_count: int = 0
+    # 工具调用
+    tool_call_count: int = 0
+    tool_calls_by_name: dict[str, int] = {}
+    # 工具调用被拦截次数 (隐私 + 策略 + 冷却)
+    blocked_calls: int = 0
+    # Expressor 改写
+    expressor_rewrite_count: int = 0
+    expressor_avg_length_change: float = 0.0
+    # 触发原因分布
+    trigger_reasons: dict[str, int] = {}
+    # 交互事务
+    interaction_count: int = 0
+    interactions_with_tools: int = 0
+
+
 class ConversationTurnListResponse(BaseModel):
     total: int
     items: list[ConversationTurnItem]

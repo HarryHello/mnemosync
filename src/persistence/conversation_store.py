@@ -443,6 +443,54 @@ class SqliteConversationStore(SqliteStore):
             for r in rows
         ]
 
+    async def get_evaluation_stats(self, *, limit: int = 500) -> dict:
+        """聚合评估维度统计数据.
+
+        从 conversation_turns 中计算:
+        - assistant 回复平均长度
+        - 工具调用次数 (按 tool_name 分组)
+        - 含工具调用的交互数
+        """
+        async with self._conn() as db:
+            # assistant 回复平均长度
+            async with db.execute(
+                "SELECT AVG(LENGTH(content)), COUNT(*) FROM conversation_turns "
+                "WHERE role = 'assistant' AND event_type = 'message' "
+                f"ORDER BY ts DESC LIMIT {int(limit)}"
+            ) as cur:
+                row = await cur.fetchone()
+                avg_len = row[0] or 0.0
+                reply_count = row[1] or 0
+
+            # 工具调用按名称分组
+            async with db.execute(
+                "SELECT tool_name, COUNT(*) FROM conversation_turns "
+                "WHERE event_type = 'tool_call' AND tool_name IS NOT NULL "
+                f"GROUP BY tool_name ORDER BY COUNT(*) DESC LIMIT {int(limit)}"
+            ) as cur:
+                tool_rows = await cur.fetchall()
+            tool_calls_by_name = {r[0]: r[1] for r in tool_rows}
+            tool_call_count = sum(tool_calls_by_name.values())
+
+            # 交互统计
+            async with db.execute(
+                "SELECT COUNT(DISTINCT interaction_id), "
+                "COUNT(DISTINCT CASE WHEN event_type != 'message' THEN interaction_id END) "
+                "FROM conversation_turns WHERE interaction_id IS NOT NULL"
+            ) as cur:
+                row = await cur.fetchone()
+                interaction_count = row[0] or 0
+                interactions_with_tools = row[1] or 0
+
+        return {
+            "avg_reply_length": round(avg_len, 1),
+            "reply_count": reply_count,
+            "tool_call_count": tool_call_count,
+            "tool_calls_by_name": tool_calls_by_name,
+            "interaction_count": interaction_count,
+            "interactions_with_tools": interactions_with_tools,
+        }
+
     async def list_for_space(
         self,
         space_id: str,
