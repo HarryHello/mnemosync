@@ -35,6 +35,8 @@ Mnemosync 已具备单人格、多用户身份、空间事件流、受众过滤�
 
 ## 3. 结构化人格定义
 
+> 已形成 RFC: [structured-persona.md](../rfcs/structured-persona.md)。
+
 ### 3.1 目标模型
 
 ```text
@@ -100,6 +102,8 @@ PersonaDefinition
 ---
 
 ## 4. Lorebook
+
+> 已形成 RFC: [structured-persona.md](../rfcs/structured-persona.md) §5。
 
 ### 4.1 与长期记忆的边界
 
