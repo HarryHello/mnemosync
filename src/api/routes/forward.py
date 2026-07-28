@@ -1280,13 +1280,25 @@ async def _handle_stream(
         assistant_finish_reason = stream_result.finish_reason
         assistant_tool_calls = stream_result.tool_calls
 
-        # 构造 response_message 以支持 tool_calls 持久化
+        # 构造 response_message 以支持 tool_calls 持久化; 流式路径出站过滤
         response_message: dict[str, Any] | None = None
         if assistant_tool_calls:
+            valid_calls = assistant_tool_calls
+            removed: list[str] = []
+            policy = initial_state.get("tool_policy")
+            tools = initial_state.get("tools")
+            # 隐私检查 + 策略过滤 (SSE 帧已发出, 但确保持久化时过滤)
+            valid_calls, issues = validate_tool_arguments(valid_calls, tools)
+            removed.extend(issues)
+            if policy:
+                valid_calls, pol_removed = filter_tool_calls(valid_calls, policy)
+                removed.extend(pol_removed)
+            if removed:
+                logger.debug("  🔧 流式出站过滤 (持久化层): 移除 %s", removed)
             response_message = {
                 "role": "assistant",
                 "content": assistant_text or None,
-                "tool_calls": assistant_tool_calls,
+                "tool_calls": valid_calls or None,
             }
 
         # 回写结构化事件流
