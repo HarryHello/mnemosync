@@ -1,7 +1,7 @@
 # 未来人格架构
 
 > **创建时间**: 2026-07-25
-> **最后更新**: 2026-07-27
+> **最后更新**: 2026-07-28
 > **状态**: 远期设计 · 未进入开发
 > **边界**: 仅记录当前尚未实现的人格能力；现有身份、记忆、关系和 Agent 行为以 `docs/architecture.md` 与 `docs/modules/` 为准
 
@@ -13,11 +13,10 @@ Mnemosync 已具备单人格、多用户身份、空间事件流、受众过滤�
 
 1. 将单段人格 Prompt 演进为可版本化的结构化人格；
 2. 区分作者预定义知识（Lorebook）与对话中形成的长期记忆；
-3. 在短期事件与长期记忆之间增加 Social State；
-4. 支持记忆纠正、冲突与来源追踪；
-5. 为辅助 Agent 建立统一运行契约。
+3. 支持记忆纠正、冲突与来源追踪；
+4. 为辅助 Agent 建立统一运行契约。
 
-群聊拟人化、工具事务、平台动作、Expressor 已实现 (v0.3.3); SpaceState/Checkpoint 经评估不必要 (短期历史窗口足够), 并发一致性已通过空间级串行锁解决。
+群聊拟人化、工具事务、平台动作、Expressor 已实现 (v0.3.3); 并发一致性已通过空间级串行锁解决; Social State 经评估不必要 (短期历史窗口足够覆盖群聊上下文), 不再作为目标。
 
 ---
 
@@ -29,8 +28,8 @@ Mnemosync 已具备单人格、多用户身份、空间事件流、受众过滤�
 - 多人格或人格复制；
 - 客户端专用适配；
 - 主动唤醒或定时触发；
-- 工具调用协议修复（由群聊与工具路线图负责）；
-- 已实现的身份、受众和关系模型重构。
+- Social State / 空间状态摘要 (经评估不必要, 短期历史窗口足够);
+- 已实现的身份、受众、关系、工具协议和群聊拟人化模型重构。
 
 ---
 
@@ -125,44 +124,7 @@ PersonaDefinition
 
 ---
 
-## 5. Social State
-
-### 5.1 定位
-
-Social State 位于原始空间事件和长期记忆之间，保存生命周期为数秒至数天的当前社交状态，而不是长期事实。
-
-```text
-SocialState(space_id)
-├── current_topics[]
-├── pending_questions[]
-├── waiting_for[]
-│   ├── actor_id
-│   ├── expected_action
-│   └── deadline
-├── unfulfilled_promises[]
-├── active_threads[]
-├── temporary_mood
-├── recent_decisions[]
-├── updated_at
-└── version
-```
-
-### 5.2 边界
-
-- Social State 不代替长期记忆；
-- 状态必须按空间隔离；
-- 不得吸收其他空间或私聊中的私有事实；
-- 状态过期后可删除，但来源事件保留；
-- 状态更新必须携带输入事件范围和基础版本；
-- 与 SpaceState/Checkpoint 的关系在实现前需要统一：原则上 Social State 是可操作状态，Checkpoint 是事件流压缩投影。
-
-### 5.3 与主动触发的关系
-
-Social State 可以记录“正在等待谁”和“尚未完成什么”，但不能自行唤醒客户端。主动发言仍需要客户端触发或未来标准化的外部调度协议。
-
----
-
-## 6. 记忆纠正与冲突
+## 5. 记忆纠正与冲突
 
 当前尚未实现结构化的替代关系。目标模型：
 
@@ -190,9 +152,9 @@ MemoryConflict
 
 ---
 
-## 7. 人格社交策略
+## 6. 人格社交策略
 
-Social Policy 描述人格在不同空间的表达倾向，不负责决定客户端何时调用：
+### 6.1 目标模型
 
 ```text
 SocialPolicy(space_type)
@@ -219,13 +181,25 @@ SocialPolicy(space_type)
 - 工具偏好不能绕过 API Key 工具策略和客户端权限；
 - 空间策略不能改变人格核心身份与隐私边界。
 
-Social Policy 与 Expressor 的结合已在 v0.3.3 实现 (Expressor 改写层 + 工具策略 + 隐私跨模态约束)。
+### 6.2 已实现 (v0.3.3)
+
+以下部分已实现, 不再属于本文范围:
+
+- Expressor 表达改写层 (群聊最终文本口语化改写, 清除动作描写);
+- API Key 工具策略 (白名单/黑名单/每轮上限/冷却/全局频率限制);
+- 隐私跨模态约束 (工具参数不得包含私有记忆/内部 UUID);
+- 平台能力提示与选择性参与指南;
+- 表达习惯学习 (EXPRESSION_STYLE 确定性提取 + Expressor 注入)。
+
+### 6.3 仍需实现
+
+上方的 `SocialPolicy(space_type)` 结构化数据模型尚未实现。当前 Expressor 和工具策略是全局配置, 尚无按空间类型 (群聊/私聊) 或按空间实例定制表达倾向的能力。
 
 ---
 
-## 8. 辅助 Agent 统一运行契约
+## 7. 辅助 Agent 统一运行契约
 
-### 8.1 AgentSpec
+### 7.1 AgentSpec
 
 ```text
 AgentSpec
@@ -240,7 +214,7 @@ AgentSpec
 └── privacy_scope
 ```
 
-### 8.2 AgentRun
+### 7.2 AgentRun
 
 ```text
 AgentRun
@@ -257,7 +231,7 @@ AgentRun
 └── error
 ```
 
-### 8.3 需要解决的问题
+### 7.3 需要解决的问题
 
 - 每个辅助 Agent 的独立超时和取消；
 - 父请求结束后的后台任务生命周期；
@@ -270,25 +244,24 @@ AgentRun
 
 ---
 
-## 9. 推荐研究顺序
+## 8. 推荐研究顺序
 
 本文不是直接迭代清单。建议在工具协议和群聊事件基础稳定后，按以下顺序研究：
 
 ```text
 1. 记忆纠正 + 用户记忆治理
-2. Social State 与 Checkpoint 的统一模型
-3. AgentSpec / AgentRun 运行契约
-4. 结构化 PersonaDefinition
-5. Character Card 导入
-6. Lorebook
-7. Social Policy 与 Expressor 集成
+2. AgentSpec / AgentRun 运行契约
+3. 结构化 PersonaDefinition
+4. Character Card 导入
+5. Lorebook
+6. SocialPolicy 按空间定制
 ```
 
 优先记忆纠正，是因为用户可纠错能力比人格导入和风格扩展更直接影响数据可信度与隐私。
 
 ---
 
-## 10. 必须保持的架构不变量
+## 9. 必须保持的架构不变量
 
 无论后续采用何种具体实现：
 
