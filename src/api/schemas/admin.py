@@ -277,6 +277,38 @@ class InteractionListResponse(BaseModel):
     total: int
 
 
+class LorebookEntryItem(BaseModel):
+    """Lorebook 条目."""
+
+    id: str
+    content: str
+    keywords: list[str]
+    priority: int
+    space_id: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class LorebookEntryListResponse(BaseModel):
+    items: list[LorebookEntryItem]
+    total: int
+
+
+class LorebookEntryCreateBody(BaseModel):
+    content: str = Field(..., min_length=1)
+    keywords: list[str] = Field(default_factory=list)
+    priority: int = 0
+    space_id: str | None = None
+    persona_version_id: int | None = None
+
+
+class LorebookEntryUpdateBody(BaseModel):
+    content: str | None = None
+    keywords: list[str] | None = None
+    priority: int | None = None
+    space_id: str | None = None
+
+
 class EvaluationStats(BaseModel):
     """群聊回复评估维度统计."""
 

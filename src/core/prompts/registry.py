@@ -94,6 +94,7 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
             "RELATIONSHIP",
             "PERMANENT_MEMORIES",
             "RETRIEVED_MEMORIES",
+            "LOREBOK_ENTRIES",
             "PROXY_THINKING_SECTION",
         ),
         description="主对话框架 (行为准则 / section 标题 / 记忆容器)",

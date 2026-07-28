@@ -14,11 +14,18 @@ from pydantic import BaseModel, Field
 
 from src.api.deps import (
     get_identity_store,
+    get_lorebook_store,
     get_memory_store,
     get_multi_forwarder,
     get_reindex_progress,
     get_resolver,
     get_vector_store,
+)
+from src.api.schemas.admin import (
+    LorebookEntryCreateBody,
+    LorebookEntryItem,
+    LorebookEntryListResponse,
+    LorebookEntryUpdateBody,
 )
 from src.api.routes.auth import get_current_user
 from src.api.schemas.admin import (
@@ -679,3 +686,78 @@ async def prune_memories(
         deleted=result.deleted,
         breakdown=PruneBreakdownSchema(**result.breakdown.as_dict()),
     )
+
+
+# ============================================================================
+# Lorebook
+# ============================================================================
+
+
+@router.get("/lorebook", response_model=LorebookEntryListResponse)
+async def list_lorebook_entries(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    space_id: str | None = Query(None),
+    sort_by: str = Query("created_at", description="created_at | priority | content"),
+    sort_order: str = Query("desc"),
+    lorebook_store=Depends(get_lorebook_store),
+):
+    """分页列出 Lorebook 条目."""
+    offset = (page - 1) * page_size
+    items, total = await lorebook_store.list_page(
+        limit=page_size, offset=offset, space_id=space_id,
+        sort_by=sort_by, sort_order=sort_order,
+    )
+    return LorebookEntryListResponse(
+        items=[
+            LorebookEntryItem(
+                id=e.id,
+                content=e.content,
+                keywords=list(e.keywords),
+                priority=e.priority,
+                space_id=e.space_id,
+                created_at=e.created_at.isoformat(),
+                updated_at=e.updated_at.isoformat(),
+            )
+            for e in items
+        ],
+        total=total,
+    )
+
+
+@router.post("/lorebook")
+async def create_lorebook_entry(
+    body: LorebookEntryCreateBody,
+    lorebook_store=Depends(get_lorebook_store),
+):
+    """创建 Lorebook 条目."""
+    from src.persistence.lorebook_store import LorebookEntry
+    entry = LorebookEntry.create(
+        content=body.content,
+        keywords=body.keywords,
+        priority=body.priority,
+        space_id=body.space_id,
+    )
+    entry.persona_version_id = body.persona_version_id
+    await lorebook_store.save(entry)
+    return LorebookEntryItem(
+        id=entry.id,
+        content=entry.content,
+        keywords=list(entry.keywords),
+        priority=entry.priority,
+        space_id=entry.space_id,
+        created_at=entry.created_at.isoformat(),
+        updated_at=entry.updated_at.isoformat(),
+    )
+
+
+@router.delete("/lorebook/{entry_id}")
+async def delete_lorebook_entry(
+    entry_id: str,
+    lorebook_store=Depends(get_lorebook_store),
+):
+    """删除 Lorebook 条目."""
+    ok = await lorebook_store.delete(entry_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Lorebook entry not found")
+    return {"success": True}

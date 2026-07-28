@@ -323,6 +323,17 @@ async def main_dialogue_node(
             channel_type=state.get("channel_type"),
         )
 
+        # 加载 Lorebook 条目 (关键词匹配)
+        lorebook_entries: list = []
+        lorebook_store = stores.get("lorebook_store")
+        if lorebook_store is not None and query:
+            try:
+                lorebook_entries = await lorebook_store.match_for_space(
+                    query, space_id=state.get("space_id"), limit=5,
+                )
+            except Exception:
+                pass
+
         messages = build_main_dialogue_messages(
             persona_prompt=state.get("persona") or settings.persona.prompt,
             persona_name=state.get("persona_name") or settings.persona.name,
@@ -340,6 +351,7 @@ async def main_dialogue_node(
             tools=state.get("tools"),
             persona_definition=state.get("persona_definition"),
             space_id=state.get("space_id"),
+            lorebook_entries=lorebook_entries,
         )
 
         logger.debug("  📝 拼装消息数: %d", len(messages))

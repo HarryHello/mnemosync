@@ -157,6 +157,18 @@ def _build_persona_section(
     return persona_prompt
 
 
+def _format_lorebook(
+    lorebook_entries: list[Any] | None, query: str = "",
+) -> str:
+    """格式化 Lorebook 条目."""
+    if not lorebook_entries:
+        return ""
+    parts = ["以下是你可能记得的固定知识（来自作者设定）："]
+    for entry in lorebook_entries[:5]:
+        parts.append(f"- {entry.content}")
+    return "\n".join(parts) if len(parts) > 1 else ""
+
+
 def render_main_dialogue_system(
     persona_prompt: str,
     persona_name: str,
@@ -174,6 +186,7 @@ def render_main_dialogue_system(
     tools: list[dict[str, Any]] | None = None,
     persona_definition: Any | None = None,
     space_id: str | None = None,
+    lorebook_entries: list[Any] | None = None,
 ) -> str:
     """渲染主对话 system 段；user_name 仅保留为旧调用方的显示名兜底."""
     frame = get_prompt_store().load("main_dialogue_frame")
@@ -185,6 +198,7 @@ def render_main_dialogue_system(
     persona_section = _build_persona_section(
         persona_definition, persona_prompt, persona_name, space_id=space_id,
     )
+    lorebook_section = _format_lorebook(lorebook_entries)
     return (
         frame.replace("__PERSONA_NAME__", persona_name)
         .replace("__PERSONA_SECTION__", persona_section)
@@ -204,6 +218,7 @@ def render_main_dialogue_system(
             "__RETRIEVED_MEMORIES__",
             format_retrieved_memories(retrieved_memories, channel_type),
         )
+        .replace("__LOREBOK_ENTRIES__", lorebook_section)
         .replace("__PROXY_THINKING_SECTION__", _proxy_thinking_section(proxy_thinking_result))
     )
 
@@ -226,6 +241,7 @@ def build_main_dialogue_messages(
     tools: list[dict[str, Any]] | None = None,
     persona_definition: Any | None = None,
     space_id: str | None = None,
+    lorebook_entries: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     """拼装主对话 Agent 的完整 messages.
 
@@ -244,6 +260,7 @@ def build_main_dialogue_messages(
         active_participants: 裁剪后历史中的活跃参与者
         persona_definition: 结构化人格定义 (可选, 优先使用)
         space_id: 当前空间 ID (用于 persona space_overrides)
+        lorebook_entries: Lorebook 预定义知识列表 (可选)
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -264,6 +281,7 @@ def build_main_dialogue_messages(
         tools=tools,
         persona_definition=persona_definition,
         space_id=space_id,
+        lorebook_entries=lorebook_entries,
     )
 
     messages: list[dict[str, Any]] = [
