@@ -17,6 +17,8 @@ from src.api.schemas.admin import (
     ConversationClearResponse,
     ConversationTurnItem,
     ConversationTurnListResponse,
+    InteractionListResponse,
+    InteractionSummary,
 )
 from src.persistence.conversation_store import SqliteConversationStore
 
@@ -54,6 +56,9 @@ async def list_conversation_turns(
     effective_user_id: str | None = Query(None),
     space_id: str | None = Query(None),
     origin: str | None = Query(None, description="current | history_snapshot | assistant | legacy"),
+    interaction_id: str | None = Query(None, description="按逻辑交互 ID 过滤"),
+    event_type: str | None = Query(None, description="message | tool_call | tool_result, 省略=仅 message"),
+    tool_name: str | None = Query(None, description="按工具名过滤 (仅 tool_call 事件)"),
     sort_by: str = Query(
         "ts",
         description="ts | role | token_count | source_frontend | origin | display_name_snapshot | committed_sequence | id",
@@ -65,6 +70,7 @@ async def list_conversation_turns(
 
     面板 "上下文流水" 视图用. 服务器把所有前端的对话汇聚到这里, 装填时
     按时间窗 + 模型窗双窗口从这里裁剪. sort_by 走白名单, 非法值退回 ts。
+    默认只返回 event_type=message 的事件; 传 event_type 可查看工具事件。
     """
     offset = (page - 1) * page_size
     turns, total = await store.list_page(
@@ -76,6 +82,9 @@ async def list_conversation_turns(
         effective_user_id=effective_user_id,
         space_id=space_id,
         origin=origin,
+        interaction_id=interaction_id,
+        event_type=event_type,
+        tool_name=tool_name,
         sort_by=sort_by,
         sort_order=sort_order,
     )
@@ -99,6 +108,10 @@ async def list_conversation_turns(
             request_id=t.request_id,
             committed_sequence=t.committed_sequence,
             late_arrival=t.late_arrival,
+            interaction_id=t.interaction_id,
+            event_type=t.event_type,
+            tool_call_id=t.tool_call_id,
+            tool_name=t.tool_name,
         )
         for t in turns
     ]
@@ -165,3 +178,28 @@ async def clear_conversation_turns(
     else:
         deleted = await store.delete_all()
     return ConversationClearResponse(deleted=deleted)
+
+
+@router.get("/conversation-turns/interactions", response_model=InteractionListResponse)
+async def list_interactions(
+    limit: int = Query(20, ge=1, le=100),
+    space_id: str | None = Query(None),
+    store: SqliteConversationStore = Depends(get_conversation_store),
+):
+    """列出最近的逻辑交互摘要.
+
+    每个交互包含一次用户输入触发的所有事件 (message + tool_call + tool_result),
+    按最近活动时间降序排列. 用于面板查看工具调用多轮事务的聚合.
+    """
+    rows = await store.list_recent_interactions(limit=limit, space_id=space_id)
+    items = [
+        InteractionSummary(
+            interaction_id=r["interaction_id"],
+            event_count=r["event_count"],
+            first_ts=r["first_ts"],
+            last_ts=r["last_ts"],
+            has_tool_calls=r["has_tool_calls"],
+        )
+        for r in rows
+    ]
+    return InteractionListResponse(items=items, total=len(items))

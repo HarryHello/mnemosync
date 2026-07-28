@@ -1,6 +1,6 @@
 /**Conversation API: 跨前端对话流水管理. */
 
-import type { ConversationTurnListResponse } from '@/types/api'
+import type { ConversationTurnListResponse, InteractionListResponse } from '@/types/api'
 import { apiDelete, apiGet, apiPost } from './http'
 
 export interface ConversationTurnListParams {
@@ -12,6 +12,9 @@ export interface ConversationTurnListParams {
   effective_user_id?: string
   space_id?: string
   origin?: 'current' | 'history_snapshot' | 'assistant' | 'legacy'
+  interaction_id?: string
+  event_type?: string  // message | tool_call | tool_result
+  tool_name?: string
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }
@@ -28,11 +31,26 @@ export async function listConversationTurns(
   if (params.effective_user_id) q.set('effective_user_id', params.effective_user_id)
   if (params.space_id) q.set('space_id', params.space_id)
   if (params.origin) q.set('origin', params.origin)
+  if (params.interaction_id) q.set('interaction_id', params.interaction_id)
+  if (params.event_type) q.set('event_type', params.event_type)
+  if (params.tool_name) q.set('tool_name', params.tool_name)
   if (params.sort_by) q.set('sort_by', params.sort_by)
   if (params.sort_order) q.set('sort_order', params.sort_order)
   const qs = q.toString()
   return apiGet<ConversationTurnListResponse>(
     `/admin/conversation-turns${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export async function listInteractions(
+  limit: number = 20,
+  spaceId?: string,
+): Promise<InteractionListResponse> {
+  const q = new URLSearchParams()
+  q.set('limit', String(limit))
+  if (spaceId) q.set('space_id', spaceId)
+  return apiGet<InteractionListResponse>(
+    `/admin/conversation-turns/interactions?${q.toString()}`,
   )
 }
 

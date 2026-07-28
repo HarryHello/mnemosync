@@ -148,6 +148,10 @@ export interface ConversationTurn {
   request_id: string | null
   committed_sequence: number | null
   late_arrival: boolean
+  interaction_id: string | null
+  event_type: string  // message | tool_call | tool_result
+  tool_call_id: string | null
+  tool_name: string | null
 }
 
 export interface ConversationTurnListResponse {
@@ -155,6 +159,19 @@ export interface ConversationTurnListResponse {
   total: number
   page: number
   page_size: number
+}
+
+export interface InteractionSummary {
+  interaction_id: string
+  event_count: number
+  first_ts: string
+  last_ts: string
+  has_tool_calls: boolean
+}
+
+export interface InteractionListResponse {
+  items: InteractionSummary[]
+  total: number
 }
 
 // ============================================================================

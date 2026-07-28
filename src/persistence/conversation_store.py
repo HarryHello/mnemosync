@@ -411,6 +411,38 @@ class SqliteConversationStore(SqliteStore):
                 rows = await cur.fetchall()
                 return rows[0][0] if rows else None
 
+    async def list_recent_interactions(
+        self, *, limit: int = 20, space_id: str | None = None,
+    ) -> list[dict]:
+        """列出最近的逻辑交互摘要 (interaction_id, 事件数, 时间范围, 是否含工具调用)."""
+        where = "interaction_id IS NOT NULL"
+        params: list = []
+        if space_id:
+            where += " AND space_id = ?"
+            params.append(space_id)
+        sql = (
+            f"SELECT interaction_id, COUNT(*) as cnt, "
+            f"MIN(ts) as first_ts, MAX(ts) as last_ts, "
+            f"SUM(CASE WHEN event_type != 'message' THEN 1 ELSE 0 END) as tool_cnt "
+            f"FROM conversation_turns WHERE {where} "
+            f"GROUP BY interaction_id "
+            f"ORDER BY MAX(ts) DESC LIMIT ?"
+        )
+        params.append(limit)
+        async with self._conn() as db:
+            async with db.execute(sql, tuple(params)) as cur:
+                rows = await cur.fetchall()
+        return [
+            {
+                "interaction_id": r[0],
+                "event_count": r[1],
+                "first_ts": r[2],
+                "last_ts": r[3],
+                "has_tool_calls": r[4] > 0,
+            }
+            for r in rows
+        ]
+
     async def list_for_space(
         self,
         space_id: str,

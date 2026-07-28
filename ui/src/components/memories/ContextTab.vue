@@ -11,6 +11,7 @@ import type { ConversationTurn } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
 import ContextTable from './ContextTable.vue'
 import ContextDetailDrawer from './ContextDetailDrawer.vue'
+import InteractionList from './InteractionList.vue'
 
 const props = defineProps<{
   active?: boolean
@@ -251,6 +252,8 @@ watch(() => props.active, (active) => {
         />
       </div>
     </el-card>
+
+    <InteractionList :active="active" />
 
     <ContextDetailDrawer v-model="detailDrawerVisible" :item="currentDetailRow" />
   </div>

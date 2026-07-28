@@ -256,6 +256,25 @@ class ConversationTurnItem(BaseModel):
     request_id: str | None = None
     committed_sequence: int | None = None
     late_arrival: bool = False
+    interaction_id: str | None = None
+    event_type: str = "message"
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+
+
+class InteractionSummary(BaseModel):
+    """逻辑交互摘要."""
+
+    interaction_id: str
+    event_count: int
+    first_ts: str
+    last_ts: str
+    has_tool_calls: bool
+
+
+class InteractionListResponse(BaseModel):
+    items: list[InteractionSummary]
+    total: int
 
 
 class ConversationTurnListResponse(BaseModel):
