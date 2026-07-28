@@ -22,6 +22,7 @@ from src.api.tool_policies import (
 from src.api.tool_transactions import append_tool_transaction_context
 from src.core.config import get_settings
 from src.core.memory.short_term import build_short_term_history, token_count_for_storage
+from src.infra.debug_context import emit_pipeline
 
 from . import _build_graph_config, _get_compiled_graph, _get_conversation_store
 from .idempotency import _record_idempotency
@@ -160,6 +161,19 @@ async def _handle_non_stream(
         response_message = {**response_message, "tool_calls": valid_calls or None}
         if removed_calls:
             logger.debug("  🔧 出站过滤, 移除 %s", removed_calls)
+
+        # 调试事件: 工具调用出站决策
+        kept_names = [
+            c.get("function", {}).get("name", "") for c in valid_calls
+        ] if valid_calls else []
+        emit_pipeline(
+            getattr(http_request.app.state, "debug_bus", None),
+            event_kind="tool_call_decision",
+            stage="outbound",
+            kept_calls=kept_names or None,
+            removed_calls=removed_calls or None,
+            finish_reason=finish_reason,
+        )
 
     # 使用完整 assistant message 构造响应 (含 tool_calls)
     if response_message:

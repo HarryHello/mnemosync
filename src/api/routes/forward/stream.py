@@ -26,7 +26,7 @@ from src.core.memory.context import (
 )
 from src.core.memory.short_term import build_short_term_history, token_count_for_storage
 from src.core.models.resolver import NoCandidateForRoleError
-from src.infra.debug_context import use_agent
+from src.infra.debug_context import emit_pipeline, use_agent
 from src.infra.forwarder import UpstreamError, UpstreamTimeout, parse_sse_stream_full
 from src.infra.forwarder.multi import UpstreamAllCandidatesFailed
 from src.infra.llm_service.models import ModelType
@@ -302,6 +302,18 @@ async def _handle_stream(
                 removed.extend(pol_removed)
             if removed:
                 logger.debug("  🔧 流式出站过滤 (持久化层): 移除 %s", removed)
+            # 调试事件: 工具调用出站决策 (流式)
+            kept_names = [
+                c.get("function", {}).get("name", "") for c in valid_calls
+            ] if valid_calls else []
+            emit_pipeline(
+                getattr(http_request.app.state, "debug_bus", None),
+                event_kind="tool_call_decision",
+                stage="outbound_stream",
+                kept_calls=kept_names or None,
+                removed_calls=removed or None,
+                finish_reason=assistant_finish_reason,
+            )
             response_message = {
                 "role": "assistant",
                 "content": assistant_text or None,

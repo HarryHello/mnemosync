@@ -6,9 +6,15 @@ Forwarder 出去打上游时能把日志关联到最初的入站请求。
 
 from __future__ import annotations
 
+import logging
 import uuid
 from contextvars import ContextVar
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from src.infra.debug_bus import DebugEventBus
+
+logger = logging.getLogger(__name__)
 
 _correlation_id: ContextVar[Optional[str]] = ContextVar("mnemosync_debug_cid", default=None)
 _agent_name: ContextVar[Optional[str]] = ContextVar("mnemosync_debug_agent", default=None)
@@ -48,3 +54,29 @@ class use_agent:
     def __exit__(self, exc_type, exc, tb):
         _agent_name.reset(self._token)
         return False
+
+
+def emit_pipeline(
+    bus: "DebugEventBus | None",
+    *,
+    event_kind: str,
+    **data: object,
+) -> None:
+    """安全发射管线调试事件.
+
+    bus 为 None 或无订阅者时静默跳过, 不影响主流程.
+    correlation_id 从 contextvars 读取。
+    """
+    if bus is None:
+        return
+    cid = _correlation_id.get()
+    if not cid:
+        return
+    try:
+        bus.emit_pipeline(
+            correlation_id=cid,
+            event_kind=event_kind,
+            data={k: v for k, v in data.items() if v is not None},
+        )
+    except Exception:
+        logger.debug("emit_pipeline 失败 (不影响主流程)", exc_info=True)

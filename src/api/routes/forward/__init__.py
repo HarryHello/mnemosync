@@ -32,6 +32,7 @@ from src.core.agents import run_prompt_cleaning
 from src.core.config import get_settings
 from src.core.constants import DEFAULT_PERSONA_ID, VIRTUAL_MODEL_ANY
 from src.core.graph import build_graph
+from src.infra.debug_context import emit_pipeline
 from src.infra.forwarder.multi import MultiForwarder
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
@@ -85,6 +86,11 @@ def _get_idempotency_store(http_request: Request) -> SqliteIdempotencyStore | No
     return getattr(http_request.app.state, "idempotency_store", None)
 
 
+def _get_debug_bus(http_request: Request):
+    """从 app.state 取 DebugEventBus (可能为 None)."""
+    return getattr(http_request.app.state, "debug_bus", None)
+
+
 def _build_graph_config(http_request: Request) -> dict[str, Any]:
     """构建 LangGraph config["configurable"], 注入共享 store 单例.
 
@@ -95,7 +101,7 @@ def _build_graph_config(http_request: Request) -> dict[str, Any]:
     state = http_request.app.state
     configurable: dict[str, Any] = {}
     for key in ("multi_forwarder", "resolver", "memory_store",
-                "vector_store", "notification_store"):
+                "vector_store", "notification_store", "debug_bus"):
         val = getattr(state, key, None)
         if val is not None:
             configurable[key] = val
@@ -256,6 +262,12 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
             "  🔧 工具事务尾部: %d 条协议消息",
             len(tool_transaction.messages),
         )
+        emit_pipeline(
+            _get_debug_bus(http_request),
+            event_kind="tool_transaction",
+            tail_messages=len(tool_transaction.messages),
+            interaction_id=interaction_id,
+        )
 
     # 身份解析：通过 API Key 绑定的策略识别参与者
     identity_ctx = await _resolve_identity_context(
@@ -405,6 +417,24 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     elif allowed_tools != request.tools:
         logger.debug("  🔧 工具策略: 入站过滤, 原 %d 工具 → 剩 %d",
                      len(request.tools or []), len(allowed_tools or []))
+
+    # 调试事件: 工具策略入站过滤
+    if request.tools and allowed_tools != request.tools:
+        original_names = [
+            t.get("function", {}).get("name", "") for t in request.tools
+        ] if request.tools else []
+        kept_names = [
+            t.get("function", {}).get("name", "") for t in (allowed_tools or [])
+        ] if allowed_tools else []
+        removed = [n for n in original_names if n and n not in kept_names]
+        emit_pipeline(
+            _get_debug_bus(http_request),
+            event_kind="tool_policy",
+            stage="inbound",
+            original_tools=original_names,
+            kept_tools=kept_names,
+            removed_tools=removed or None,
+        )
 
     # 提取表达习惯 (群聊时, 从最近 assistant 回复提取)
     expression_style = ""

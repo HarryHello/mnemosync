@@ -314,6 +314,15 @@ async def main_dialogue_node(
             channel_type=state.get("channel_type"),
         )
 
+        # 调试事件: 触发原因
+        from src.infra.debug_context import emit_pipeline
+        emit_pipeline(
+            (config or {}).get("configurable", {}).get("debug_bus") if config else None,
+            event_kind="trigger_reason",
+            reason=trigger,
+            channel_type=state.get("channel_type"),
+        )
+
         messages = build_main_dialogue_messages(
             persona_prompt=state.get("persona") or settings.persona.prompt,
             persona_name=state.get("persona_name") or settings.persona.name,
@@ -367,6 +376,17 @@ async def main_dialogue_node(
                 logger.debug(
                     "  ✨ Expressor 改写: %d → %d",
                     len(response), len(rewritten),
+                )
+                # 调试事件: Expressor 改写对比
+                from src.infra.debug_context import emit_pipeline
+                emit_pipeline(
+                    (config or {}).get("configurable", {}).get("debug_bus") if config else None,
+                    event_kind="expressor_rewrite",
+                    original_length=len(response),
+                    rewritten_length=len(rewritten),
+                    original_preview=response[:200],
+                    rewritten_preview=rewritten[:200],
+                    expression_style=expression_style or None,
                 )
                 response = rewritten
                 dialogue.message["content"] = rewritten
