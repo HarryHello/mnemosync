@@ -199,6 +199,8 @@ SocialPolicy(space_type)
 
 ## 7. 辅助 Agent 统一运行契约
 
+> 已形成 RFC: [agent-run-contract.md](../rfcs/agent-run-contract.md)。
+
 ### 7.1 AgentSpec
 
 ```text
