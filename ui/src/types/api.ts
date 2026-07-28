@@ -503,6 +503,55 @@ export interface PersonaConfigUpdateBody {
 }
 
 // ============================================================================
+// Structured Persona (v0.3.3, SQLite-based)
+// ============================================================================
+
+export interface PersonaIdentityBody {
+  personality: string
+  speaking_style: string
+  values: string[]
+  persona_addressing: string
+  user_addressing: string
+  context: string
+}
+
+export interface PersonaOverrideBody {
+  speaking_style: string | null
+  personality: string | null
+  context: string | null
+}
+
+export interface PersonaDefinitionRead {
+  version: string
+  name: string
+  identity: PersonaIdentityBody
+  space_overrides: Record<string, PersonaOverrideBody>
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaDefinitionSaveBody {
+  identity: PersonaIdentityBody
+  space_overrides: Record<string, PersonaOverrideBody>
+  changelog: string
+}
+
+export interface PersonaVersionItem {
+  id: number
+  version: string
+  name: string
+  changelog: string | null
+  author: string | null
+  created_at: string
+  active: boolean
+}
+
+export interface PersonaVersionListResponse {
+  items: PersonaVersionItem[]
+  total: number
+}
+
+// ============================================================================
 // Notifications (v0.2.13 通知中心)
 // ============================================================================
 

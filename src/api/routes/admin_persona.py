@@ -9,6 +9,8 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from pydantic import Field
+
 from src.api.deps import (
     get_conversation_store,
     get_memory_store,
@@ -32,6 +34,66 @@ from src.core.config import (
 )
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.memory_store import SqliteMemoryStore
+
+
+# ============================================================================
+# Structured Persona API (v0.3.3, SQLite-based)
+# ============================================================================
+
+
+class PersonaIdentityBody(BaseModel):
+    """结构化人格身份."""
+
+    personality: str = ""
+    speaking_style: str = ""
+    values: list[str] = []
+    persona_addressing: str = "人格"
+    user_addressing: str = "用户"
+    context: str = ""
+
+
+class PersonaOverrideBody(BaseModel):
+    """单空间覆盖."""
+
+    speaking_style: str | None = None
+    personality: str | None = None
+    context: str | None = None
+
+
+class PersonaDefinitionSaveBody(BaseModel):
+    """保存结构化人格."""
+
+    identity: PersonaIdentityBody
+    space_overrides: dict[str, PersonaOverrideBody] = {}
+    changelog: str = ""
+
+
+class PersonaDefinitionRead(BaseModel):
+    """结构化人格读取."""
+
+    version: str
+    name: str
+    identity: PersonaIdentityBody
+    space_overrides: dict[str, PersonaOverrideBody]
+    created_at: str
+    updated_at: str
+
+
+class PersonaVersionItem(BaseModel):
+    """人格版本摘要."""
+
+    id: int
+    version: str
+    name: str
+    changelog: str | None
+    author: str | None
+    created_at: str
+    active: bool
+
+
+class PersonaVersionListResponse(BaseModel):
+    items: list[PersonaVersionItem]
+    total: int
 
 logger = logging.getLogger(__name__)
 
@@ -206,3 +268,157 @@ async def reset_persona_config():
     _delete_persona_override()
     _reset_settings()
     return _build_persona_read()
+
+
+# ============================================================================
+# Structured Persona (v0.3.3, SQLite-based)
+# ============================================================================
+
+
+def _get_persona_store(request: Request):
+    return getattr(request.app.state, "persona_store", None)
+
+
+@router.get("/persona/definition", response_model=PersonaDefinitionRead)
+async def get_persona_definition(request: Request):
+    """获取当前激活的结构化人格定义."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    defn = await store.get_active()
+    if defn is None:
+        raise HTTPException(404, "No active persona definition")
+    overrides = {
+        sid: PersonaOverrideBody(
+            speaking_style=ov.speaking_style,
+            personality=ov.personality,
+            context=ov.context,
+        )
+        for sid, ov in defn.space_overrides.items()
+    }
+    return PersonaDefinitionRead(
+        version=defn.version,
+        name=defn.name,
+        identity=PersonaIdentityBody(
+            personality=defn.identity.personality,
+            speaking_style=defn.identity.speaking_style,
+            values=list(defn.identity.values),
+            persona_addressing=defn.identity.persona_addressing,
+            user_addressing=defn.identity.user_addressing,
+            context=defn.identity.context,
+        ),
+        space_overrides=overrides,
+        created_at=defn.created_at.isoformat(),
+        updated_at=defn.updated_at.isoformat(),
+    )
+
+
+@router.put("/persona/definition", response_model=PersonaDefinitionRead)
+async def save_persona_definition(
+    body: PersonaDefinitionSaveBody,
+    request: Request,
+):
+    """保存结构化人格 (创建新版本)."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+
+    from src.core.persona.definition import PersonaDefinition, PersonaIdentity, PersonaOverride
+
+    # 版本号递增: 获取当前版本号
+    current = await store.get_active()
+    if current:
+        parts = current.version.split(".")
+        try:
+            new_version = f"{parts[0]}.{parts[1]}.{int(parts[2]) + 1}"
+        except (IndexError, ValueError):
+            new_version = "1.0.1"
+    else:
+        new_version = "1.0.0"
+
+    defn = PersonaDefinition(
+        version=new_version,
+        name=current.name if current else get_settings().persona.name,
+        identity=PersonaIdentity(
+            personality=body.identity.personality,
+            speaking_style=body.identity.speaking_style,
+            values=body.identity.values,
+            persona_addressing=body.identity.persona_addressing,
+            user_addressing=body.identity.user_addressing,
+            context=body.identity.context,
+        ),
+        space_overrides={
+            sid: PersonaOverride(
+                speaking_style=ov.speaking_style,
+                personality=ov.personality,
+                context=ov.context,
+            )
+            for sid, ov in body.space_overrides.items()
+        },
+    )
+    await store.save(defn, changelog=body.changelog)
+
+    overrides = {
+        sid: PersonaOverrideBody(
+            speaking_style=ov.speaking_style,
+            personality=ov.personality,
+            context=ov.context,
+        )
+        for sid, ov in defn.space_overrides.items()
+    }
+    return PersonaDefinitionRead(
+        version=defn.version,
+        name=defn.name,
+        identity=PersonaIdentityBody(
+            personality=defn.identity.personality,
+            speaking_style=defn.identity.speaking_style,
+            values=list(defn.identity.values),
+            persona_addressing=defn.identity.persona_addressing,
+            user_addressing=defn.identity.user_addressing,
+            context=defn.identity.context,
+        ),
+        space_overrides=overrides,
+        created_at=defn.created_at.isoformat(),
+        updated_at=defn.updated_at.isoformat(),
+    )
+
+
+@router.get("/persona/versions", response_model=PersonaVersionListResponse)
+async def list_persona_versions(
+    request: Request,
+    limit: int = 50,
+):
+    """列出人格版本历史."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    versions = await store.list_versions(limit=limit)
+    items = [
+        PersonaVersionItem(
+            id=v["id"],
+            version=v["version"],
+            name=v["name"],
+            changelog=v.get("changelog"),
+            author=v.get("author"),
+            created_at=v["created_at"],
+            active=v["active"],
+        )
+        for v in versions
+    ]
+    return PersonaVersionListResponse(items=items, total=len(items))
+
+
+@router.post("/persona/versions/{version_id}/rollback")
+async def rollback_persona_version(
+    version_id: int,
+    request: Request,
+):
+    """回滚到指定人格版本."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    ok = await store.rollback(version_id)
+    if not ok:
+        raise HTTPException(404, detail="Version not found")
+    return {"success": True, "version_id": version_id}
+
