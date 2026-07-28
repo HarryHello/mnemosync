@@ -554,6 +554,32 @@ async def delete_memory(
     return {"success": True, "message": "Memory deleted"}
 
 
+@router.delete("/memories")
+async def delete_memories_batch(
+    source_user: str = Query(..., min_length=1, description="用户标识 (effective_user_id, 必填)"),
+    memory_type: str | None = Query(None, description="可选: 仅删除指定类型 (permanent/normal)"),
+    before: str | None = Query(None, description="可选: 仅删除此 ISO 时间之前创建的记忆"),
+    store: SqliteMemoryStore = Depends(get_memory_store),
+):
+    """批量删除指定用户的记忆.
+
+    用户记忆治理基础端点: 支持按用户、记忆类型、创建时间批量删除。
+    这是隐私合规的最小可用集, 允许管理员或用户自己删除指定记忆。
+    """
+    before_dt = None
+    if before:
+        try:
+            before_dt = datetime.fromisoformat(before)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid before timestamp: {before}")
+    deleted = await store.delete_by_user(
+        source_user,
+        memory_type=memory_type,
+        before=before_dt,
+    )
+    return {"success": True, "deleted": deleted, "message": f"Deleted {deleted} memories"}
+
+
 # ============================================================================
 # Relationship
 # ============================================================================

@@ -33,6 +33,7 @@ from src.api.schemas.forward import (
 )
 from src.api.tool_policies import (
     ToolPolicy,
+    check_persisted_cooldowns,
     filter_client_tools,
     filter_tool_calls,
     load_tool_policy,
@@ -931,10 +932,21 @@ async def _handle_non_stream(
         if privacy_issues:
             logger.debug("  🔧 工具参数检查: 移除 %s", privacy_issues)
             removed_calls.extend(privacy_issues)
-        # 策略过滤: 白名单/黑名单/冷却
+        # 策略过滤: 白名单/黑名单/内存冷却
         if policy:
             kept, policy_removed = filter_tool_calls(valid_calls, policy)
             removed_calls.extend(policy_removed)
+            valid_calls = kept
+        # 持久化冷却: 从 DB 查询最近的 tool_call 事件, 跨请求/重启生效
+        if policy and policy.cooldown_seconds and valid_calls:
+            kept, cooldown_violations = await check_persisted_cooldowns(
+                conversation_store,
+                valid_calls,
+                policy,
+                source_user=source_user or None,
+                space_id=space_id,
+            )
+            removed_calls.extend(cooldown_violations)
             valid_calls = kept
         response_message = {**response_message, "tool_calls": valid_calls or None}
         if removed_calls:

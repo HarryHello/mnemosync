@@ -9,7 +9,7 @@ from __future__ import annotations
 import aiosqlite
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Any, Protocol
 
 from src.core.memory.models import (
     DecayState,
@@ -231,6 +231,42 @@ class SqliteMemoryStore:
             )
             await db.commit()
             return cur.rowcount > 0
+
+    async def delete_by_user(
+        self,
+        source_user: str,
+        *,
+        memory_type: str | None = None,
+        before: datetime | None = None,
+    ) -> int:
+        """批量删除指定用户的记忆.
+
+        Args:
+            source_user: effective_user_id
+            memory_type: 可选, 仅删除指定类型 (permanent/normal)
+            before: 可选, 仅删除此时间之前创建的记忆
+
+        Returns:
+            删除的行数
+        """
+        conditions = ["source_user = ?"]
+        params: list[Any] = [source_user]
+        if memory_type:
+            conditions.append("memory_type = ?")
+            params.append(memory_type)
+        if before:
+            from datetime import timezone as _tz
+            ts = before if before.tzinfo else before.replace(tzinfo=_tz.utc)
+            conditions.append("created_at < ?")
+            params.append(ts.astimezone(_tz.utc).isoformat())
+        where = " AND ".join(conditions)
+        async with self._conn() as db:
+            cur = await db.execute(
+                f"DELETE FROM memory_entries WHERE {where}",
+                tuple(params),
+            )
+            await db.commit()
+            return cur.rowcount or 0
 
     async def list_permanent(
         self,

@@ -16,6 +16,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 # UUID 格式 (含连字符或不带连字符)
@@ -24,6 +25,73 @@ _UUID_RE = re.compile(
 )
 # 参数体积上限
 MAX_TOOL_ARG_BYTES = 2000
+# 冷却持久化窗口: 查询最近 N 秒内的工具调用
+COOLDOWN_LOOKBACK_SECONDS = 3600  # 1 小时
+
+
+async def check_persisted_cooldowns(
+    conversation_store: Any,
+    valid_calls: list[dict[str, Any]],
+    policy: ToolPolicy | None,
+    *,
+    source_user: str | None,
+    space_id: str | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """从 conversation_turns 查询工具调用历史, 持久化冷却检查.
+
+    内存中的冷却 (policy._last_call_at) 只在单请求内生效; 此函数
+    从 DB 查询最近的 tool_call 事件, 确保跨请求/重启后冷却仍生效.
+
+    Args:
+        conversation_store: SqliteConversationStore 实例
+        valid_calls: 已通过其他检查的 tool_calls
+        policy: 工具策略 (含 cooldown_seconds)
+        source_user: 当前发言者 effective_user_id
+        space_id: 当前空间 ID
+
+    Returns:
+        (kept_calls, cooldown_violations)
+    """
+    if not valid_calls or not policy or not policy.cooldown_seconds:
+        return list(valid_calls), []
+
+    now = datetime.now(UTC)
+    kept: list[dict[str, Any]] = []
+    violations: list[str] = []
+
+    for call in valid_calls:
+        func = call.get("function", {}) if isinstance(call, dict) else {}
+        name = func.get("name", "") if isinstance(func, dict) else ""
+        cooldown = policy.cooldown_seconds.get(name, 0)
+        if cooldown <= 0:
+            kept.append(call)
+            continue
+        # 查询最近 N 秒内同工具、同用户、同空间的 tool_call 事件数
+        # 复用 conversation_store.list_page 的事件类型过滤
+        recent, _ = await conversation_store.list_page(
+            limit=1,
+            offset=0,
+            role="assistant",
+            effective_user_id=source_user,
+            space_id=space_id,
+            event_type="tool_call",
+            sort_by="ts",
+            sort_order="desc",
+        )
+        # 检查最近的 tool_call 是否在冷却窗口内
+        in_cooldown = False
+        for turn in recent:
+            # 简单检查: 最近的 tool_call 在冷却时间内
+            if (now - turn.ts).total_seconds() < cooldown:
+                # 进一步检查是否是同一工具 (通过 content 中的 function name)
+                if name in (turn.content or ""):
+                    in_cooldown = True
+                    break
+        if in_cooldown:
+            violations.append(f"{name}: 冷却中 ({cooldown}s)")
+        else:
+            kept.append(call)
+    return kept, violations
 
 
 @dataclass(frozen=True)
