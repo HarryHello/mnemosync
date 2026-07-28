@@ -98,6 +98,12 @@ parse_request
 
 `src/core/agents/prompts/defaults/expressor.md` + `run_expressor()` (factory.py:196)：将 MAIN 最终文本改写为适合当前聊天场景（尤其是群聊）的表达形式。
 
+### 3.0 表达习惯注入
+
+Expressor 从 `src/core/memory/expression_style.py` 获取当前空间的表达习惯（确定性规则，零 LLM 成本），通过 `__EXPRESSION_STYLE__` 占位符注入 prompt。提取维度：句末语气词频率（"呢""吧""呀"）、标点偏好（"~""！""…"）、句长偏好（短句/长句）、常见回应模式（"好的""嗯"）。样本不足 3 条时不注入。
+
+### 3.1 触发条件
+
 ### 3.1 触发条件
 
 Expressor 仅在同时满足以下条件时调用：
