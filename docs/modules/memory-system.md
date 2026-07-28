@@ -426,7 +426,7 @@ reranker 精排后:
 └─────────────────────────────────────────┘
 ```
 
-**上下文框架可自定义**: 从 v0.2.1 起, system 框架文本 (行为准则、section 标题、记忆容器格式) 从 Python 硬编码迁到 `main_dialogue_frame` 提示词模板 ([defaults/main_dialogue_frame.md](../../src/core/agents/prompts/defaults/main_dialogue_frame.md)), 允许通过 `data/prompts/main_dialogue_frame.md` 覆盖。占位符包含 `__PERSONA_NAME__`, `__PERSONA_PROMPT__`, `__CURRENT_SPEAKER__`, `__CHANNEL_TYPE__`, `__SPACE_LABEL__`, `__ACTIVE_PARTICIPANTS__`, `__RELATIONSHIP__`, `__PERMANENT_MEMORIES__`, `__RETRIEVED_MEMORIES__`, `__PROXY_THINKING_SECTION__`。见 [agents.md §7](agents.md#7-自定义-agent-提示词)。
+**上下文框架可自定义**: 从 v0.2.1 起, system 框架文本 (行为准则、section 标题、记忆容器格式) 从 Python 硬编码迁到 `main_dialogue_frame` 提示词模板 ([defaults/main_dialogue_frame.md](../../src/core/agents/prompts/defaults/main_dialogue_frame.md)), 允许通过 `data/prompts/main_dialogue_frame.md` 覆盖。占位符包含 `__PERSONA_NAME__`, `__PERSONA_SECTION__`, `__CURRENT_SPEAKER__`, `__CHANNEL_TYPE__`, `__SPACE_LABEL__`, `__ACTIVE_PARTICIPANTS__`, `__TRIGGER_REASON__`, `__TOOL_CAPABILITY_HINT__`, `__RELATIONSHIP__`, `__PERMANENT_MEMORIES__`, `__RETRIEVED_MEMORIES__`, `__LOREBOK_ENTRIES__`, `__PROXY_THINKING_SECTION__`。见 [agents.md §7](agents.md#7-自定义-agent-提示词)。
 
 **多说话者上下文** (v0.3.0): `build_short_term_history` 将每条带身份快照的用户消息格式化为 `[显示名 | 前台 external_key]: 内容`; `active_participants` 从裁剪后的短期历史按最近出现顺序去重 (最多 12 人), 并与 `current_speaker` 一起注入主对话 system。内部 actor / group UUID 不进入 Prompt。
 

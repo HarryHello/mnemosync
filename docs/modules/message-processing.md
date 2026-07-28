@@ -110,7 +110,7 @@ Client ──► POST /v1/chat/completions
    }
 ```
 
-**⚠️ 服务器优先 (server-first) 人格**: Mnemosync 的人格由服务器 `[persona]` 段权威定义。客户端 system 消息不被信任为人格定义, 而是走 `prompt_cleaning` Agent (由 `sentence_classifier` 逐句分类) 剥离角色扮演描述、保留功能约束 (工具约束/格式要求/response_format 等)。详见 [architecture.md](../architecture.md) §2 与 [dev-decisions.md](../dev-decisions.md) v0.2.1。
+**⚠️ 服务器优先 (server-first) 人格**: Mnemosync 的人格由服务器 `[persona]` 段权威定义。客户端 system 消息不被信任为人格定义, 而是走 `prompt_cleaning` Agent (单次 ASSIST 模型重写) 剥离角色扮演描述、保留功能约束 (工具约束/格式要求/response_format 等)。详见 [architecture.md](../architecture.md) §2 与 [dev-decisions.md](../dev-decisions.md) v0.2.1。
 
 **⚠️ 忽略客户端历史 (v0.2.6)**: 每次请求只有**最后一条 user 消息**参与本轮生成; 上下文的历史部分完全由服务端 `conversation_turns` 提供。原因: 不能依赖客户端传对——AstrBot 群聊场景每轮只传当前一句, 有的客户端每轮传完整历史, 用户还可能"清空对话"。见 [dev-decisions.md 跨前端短期记忆](../dev-decisions.md)。
 
