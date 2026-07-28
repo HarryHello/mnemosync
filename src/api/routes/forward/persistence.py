@@ -78,7 +78,8 @@ async def _persist_assistant_event(
         for call in tool_calls:
             call_id = call.get("id", "")
             func = call.get("function", {})
-            if not call_id or not func.get("name"):
+            func_name = func.get("name", "") if isinstance(func, dict) else ""
+            if not call_id or not func_name:
                 continue
             await store.append(
                 role="assistant",
@@ -93,6 +94,7 @@ async def _persist_assistant_event(
                 interaction_id=interaction_id,
                 event_type="tool_call",
                 tool_call_id=call_id,
+                tool_name=func_name,
             )
     # 文本内容作为 message 事件持久化
     if content:

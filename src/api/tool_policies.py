@@ -66,8 +66,7 @@ async def check_persisted_cooldowns(
         if cooldown <= 0:
             kept.append(call)
             continue
-        # 查询最近 N 秒内同工具、同用户、同空间的 tool_call 事件数
-        # 复用 conversation_store.list_page 的事件类型过滤
+        # 查询最近同工具、同用户、同空间的 tool_call 事件 (精确匹配 tool_name)
         recent, _ = await conversation_store.list_page(
             limit=1,
             offset=0,
@@ -75,18 +74,15 @@ async def check_persisted_cooldowns(
             effective_user_id=source_user,
             space_id=space_id,
             event_type="tool_call",
+            tool_name=name,
             sort_by="ts",
             sort_order="desc",
         )
-        # 检查最近的 tool_call 是否在冷却窗口内
         in_cooldown = False
         for turn in recent:
-            # 简单检查: 最近的 tool_call 在冷却时间内
             if (now - turn.ts).total_seconds() < cooldown:
-                # 进一步检查是否是同一工具 (通过 content 中的 function name)
-                if name in (turn.content or ""):
-                    in_cooldown = True
-                    break
+                in_cooldown = True
+                break
         if in_cooldown:
             violations.append(f"{name}: 冷却中 ({cooldown}s)")
         else:

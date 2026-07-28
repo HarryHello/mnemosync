@@ -42,6 +42,7 @@ class ConversationTurn:
     interaction_id: str | None = None       # 逻辑交互 ID (同一根消息的多次 HTTP 请求)
     event_type: str = "message"             # message | tool_call | tool_result
     tool_call_id: str | None = None         # tool_call 对应的 call id (仅 tool_call 事件)
+    tool_name: str | None = None            # tool_call 的函数名 (仅 tool_call 事件, 用于索引查询)
 
 
 @dataclass
@@ -66,6 +67,7 @@ class ConversationEvent:
     interaction_id: str | None = None
     event_type: str = "message"             # message | tool_call | tool_result
     tool_call_id: str | None = None
+    tool_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -108,7 +110,7 @@ _SELECT_COLUMNS = (
     "id, role, content, ts, token_count, source_frontend, actor_id, space_id, "
     "external_event_id, committed_sequence, late_arrival, effective_user_id, "
     "display_name_snapshot, external_key_snapshot, origin, event_fingerprint, "
-    "observed_at, request_id, interaction_id, event_type, tool_call_id"
+    "observed_at, request_id, interaction_id, event_type, tool_call_id, tool_name"
 )
 
 
@@ -143,7 +145,8 @@ class SqliteConversationStore(SqliteStore):
                 request_id TEXT,
                 interaction_id TEXT,
                 event_type TEXT NOT NULL DEFAULT 'message',
-                tool_call_id TEXT
+                tool_call_id TEXT,
+                tool_name TEXT
             )
         """)
 
@@ -200,6 +203,7 @@ class SqliteConversationStore(SqliteStore):
             ("013_add_interaction_id", add_column_if_missing("conversation_turns", "interaction_id", "TEXT")),
             ("014_add_event_type", add_column_if_missing("conversation_turns", "event_type", "TEXT NOT NULL DEFAULT 'message'")),
             ("015_add_tool_call_id", add_column_if_missing("conversation_turns", "tool_call_id", "TEXT")),
+            ("017_add_tool_name", add_column_if_missing("conversation_turns", "tool_name", "TEXT")),
             # 数据迁移: UTC 时间归一化
             ("016_normalize_utc_timestamps", _migrate_normalize_utc),
         ]).apply(db)
@@ -239,6 +243,10 @@ class SqliteConversationStore(SqliteStore):
             "CREATE INDEX IF NOT EXISTS idx_conv_event_type "
             "ON conversation_turns(event_type)"
         )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conv_tool_name "
+            "ON conversation_turns(tool_name) WHERE tool_name IS NOT NULL"
+        )
 
     async def init_db(self) -> None:
         async with self._conn() as db:
@@ -265,6 +273,7 @@ class SqliteConversationStore(SqliteStore):
         interaction_id: str | None = None,
         event_type: str = "message",
         tool_call_id: str | None = None,
+        tool_name: str | None = None,
     ) -> int:
         """追加单条事件；高吞吐插件路径应使用 ``append_events``."""
         event = ConversationEvent(
@@ -286,6 +295,7 @@ class SqliteConversationStore(SqliteStore):
             interaction_id=interaction_id,
             event_type=event_type,
             tool_call_id=tool_call_id,
+            tool_name=tool_name,
         )
         result = await self.append_events([event])
         return result.row_ids[0] if result.row_ids else 0
@@ -333,8 +343,8 @@ class SqliteConversationStore(SqliteStore):
                     "(role, content, ts, token_count, source_frontend, actor_id, space_id, "
                     "external_event_id, committed_sequence, late_arrival, effective_user_id, "
                     "display_name_snapshot, external_key_snapshot, origin, event_fingerprint, "
-                    "observed_at, request_id, interaction_id, event_type, tool_call_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "observed_at, request_id, interaction_id, event_type, tool_call_id, tool_name) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         event.role, event.content, stamp, int(event.token_count),
                         event.source_frontend, event.actor_id, event.space_id,
@@ -343,6 +353,7 @@ class SqliteConversationStore(SqliteStore):
                         event.external_key_snapshot, event.origin,
                         event.event_fingerprint, observed, event.request_id,
                         event.interaction_id, event.event_type, event.tool_call_id,
+                        event.tool_name,
                     ),
                 )
                 if (cur.rowcount or 0) == 0:
@@ -451,6 +462,7 @@ class SqliteConversationStore(SqliteStore):
         origin: str | None = None,
         interaction_id: str | None = None,
         event_type: str | None = None,
+        tool_name: str | None = None,
         sort_by: str = "ts",
         sort_order: str = "desc",
     ) -> tuple[list[ConversationTurn], int]:
@@ -471,6 +483,7 @@ class SqliteConversationStore(SqliteStore):
             ("origin", origin),
             ("interaction_id", interaction_id),
             ("event_type", event_type),
+            ("tool_name", tool_name),
         )
         for column, value in filters:
             if value is not None:
@@ -568,4 +581,5 @@ class SqliteConversationStore(SqliteStore):
             interaction_id=row[18] if len(row) > 18 else None,
             event_type=row[19] if len(row) > 19 else "message",
             tool_call_id=row[20] if len(row) > 20 else None,
+            tool_name=row[21] if len(row) > 21 else None,
         )
