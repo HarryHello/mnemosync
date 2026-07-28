@@ -258,9 +258,9 @@ AgentRun
 1. 记忆纠正 + 用户记忆治理            ✅ 已实现 (supersede 软替代)
 2. AgentSpec / AgentRun 运行契约      📋 RFC 已发布 (rfcs/agent-run-contract.md)
 3. 结构化 PersonaDefinition           ✅ 已实现 (definition.py + persona_store)
-4. Character Card 导入                📋 含在结构化人格 RFC §4 (待实现)
+4. Character Card 导入                ✅ 已实现 (character_card.py + import API)
 5. Lorebook                          ✅ 已实现 (lorebook_store.py + 关键词匹配)
-6. SocialPolicy 按空间定制             ⏳ Expressor/工具策略已实现, 数据模型待定
+6. SocialPolicy 按空间定制             ⏳ Expressor/工具策略/人格空间覆盖已实现, SocialPolicy 数据模型待定
 ```
 
 优先记忆纠正，是因为用户可纠错能力比人格导入和风格扩展更直接影响数据可信度与隐私。
