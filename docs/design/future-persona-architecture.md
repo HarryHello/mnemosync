@@ -255,12 +255,12 @@ AgentRun
 本文不是直接迭代清单。建议在工具协议和群聊事件基础稳定后，按以下顺序研究：
 
 ```text
-1. 记忆纠正 + 用户记忆治理
-2. AgentSpec / AgentRun 运行契约
-3. 结构化 PersonaDefinition
-4. Character Card 导入
-5. Lorebook
-6. SocialPolicy 按空间定制
+1. 记忆纠正 + 用户记忆治理            ✅ 已实现 (supersede 软替代)
+2. AgentSpec / AgentRun 运行契约      📋 RFC 已发布 (rfcs/agent-run-contract.md)
+3. 结构化 PersonaDefinition           📋 RFC 已发布 (rfcs/structured-persona.md)
+4. Character Card 导入                📋 含在结构化人格 RFC §4
+5. Lorebook                          📋 含在结构化人格 RFC §5
+6. SocialPolicy 按空间定制             ⏳ Expressor/工具策略已实现, 数据模型待定
 ```
 
 优先记忆纠正，是因为用户可纠错能力比人格导入和风格扩展更直接影响数据可信度与隐私。
