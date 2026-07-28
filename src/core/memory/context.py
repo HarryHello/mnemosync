@@ -138,6 +138,25 @@ def _tool_capability_hint(tools: list[dict[str, Any]] | None) -> str:
     )
 
 
+def _build_persona_section(
+    persona_definition: Any | None,
+    persona_prompt: str,
+    persona_name: str,
+    space_id: str | None = None,
+) -> str:
+    """构建人格设定段.
+
+    优先使用结构化 PersonaDefinition (含按空间覆盖);
+    无结构化定义时回退到 legacy persona_prompt 文本.
+    """
+    if persona_definition is not None:
+        from src.core.persona.definition import PersonaDefinition
+        if isinstance(persona_definition, PersonaDefinition):
+            identity = persona_definition.get_identity_for_space(space_id)
+            return persona_definition.to_legacy_prompt()
+    return persona_prompt
+
+
 def render_main_dialogue_system(
     persona_prompt: str,
     persona_name: str,
@@ -153,6 +172,8 @@ def render_main_dialogue_system(
     active_participants: list[str] | None = None,
     trigger_reason: TriggerReason | None = None,
     tools: list[dict[str, Any]] | None = None,
+    persona_definition: Any | None = None,
+    space_id: str | None = None,
 ) -> str:
     """渲染主对话 system 段；user_name 仅保留为旧调用方的显示名兜底."""
     frame = get_prompt_store().load("main_dialogue_frame")
@@ -161,9 +182,12 @@ def render_main_dialogue_system(
         reason="normal",
         description="常规发言，自然回应。",
     )
+    persona_section = _build_persona_section(
+        persona_definition, persona_prompt, persona_name, space_id=space_id,
+    )
     return (
         frame.replace("__PERSONA_NAME__", persona_name)
-        .replace("__PERSONA_PROMPT__", persona_prompt)
+        .replace("__PERSONA_SECTION__", persona_section)
         .replace("__CURRENT_SPEAKER__", speaker)
         .replace("__USER_NAME__", speaker)
         .replace("__CHANNEL_TYPE__", _channel_label(channel_type))
@@ -200,11 +224,13 @@ def build_main_dialogue_messages(
     active_participants: list[str] | None = None,
     trigger_reason: TriggerReason | None = None,
     tools: list[dict[str, Any]] | None = None,
+    persona_definition: Any | None = None,
+    space_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """拼装主对话 Agent 的完整 messages.
 
     Args:
-        persona_prompt: 人格设定文本
+        persona_prompt: 人格设定文本 (legacy, 无结构化定义时回退)
         persona_name: 人格名称
         user_name: 当前用户名
         permanent_memories: 永久记忆列表
@@ -216,6 +242,8 @@ def build_main_dialogue_messages(
         channel_type: direct / group / None
         space_label: 模型可读的空间名称
         active_participants: 裁剪后历史中的活跃参与者
+        persona_definition: 结构化人格定义 (可选, 优先使用)
+        space_id: 当前空间 ID (用于 persona space_overrides)
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -234,6 +262,8 @@ def build_main_dialogue_messages(
         active_participants=active_participants,
         trigger_reason=trigger_reason,
         tools=tools,
+        persona_definition=persona_definition,
+        space_id=space_id,
     )
 
     messages: list[dict[str, Any]] = [

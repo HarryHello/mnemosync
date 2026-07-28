@@ -338,6 +338,8 @@ async def main_dialogue_node(
             active_participants=state.get("active_participants"),
             trigger_reason=trigger,
             tools=state.get("tools"),
+            persona_definition=state.get("persona_definition"),
+            space_id=state.get("space_id"),
         )
 
         logger.debug("  📝 拼装消息数: %d", len(messages))

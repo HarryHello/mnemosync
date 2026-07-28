@@ -91,6 +91,11 @@ def _get_debug_bus(http_request: Request):
     return getattr(http_request.app.state, "debug_bus", None)
 
 
+def _get_persona_store(http_request: Request):
+    """从 app.state 取 SqlitePersonaStore (可能为 None)."""
+    return getattr(http_request.app.state, "persona_store", None)
+
+
 def _build_graph_config(http_request: Request) -> dict[str, Any]:
     """构建 LangGraph config["configurable"], 注入共享 store 单例.
 
@@ -101,7 +106,8 @@ def _build_graph_config(http_request: Request) -> dict[str, Any]:
     state = http_request.app.state
     configurable: dict[str, Any] = {}
     for key in ("multi_forwarder", "resolver", "memory_store",
-                "vector_store", "notification_store", "debug_bus", "identity_store"):
+                "vector_store", "notification_store", "debug_bus",
+                "identity_store", "persona_store"):
         val = getattr(state, key, None)
         if val is not None:
             configurable[key] = val
@@ -354,11 +360,20 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
             event_request_id,
         )
 
-    # 服务器优先人格: 从配置加载, 不从客户端 system 消息提取
+    # 服务器优先人格: 从 DB 加载结构化定义, 不从客户端 system 消息提取
     settings = get_settings()
-    persona = settings.persona.prompt
+    persona_definition = None
+    persona_store = _get_persona_store(http_request)
+    if persona_store is not None:
+        try:
+            persona_definition = await persona_store.get_active()
+        except Exception:
+            pass
+    persona = settings.persona.prompt  # legacy fallback
     persona_name = settings.persona.name
-    logger.debug("  服务器人格: %s (长度: %d)", persona_name, len(persona))
+    if persona_definition is not None:
+        persona_name = persona_definition.name
+    logger.debug("  服务器人格: %s (结构化=%s)", persona_name, persona_definition is not None)
 
     # 提取客户端 system 消息 + 提示词清洗
     prompt_cleaning_result: dict[str, Any] | None = None
@@ -560,6 +575,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "persona": persona,
         "persona_name": persona_name,
         "persona_id": DEFAULT_PERSONA_ID,
+        "persona_definition": persona_definition,
         "proxy_thinking_enabled": use_proxy,
         "stream_mode": bool(request.stream),
         "main_model": main_model,

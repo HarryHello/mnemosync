@@ -29,6 +29,7 @@ from src.persistence.idempotency_store import SqliteIdempotencyStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 from src.persistence.identity_store import SqliteIdentityStore
+from src.persistence.persona_store import SqlitePersonaStore
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ async def app_lifespan(app: FastAPI):
     notification_store = NotificationStore(str(storage.notification_db_abs))
     identity_store = SqliteIdentityStore(str(storage.identity_db_abs))
     idempotency_store = SqliteIdempotencyStore(str(storage.idempotency_db_abs))
+    persona_store = SqlitePersonaStore(str(storage.identity_db_abs))  # 复用 identity.db
 
     await auth_store.connect()
     await api_key_store.connect()
@@ -99,6 +101,7 @@ async def app_lifespan(app: FastAPI):
     await notification_store.connect()
     await identity_store.connect()
     await idempotency_store.connect()
+    await persona_store.init_db()
 
     # 加载身份解析插件 (v0.3.1)
     from src.core.identity.plugin_registry import discover_plugins
@@ -155,6 +158,22 @@ async def app_lifespan(app: FastAPI):
     app.state.idempotency_store = idempotency_store
     app.state.identity_plugins = identity_plugins
     app.state.space_locks = SpaceLockManager()
+    app.state.persona_store = persona_store
+
+    # 自动迁移: 从 config.local.toml 的 legacy 人格创建首个 DB 版本
+    from src.core.persona.definition import PersonaDefinition
+    active = await persona_store.get_active()
+    if active is None:
+        legacy = PersonaDefinition.from_legacy(
+            name=settings.persona.name,
+            prompt=settings.persona.prompt,
+            persona_addressing=settings.persona.relation.persona_addressing,
+            user_addressing=settings.persona.relation.user_addressing,
+            context=settings.persona.relation.context,
+        )
+        legacy.version = "1.0.0"
+        await persona_store.save(legacy, changelog="从 config.local.toml 自动迁移", author="system")
+        logger.info("✅ 自动迁移 legacy 人格到 DB: %s (version=%s)", legacy.name, legacy.version)
 
     # 后台任务: 每 24h 清理窗外对话流水
     prune_task = asyncio.create_task(
@@ -164,7 +183,7 @@ async def app_lifespan(app: FastAPI):
     app.state.conversation_prune_task = prune_task
 
     logger.info(
-        "Stores connected (auth / api_key / memory / http_log / llm_service / conversation / identity); "
+        "Stores connected (auth / api_key / memory / http_log / llm_service / conversation / identity / persona); "
         "resolver + multi_forwarder + vector_store + reindex_progress + debug_bus ready"
     )
 

@@ -206,6 +206,8 @@ async def _handle_stream(
         channel_type=initial_state.get("channel_type"),
         space_label=space_id,
         active_participants=built.active_participants,
+        persona_definition=initial_state.get("persona_definition"),
+        space_id=space_id,
     )
     # 后台记忆图只分析这一逻辑交互的根 user；不重新扫描客户端完整历史。
     if tool_transaction:

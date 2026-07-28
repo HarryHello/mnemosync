@@ -84,7 +84,7 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         name="main_dialogue_frame",
         placeholders=(
             "PERSONA_NAME",
-            "PERSONA_PROMPT",
+            "PERSONA_SECTION",
             "CURRENT_SPEAKER",
             "CHANNEL_TYPE",
             "SPACE_LABEL",
