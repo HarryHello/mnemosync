@@ -114,6 +114,8 @@ const form = reactive({
     denied_tools: '',
     max_calls_per_round: 5,
     cooldown_seconds: 0,
+    global_max_per_window: 0,
+    global_window_seconds: 60,
   },
 })
 
@@ -123,6 +125,8 @@ interface ToolPolicyForm {
   denied_tools: string
   max_calls_per_round: number
   cooldown_seconds: number
+  global_max_per_window: number
+  global_window_seconds: number
 }
 
 const rules: FormRules = {
@@ -211,9 +215,11 @@ function parseToolPolicy(config: string): ToolPolicyForm {
       denied_tools: (tp.denied_tools || []).join(', '),
       max_calls_per_round: tp.max_calls_per_round ?? 5,
       cooldown_seconds: tp.cooldown_seconds ?? 0,
+      global_max_per_window: tp.global_max_per_window ?? 0,
+      global_window_seconds: tp.global_window_seconds ?? 60,
     }
   } catch {
-    return { enabled: false, allowed_tools: '', denied_tools: '', max_calls_per_round: 5, cooldown_seconds: 0 }
+    return { enabled: false, allowed_tools: '', denied_tools: '', max_calls_per_round: 5, cooldown_seconds: 0, global_max_per_window: 0, global_window_seconds: 60 }
   }
 }
 
@@ -233,6 +239,10 @@ function buildConfigWithToolPolicy(): string {
     if (form.tool_policy.cooldown_seconds > 0) {
       policy.cooldown_seconds = form.tool_policy.cooldown_seconds
     }
+    if (form.tool_policy.global_max_per_window > 0) {
+      policy.global_max_per_window = form.tool_policy.global_max_per_window
+      policy.global_window_seconds = form.tool_policy.global_window_seconds
+    }
     if (Object.keys(policy).length > 0) {
       config.tool_policy = policy
     } else {
@@ -250,7 +260,7 @@ function openCreate() {
   form.name = ''
   form.strategy_type = 'regex'
   form.config = CONFIG_TEMPLATES.regex
-  form.tool_policy = { enabled: false, allowed_tools: '', denied_tools: '', max_calls_per_round: 5, cooldown_seconds: 0 }
+  form.tool_policy = { enabled: false, allowed_tools: '', denied_tools: '', max_calls_per_round: 5, cooldown_seconds: 0, global_max_per_window: 0, global_window_seconds: 60 }
   resetAiFields()
   dialogVisible.value = true
   void nextTick(() => formRef.value?.clearValidate())
@@ -569,6 +579,27 @@ onMounted(refresh)
               controls-position="right"
             />
             <span class="form-item-hint">同一工具两次调用间的最小间隔（0=不限制）</span>
+          </el-form-item>
+          <el-form-item label="全局频率限制">
+            <el-input-number
+              v-model="form.tool_policy.global_max_per_window"
+              :min="0"
+              :max="1000"
+              :step="5"
+              controls-position="right"
+            />
+            <span class="form-item-hint">窗口内最大工具调用总数（0=不限制）</span>
+          </el-form-item>
+          <el-form-item label="频率窗口(秒)">
+            <el-input-number
+              v-model="form.tool_policy.global_window_seconds"
+              :min="1"
+              :max="3600"
+              :step="10"
+              controls-position="right"
+              :disabled="form.tool_policy.global_max_per_window === 0"
+            />
+            <span class="form-item-hint">全局频率限制的统计窗口</span>
           </el-form-item>
         </template>
       </el-form>

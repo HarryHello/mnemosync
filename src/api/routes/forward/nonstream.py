@@ -15,6 +15,7 @@ from src.api.schemas.forward import (
     UsageInfo,
 )
 from src.api.tool_policies import (
+    check_global_rate_limit,
     check_persisted_cooldowns,
     filter_tool_calls,
     validate_tool_arguments,
@@ -156,7 +157,31 @@ async def _handle_non_stream(
                 source_user=source_user or None,
                 space_id=space_id,
             )
+            if cooldown_violations:
+                emit_pipeline(
+                    getattr(http_request.app.state, "debug_bus", None),
+                    event_kind="cooldown_blocked",
+                    violations=cooldown_violations,
+                    scope="user_space",
+                )
             removed_calls.extend(cooldown_violations)
+            valid_calls = kept
+        # 全局频率限制: 按 API Key 统计
+        if policy and policy.global_max_per_window > 0 and valid_calls:
+            kept, rate_violations = await check_global_rate_limit(
+                conversation_store,
+                valid_calls,
+                policy,
+                api_key_id=api_key_id,
+            )
+            if rate_violations:
+                emit_pipeline(
+                    getattr(http_request.app.state, "debug_bus", None),
+                    event_kind="cooldown_blocked",
+                    violations=rate_violations,
+                    scope="global",
+                )
+            removed_calls.extend(rate_violations)
             valid_calls = kept
         response_message = {**response_message, "tool_calls": valid_calls or None}
         if removed_calls:

@@ -129,7 +129,9 @@ function pipelineSummary(ev: DebugEventSummary): string {
       return `${body.original_length ?? 0} → ${body.rewritten_length ?? 0} 字符`
     case 'cooldown_blocked': {
       const violations = body.violations as string[] | null
-      return violations?.length ? `拦截 ${violations.length} 个调用` : ''
+      const scope = body.scope as string
+      const prefix = scope === 'global' ? '全局' : ''
+      return violations?.length ? `${prefix}拦截 ${violations.length} 个调用` : ''
     }
     default:
       return ''

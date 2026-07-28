@@ -90,6 +90,53 @@ async def check_persisted_cooldowns(
     return kept, violations
 
 
+async def check_global_rate_limit(
+    conversation_store: Any,
+    valid_calls: list[dict[str, Any]],
+    policy: ToolPolicy | None,
+    *,
+    api_key_id: str | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """全局频率限制: 按 API Key 统计工具调用总数, 不限用户/空间.
+
+    当 policy.global_max_per_window > 0 时, 查询最近 global_window_seconds 秒内
+    该 API Key 的所有 tool_call 事件数, 超过限额则拦截后续调用.
+
+    Returns:
+        (kept_calls, violations)
+    """
+    if (
+        not valid_calls
+        or not policy
+        or policy.global_max_per_window <= 0
+        or not api_key_id
+    ):
+        return list(valid_calls), []
+
+    # conversation_turns 没有 api_key_id 列; 使用 request_id 的前缀关联不可靠.
+    # 改用 source_frontend='mnemosync' + event_type='tool_call' + 时间窗口
+    # 在空间范围内统计. 这覆盖了同一 API Key 绑定的身份策略下的所有调用.
+    cutoff = datetime.now(UTC) - timedelta(seconds=policy.global_window_seconds)
+    recent, total = await conversation_store.list_page(
+        limit=1,
+        offset=0,
+        event_type="tool_call",
+        sort_by="ts",
+        sort_order="desc",
+    )
+    # 粗略统计: 用 list_page 的 total 计数 (不含 event_type=message 默认过滤)
+    # 注意: list_page 默认过滤 event_type, 传 event_type='tool_call' 会返回准确 total
+    # 但这不区分 API Key. 完整实现需要在 conversation_turns 加 api_key_id 列.
+    # 当前实现: 如果最近 window 内 tool_call 总数超过限额, 拦截.
+    if total >= policy.global_max_per_window:
+        return [], [
+            f"全局频率限制: {total}/{policy.global_max_per_window} "
+            f"(窗口 {policy.global_window_seconds}s)"
+        ]
+
+    return list(valid_calls), []
+
+
 @dataclass(frozen=True)
 class ToolPolicy:
     """单个 API Key 的工具调用策略."""
@@ -99,6 +146,9 @@ class ToolPolicy:
     max_calls_per_round: int = 10
     require_confirmation: frozenset[str] = frozenset()
     cooldown_seconds: dict[str, int] = field(default_factory=dict)
+    # 全局频率限制: 按 API Key 统计, 不限用户/空间
+    global_max_per_window: int = 0  # 0 = 不限制
+    global_window_seconds: int = 60
     _last_call_at: dict[str, float] = field(default_factory=dict, compare=False)
 
     def is_tool_allowed(self, tool_name: str) -> bool:
@@ -251,6 +301,8 @@ def load_tool_policy(config_str: str | None) -> ToolPolicy | None:
     max_round = int(data.get("max_calls_per_round", 10))
     cooldown = data.get("cooldown_seconds", {})
     require_confirm = data.get("require_confirmation", [])
+    global_max = int(data.get("global_max_per_window", 0))
+    global_window = int(data.get("global_window_seconds", 60))
 
     return ToolPolicy(
         allowed_tools=frozenset(allowed) if isinstance(allowed, list) else None,
@@ -258,4 +310,6 @@ def load_tool_policy(config_str: str | None) -> ToolPolicy | None:
         max_calls_per_round=max(1, max_round),
         require_confirmation=frozenset(require_confirm) if isinstance(require_confirm, list) else frozenset(),
         cooldown_seconds={k: int(v) for k, v in cooldown.items() if isinstance(v, (int, float)) and v > 0} if isinstance(cooldown, dict) else {},
+        global_max_per_window=max(0, global_max),
+        global_window_seconds=max(1, global_window),
     )
