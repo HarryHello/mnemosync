@@ -191,7 +191,7 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 - **API Key 工具策略**: 每个身份策略的 `tool_policy` 配置支持 `allowed_tools`（白名单）、`denied_tools`（黑名单）、`max_calls_per_round`（每轮最大调用数）和 `cooldown_seconds`（每工具冷却秒数）。策略对工具定义做入站过滤（模型不知道被禁工具的存在），对响应 `tool_calls` 做出站过滤（模型违反时作为最后防线移除）。被策略移除的工具调用不会到达客户端。
 - **工具参数隐私检查**: 在响应返回客户端前，对 `tool_calls` 的每个参数执行确定性验证：工具名称必须在本轮 `tools` 中、arguments 必须是合法 JSON 对象、参数体积不超过 2000 字节、参数不得包含内部 UUID 格式（防止泄露内部 actor/group ID）。不符合检查的调用被移除并记录日志。
 - **持久化冷却**: 内存中的冷却（单请求）从 `conversation_turns` 查询最近的 `tool_call` 事件，在跨请求/重启后仍生效。仅对配置了 `cooldown_seconds` 的工具生效，非流式路径完全有效，流式路径依赖内存冷却。
-- **记忆治理端点**: `DELETE /panel/admin/memories` 支持按 `source_user`（必填）批量删除记忆，可选过滤 `memory_type` 和 `before`（ISO 时间）。已有单条删除端点 `DELETE /panel/admin/memories/{memory_id}`。
+- **记忆治理端点**: `DELETE /panel/admin/memories` 支持按 `source_user`（必填）批量删除记忆，可选过滤 `memory_type` 和 `before`（ISO 时间）。已有单条删除端点 `DELETE /panel/admin/memories/{memory_id}`。`GET /panel/admin/memories` 新增 `before`/`after` 时间范围过滤。管理面板"长期记忆"tab 已增加批量删除按钮，按当前 source_user + 类型筛选条件批量删除。
 - **工具策略管理**: 工具策略通过现有 identity strategy API 管理。在 identity strategy 的 `config` JSON 中添加 `tool_policy` 键即可配置白名单/黑名单/每轮上限/冷却，配置格式见 [forward.md](forward.md)。通过 `PATCH /panel/admin/identity/strategies/{id}` 更新后立即生效，无需重启。
 - **模型候选工具能力**: `ResolvedCandidate` 增加 `supports_tools` / `supports_stream_tools` / `supports_parallel_tool_calls` / `supports_tool_choice_required` 字段（默认全部为 True）。当请求携带 `tools` 时，`RoleResolver.first_for_tools()` 优先选择支持工具的候选，不支持工具的候选跳过而非视为失败。流式请求额外要求 `supports_stream_tools=True`。
 - **逻辑交互事务**: `interaction_id` 将同一根消息引发的多次 HTTP 请求（工具调用 → 工具结果 → 继续生成 → 最终文本）绑定为同一逻辑事务。根消息的 `request_id` 即 `interaction_id`；工具续轮通过首个 `tool_call_id` 查回该 ID。工具调用和结果分别作为 `event_type=tool_call` / `tool_result` 独立持久化，不混入自然语言流水。
