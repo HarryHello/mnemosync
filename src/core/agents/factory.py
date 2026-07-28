@@ -201,6 +201,7 @@ async def run_expressor(
     relationship_summary: str,
     *,
     config: ExpressorConfig | None = None,
+    expression_style: str = "",
 ) -> str:
     """Expressor: 将最终文本改写为适合当前聊天场景的表达.
 
@@ -231,11 +232,15 @@ async def run_expressor(
     from src.core.prompts import get_prompt_store
 
     tmpl = get_prompt_store().load("expressor")
+    style_section = ""
+    if expression_style:
+        style_section = f"\n\n## 当前空间的表达习惯\n{expression_style}\n改写时自然融入这些风格特征，但不要生硬模仿。"
     prompt = (
         tmpl.replace("__ORIGINAL_TEXT__", original_text)
         .replace("__CURRENT_SPEAKER__", current_speaker)
         .replace("__CHANNEL_TYPE__", "群聊" if channel_type == "group" else "私聊" if channel_type == "direct" else "未标明")
         .replace("__RELATIONSHIP_SUMMARY__", relationship_summary)
+        .replace("__EXPRESSION_STYLE__", style_section)
     )
 
     try:

@@ -1,6 +1,6 @@
 ---
-version: 1
-placeholders: [ORIGINAL_TEXT, CURRENT_SPEAKER, CHANNEL_TYPE, RELATIONSHIP_SUMMARY]
+version: 2
+placeholders: [ORIGINAL_TEXT, CURRENT_SPEAKER, CHANNEL_TYPE, RELATIONSHIP_SUMMARY, EXPRESSION_STYLE]
 ---
 你是一名表达改写助手。你的任务是将以下回复改写成适合在当前聊天场景中发送的消息。
 
@@ -31,5 +31,6 @@ placeholders: [ORIGINAL_TEXT, CURRENT_SPEAKER, CHANNEL_TYPE, RELATIONSHIP_SUMMAR
 ## 原始回复
 
 __ORIGINAL_TEXT__
+__EXPRESSION_STYLE__
 
 ## 改写后的回复

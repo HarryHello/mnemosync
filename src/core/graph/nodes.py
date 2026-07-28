@@ -304,6 +304,7 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
 
             expressor_cfg = ExpressorConfig(enabled=True)
             relationship_summary = format_relationship(rel)
+            expression_style = state.get("expression_style", "")
             rewritten = await run_expressor(
                 forwarder,
                 response,
@@ -311,6 +312,7 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
                 state.get("channel_type"),
                 relationship_summary,
                 config=expressor_cfg,
+                expression_style=expression_style,
             )
             if rewritten != response:
                 logger.debug(

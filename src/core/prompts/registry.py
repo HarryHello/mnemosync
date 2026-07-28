@@ -105,6 +105,7 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
             "CURRENT_SPEAKER",
             "CHANNEL_TYPE",
             "RELATIONSHIP_SUMMARY",
+            "EXPRESSION_STYLE",
         ),
         description="Expressor 表达改写 (仅最终文本, 不改写工具调用)",
     ),

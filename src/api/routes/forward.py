@@ -787,6 +787,21 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         logger.debug("  🔧 工具策略: 入站过滤, 原 %d 工具 → 剩 %d",
                      len(request.tools or []), len(allowed_tools or []))
 
+    # 提取表达习惯 (群聊时, 从最近 assistant 回复提取)
+    expression_style = ""
+    if channel_type == "group" and not tool_transaction:
+        try:
+            from src.core.memory.expression_style import extract_style_from_turns
+            conv_store = _get_conversation_store(http_request)
+            recent_turns, _ = await conv_store.list_page(
+                limit=20, offset=0, role="assistant", space_id=space_id,
+                event_type="message", sort_by="ts", sort_order="desc",
+            )
+            style = extract_style_from_turns(recent_turns, space_id or "")
+            expression_style = style.to_memory_content()
+        except Exception:
+            pass
+
     initial_state = {
         "messages": messages_dict,
         "tools": allowed_tools,
@@ -794,6 +809,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "parallel_tool_calls": request.parallel_tool_calls if allowed_tools else None,
         "tool_transaction": tool_transaction,
         "tool_policy": tool_policy,
+        "expression_style": expression_style,
         "interaction_id": interaction_id,
         "source_user": source_user,
         "current_speaker": current_speaker,

@@ -16,10 +16,12 @@ class MemoryType(str, Enum):
 
     - PERMANENT: 永久记忆，不衰减，除非被覆盖或删除
     - NORMAL: 普通记忆，遵循衰减模型，优先级随时间降低
+    - EXPRESSION_STYLE: 表达习惯记忆，作用域为 space_id，低衰减率
     """
 
     PERMANENT = "permanent"
     NORMAL = "normal"
+    EXPRESSION_STYLE = "expression_style"
 
 
 class Visibility(str, Enum):
