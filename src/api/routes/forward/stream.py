@@ -370,7 +370,18 @@ async def _handle_stream(
             graph_config = _build_graph_config(http_request)
             asyncio.create_task(_run_memory_graph(initial_state, collected_chunks, graph_config))
 
+    # 包装: 流结束后释放空间锁
+    async def locked_stream():
+        try:
+            async for chunk in stream_generator():
+                yield chunk
+        finally:
+            lock = initial_state.get("_space_lock")
+            if lock is not None and lock.locked():
+                lock.release()
+                logger.debug("🔓 释放空间锁 (stream): %s", initial_state.get("_space_lock_key"))
+
     return StreamingResponse(
-        stream_generator(),
+        locked_stream(),
         media_type="text/event-stream",
     )

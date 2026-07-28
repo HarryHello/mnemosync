@@ -16,6 +16,7 @@ from src.infra.debug_bus import DebugEventBus
 from src.infra.forwarder.debug_hook import set_debug_bus
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.store import LLMServiceStore
+from src.infra.space_lock import SpaceLockManager
 from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import (
     API_KEY_SOURCE_PANEL_DEBUG,
@@ -145,6 +146,7 @@ async def app_lifespan(app: FastAPI):
     app.state.identity_store = identity_store
     app.state.idempotency_store = idempotency_store
     app.state.identity_plugins = identity_plugins
+    app.state.space_locks = SpaceLockManager()
 
     # 后台任务: 每 24h 清理窗外对话流水
     prune_task = asyncio.create_task(

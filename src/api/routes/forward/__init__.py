@@ -482,7 +482,25 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     if prompt_cleaning_result:
         initial_state["prompt_cleaning_result"] = prompt_cleaning_result
 
-    if request.stream:
-        return await _handle_stream(http_request, initial_state, request, use_proxy)
-    else:
-        return await _handle_non_stream(http_request, initial_state, request)
+    # 同空间串行: 同一空间内的请求逐条处理, 不同空间并行
+    from src.infra.space_lock import SpaceLockManager
+    space_locks: SpaceLockManager = http_request.app.state.space_locks
+    lock_key = space_locks.lock_key(
+        space_id=space_id, source_user=source_user, api_key_id=api_key_id,
+    )
+    lock = await space_locks.acquire(lock_key)
+    await lock.acquire()
+    logger.debug("🔒 获取空间锁: %s", lock_key)
+    initial_state["_space_lock"] = lock
+    initial_state["_space_lock_key"] = lock_key
+    try:
+        if request.stream:
+            return await _handle_stream(http_request, initial_state, request, use_proxy)
+        else:
+            return await _handle_non_stream(http_request, initial_state, request)
+    finally:
+        if not request.stream:
+            # 非流式: 响应已生成, 释放锁
+            # 流式: 锁在 stream_generator 的 finally 中释放 (见 stream.py)
+            lock.release()
+            logger.debug("🔓 释放空间锁: %s", lock_key)
