@@ -338,6 +338,112 @@ async def delete_memory(
     return {"success": True, "message": "Memory deleted"}
 
 
+class MemoryCorrectBody(BaseModel):
+    """记忆纠正请求体."""
+
+    content: str = Field(..., min_length=1, description="纠正后的记忆内容")
+    reason: str = Field("", description="纠正原因 (审计用)")
+
+
+@router.post("/memories/{memory_id}/correct", response_model=MemoryResponse)
+async def correct_memory(
+    memory_id: str,
+    body: MemoryCorrectBody,
+    store: SqliteMemoryStore = Depends(get_memory_store),
+    forwarder=Depends(get_multi_forwarder),
+    resolver=Depends(get_resolver),
+):
+    """纠正一条记忆: 创建新记忆替代旧记忆 (软替代).
+
+    旧记忆不物理删除, 标记 superseded_by = 新记忆 ID, 从向量库移除。
+    新记忆继承旧记忆的 source_user / memory_type / visibility / space_id。
+    """
+    old = await store.get_by_id(memory_id)
+    if not old:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    if old.superseded_by:
+        raise HTTPException(status_code=409, detail="Memory already superseded")
+
+    from src.core.memory.models import MemoryEntry
+
+    new_entry = MemoryEntry.create(
+        content=body.content,
+        role=old.role,
+        source_user=old.source_user,
+        memory_type=old.memory_type,
+        importance=old.importance,
+        decay_rate=old.decay_rate,
+    )
+    new_entry.visibility = old.visibility
+    new_entry.custom_policies = old.custom_policies
+    new_entry.emotional_tags = old.emotional_tags
+    new_entry.space_id = old.space_id
+    new_entry.related_memories = old.related_memories + [old.id]
+
+    # 生成 embedding
+    try:
+        from src.infra.debug_context import use_agent
+        with use_agent("memory_correct"):
+            vecs = await forwarder.embed(new_entry.content)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Embedding failed: {e}") from e
+
+    # 校验向量库嵌入锁
+    from src.infra.llm_service.models import ModelType
+    from src.infra.vector_store import VectorStoreLockError
+    try:
+        from src.api.deps import get_vector_store
+        vector_store = get_vector_store()
+        cand = await resolver.first(ModelType.EMBEDDING)
+        vector_store.assert_embedding_matches(cand.service_id, cand.model, len(vecs[0]))
+    except VectorStoreLockError as e:
+        raise HTTPException(status_code=409, detail=f"Vector store lock mismatch: {e}") from e
+    except Exception:
+        pass  # 向量库不可用时仍允许保存 (无语义检索)
+
+    # 保存新记忆
+    await store.save(new_entry)
+    try:
+        vector_store.add(new_entry, vecs[0])
+    except Exception:
+        pass
+
+    # 标记旧记忆被替代
+    await store.mark_superseded(memory_id, new_entry.id)
+    # 从向量库移除旧记忆 (使其不被语义检索)
+    try:
+        vector_store.delete(memory_id)
+    except Exception:
+        pass
+
+    logger.info(
+        "记忆纠正: %s -> %s (reason=%s)", memory_id, new_entry.id, body.reason,
+    )
+    return _memory_to_response(new_entry)
+
+
+@router.get("/memories/{memory_id}/supersede-chain")
+async def get_supersede_chain(
+    memory_id: str, store: SqliteMemoryStore = Depends(get_memory_store)
+):
+    """获取记忆的替代链 (原始 -> 替代版本 -> 更新的替代 -> ...)."""
+    chain = await store.get_supersede_chain(memory_id)
+    if not chain:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {
+        "items": [
+            {
+                "id": e.id,
+                "content": e.content,
+                "superseded_by": e.superseded_by,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in chain
+        ],
+        "total": len(chain),
+    }
+
+
 @router.delete("/memories")
 async def delete_memories_batch(
     source_user: str = Query(..., min_length=1, description="用户标识 (effective_user_id, 必填)"),

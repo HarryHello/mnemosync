@@ -100,7 +100,10 @@ class MemoryLifecycle:
             count = await self.memory_store.count_permanent(source_user)
             if count >= settings.memory.permanent_limit:
                 if candidate.overrides:
-                    await self._delete_memory(candidate.overrides)
+                    # 软替代: 标记旧记忆被替代, 不物理删除 (保留审计链)
+                    # 向量库中移除旧记忆使其不被检索, SQLite 保留
+                    if self.vector_store is not None:
+                        self.vector_store.delete(candidate.overrides)
                 else:
                     logger.warning(
                         "永久记忆已满（%d/%d）且未指定 overrides, 降级为普通记忆: %s",
@@ -157,6 +160,10 @@ class MemoryLifecycle:
             await self.memory_store.save(entry)
             if self.vector_store is not None:
                 self.vector_store.add(entry, vecs[0])
+            # 标记被替代的旧记忆 (软替代, 保留审计链)
+            if candidate.overrides:
+                await self.memory_store.mark_superseded(candidate.overrides, entry.id)
+                logger.info("记忆替代: %s -> %s", candidate.overrides, entry.id)
         except aiosqlite.Error as e:
             logger.error("记忆入库失败: %s", e)
             await self._notify_write_failure(

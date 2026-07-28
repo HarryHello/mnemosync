@@ -150,6 +150,7 @@ class MemoryEntry:
     last_accessed: datetime | None = None
     expires_at: datetime | None = None
     space_id: str | None = None  # v0.3.0: 诞生空间 (非空 = 空间共享记忆, 受众过滤用)
+    superseded_by: str | None = None  # v0.3.4: 被哪条记忆替代 (非空 = 已过期, 检索不返回)
 
     @staticmethod
     def create(

@@ -125,7 +125,13 @@ class SqliteMemoryStore(SqliteStore):
             ("002_add_persona_addressing", add_column_if_missing("relationships", "persona_addressing", "TEXT")),
             ("003_add_user_addressing", add_column_if_missing("relationships", "user_addressing", "TEXT")),
             ("004_add_context", add_column_if_missing("relationships", "context", "TEXT")),
+            ("005_add_superseded_by", add_column_if_missing("memory_entries", "superseded_by", "TEXT")),
         ]).apply(db)
+
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_superseded_by "
+            "ON memory_entries(superseded_by) WHERE superseded_by IS NOT NULL"
+        )
 
     async def init_db(self) -> None:
         """兼容旧接口: 幂等地初始化 schema. 长连接模式下 connect() 已包含此步骤."""
@@ -143,8 +149,8 @@ class SqliteMemoryStore(SqliteStore):
                 (id, content, role, source_user, memory_type, importance, decay_rate,
                  priority, access_count, is_forgotten, visibility, custom_policies,
                  emotional_tags, related_memories, created_at, last_accessed, expires_at,
-                 space_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 space_id, superseded_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.id,
@@ -165,6 +171,7 @@ class SqliteMemoryStore(SqliteStore):
                     _dt(entry.last_accessed),
                     _dt(entry.expires_at),
                     entry.space_id,
+                    entry.superseded_by,
                 ),
             )
             await db.commit()
@@ -246,6 +253,7 @@ class SqliteMemoryStore(SqliteStore):
                 f"""
                 SELECT * FROM memory_entries
                 WHERE memory_type = 'permanent' AND is_forgotten = 0
+                  AND superseded_by IS NULL
                   AND ({where})
                 ORDER BY importance DESC, created_at DESC
                 LIMIT ?
@@ -267,6 +275,7 @@ class SqliteMemoryStore(SqliteStore):
                 """
                 SELECT * FROM memory_entries
                 WHERE source_user = ? AND memory_type = 'normal' AND is_forgotten = 0
+                  AND superseded_by IS NULL
                   AND priority > 0.3
                 ORDER BY priority DESC, created_at DESC
                 LIMIT ?
@@ -284,6 +293,7 @@ class SqliteMemoryStore(SqliteStore):
                 """
                 SELECT * FROM memory_entries
                 WHERE memory_type = 'normal' AND is_forgotten = 0
+                  AND superseded_by IS NULL
                   AND created_at < ?
                 ORDER BY priority DESC, created_at ASC
                 LIMIT ?
@@ -307,7 +317,47 @@ class SqliteMemoryStore(SqliteStore):
             )
             await db.commit()
 
-    async def mark_accessed(self, entry_id: str) -> None:
+    async def mark_superseded(self, old_id: str, new_id: str) -> bool:
+        """标记一条记忆被新记忆替代 (软替代, 不物理删除).
+
+        Args:
+            old_id: 被替代的记忆 ID
+            new_id: 替代它的新记忆 ID
+
+        Returns:
+            是否成功更新
+        """
+        async with self._conn() as db:
+            cur = await db.execute(
+                "UPDATE memory_entries SET superseded_by = ? WHERE id = ? AND superseded_by IS NULL",
+                (new_id, old_id),
+            )
+            await db.commit()
+            return cur.rowcount > 0
+
+    async def get_supersede_chain(self, memory_id: str) -> list[MemoryEntry]:
+        """获取一条记忆的替代链 (从该记忆开始, 追溯所有替代它的版本).
+
+        返回顺序: 原始记忆 -> 替代它的新记忆 -> 更新的替代 -> ...
+        """
+        chain: list[MemoryEntry] = []
+        current = await self.get_by_id(memory_id)
+        if current is None:
+            return chain
+        chain.append(current)
+        visited = {memory_id}
+        # 向前追溯: 沿 superseded_by 指针找到替代版本
+        while current.superseded_by:
+            next_id = current.superseded_by
+            if next_id in visited:
+                break
+            next_entry = await self.get_by_id(next_id)
+            if next_entry is None:
+                break
+            chain.append(next_entry)
+            visited.add(next_id)
+            current = next_entry
+        return chain
         now = datetime.now(UTC).isoformat()
         async with self._conn() as db:
             await db.execute(
@@ -348,6 +398,7 @@ class SqliteMemoryStore(SqliteStore):
                 """
                 SELECT * FROM memory_entries
                 WHERE source_user = ? AND is_forgotten = 0
+                  AND superseded_by IS NULL
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
@@ -386,7 +437,7 @@ class SqliteMemoryStore(SqliteStore):
         sort_col = sort_by if sort_by in allowed_sort else "created_at"
         direction = "ASC" if sort_order.lower() == "asc" else "DESC"
 
-        where = ["source_user = ?", "is_forgotten = 0"]
+        where = ["source_user = ?", "is_forgotten = 0", "superseded_by IS NULL"]
         params: list = [source_user]
         if memory_type:
             where.append("memory_type = ?")
@@ -721,6 +772,7 @@ class SqliteMemoryStore(SqliteStore):
             last_accessed=_parse_dt(row[15]),
             expires_at=_parse_dt(row[16]),
             space_id=row[17] if len(row) > 17 else None,
+            superseded_by=row[18] if len(row) > 18 else None,
         )
 
     def _row_to_relationship(self, row: tuple) -> Relationship:
