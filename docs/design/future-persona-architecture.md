@@ -17,7 +17,7 @@ Mnemosync 已具备单人格、多用户身份、空间事件流、受众过滤�
 4. 支持记忆纠正、冲突与来源追踪；
 5. 为辅助 Agent 建立统一运行契约。
 
-群聊拟人化、工具事务、平台动作、Expressor 与 SpaceState/Checkpoint 的执行顺序见 [group-chat-and-tool-evolution.md](group-chat-and-tool-evolution.md)。
+群聊拟人化、工具事务、平台动作、Expressor 已实现 (v0.3.3); SpaceState/Checkpoint 经评估不必要 (短期历史窗口足够), 并发一致性已通过空间级串行锁解决。
 
 ---
 
@@ -219,7 +219,7 @@ SocialPolicy(space_type)
 - 工具偏好不能绕过 API Key 工具策略和客户端权限；
 - 空间策略不能改变人格核心身份与隐私边界。
 
-Social Policy 与 Expressor 的结合方式在 [group-chat-and-tool-evolution.md](group-chat-and-tool-evolution.md) 中定义。
+Social Policy 与 Expressor 的结合已在 v0.3.3 实现 (Expressor 改写层 + 工具策略 + 隐私跨模态约束)。
 
 ---
 

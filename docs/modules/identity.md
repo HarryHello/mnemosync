@@ -260,6 +260,16 @@ class IdentityContext:
 | POST | `/identity/actors/{actor_id}/groups/{group_id}` | 绑定 (已存在 → 409) |
 | DELETE | `/identity/actors/{actor_id}/groups/{group_id}` | 解绑 (不存在 → 404) |
 
+### 用户自助绑定 (跨平台身份归一)
+
+用户可自行跨平台绑定, 无需管理员操作。双触发模式:
+
+**指令触发** (可靠): 用户发送自定义指令词 (默认"绑定"), 服务端拦截并生成 6 位验证码。另一端发送"绑定 {code}"完成确认。不调 LLM, 零成本。
+
+**自然语言触发** (增强): Mnemosync 注入内部 tool (`initiate_identity_binding` / `confirm_identity_binding`), 模型在对话中自然判断意图并调用。服务端拦截执行, 合成 tool_result, 再调一轮 LLM 生成自然回复。客户端看不到内部 tool_calls。
+
+绑定逻辑: 复用 UserGroup, 把两个 Actor 归到同一组。验证码 5 分钟 TTL, 内存存储。指令词可通过 `runtime.identity_bind_command` / `runtime.identity_bind_confirm_prefix` 自定义。
+
 ### 关系端点的 actor 解析
 
 `GET/PUT /admin/relationship` 与 `GET /admin/relationship/audit` 接受 `user_id` 或 `actor_id` 查询参数 (至少一个)。传 `actor_id` 时经 identity_store 解析为 effective_user_id——绑定 UserGroup 的 Actor 查到的是**组关系**, 面板上点任一平台账号都能看到"这个人"的关系状态。
@@ -321,6 +331,7 @@ mnemosync identity unbind <actor_id> <group_id>
 | [消息处理](message-processing.md) | 身份解析是请求预处理的第一步, 先于提示词清洗与图编排 |
 | [记忆系统](memory-system.md) | effective_user_id 为隔离边界; space_id 参与受众过滤; 幂等保护记忆不被重复写入 |
 | [LangGraph 编排](langgraph.md) | AgentState 携带 actor_id / space_id / persona_id / channel_type |
+| [上游转发](forward.md) | 内部 tool 注入与拦截; 空间级串行锁; 身份绑定指令触发拦截 |
 
 ---
 
@@ -329,3 +340,4 @@ mnemosync identity unbind <actor_id> <group_id>
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v0.3.0 | 2026-07-26 | 初始版本: 身份模型 + 四策略 + 非归属模式 (Sub-Phase A); 空间事件流 + 幂等 (B); 受众过滤联动 (C); 关系按 Actor 解析 (D); 面板身份管理页 + CLI 命令组 |
+| v0.3.3 | 2026-07-28 | 用户自助跨平台绑定: 指令触发 + 内部 tool 自然语言触发; 内部 tool 注册表架构 |

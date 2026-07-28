@@ -196,7 +196,14 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 - **模型候选工具能力**: `ResolvedCandidate` 增加 `supports_tools` / `supports_stream_tools` / `supports_parallel_tool_calls` / `supports_tool_choice_required` 字段（默认全部为 True）。当请求携带 `tools` 时，`RoleResolver.first_for_tools()` 优先选择支持工具的候选，不支持工具的候选跳过而非视为失败。流式请求额外要求 `supports_stream_tools=True`。
 - **逻辑交互事务**: `interaction_id` 将同一根消息引发的多次 HTTP 请求（工具调用 → 工具结果 → 继续生成 → 最终文本）绑定为同一逻辑事务。根消息的 `request_id` 即 `interaction_id`；工具续轮通过首个 `tool_call_id` 查回该 ID。工具调用和结果分别作为 `event_type=tool_call` / `tool_result` 独立持久化，不混入自然语言流水。
 - **幂等重放**: 幂等缓存现在保留完整 `response_message`（含 `tool_calls`）和 `finish_reason`，重放时优先恢复完整响应而不只是文本。纯工具调用响应可被正确重放。
-- **仍有限制**: 上游候选工具能力声明尚未实现；工具续轮自身尚无幂等重放（仅根消息事件）。后续设计见 [群聊与工具演进](../design/group-chat-and-tool-evolution.md)。
+- **全局频率限制**: `ToolPolicy` 的 `global_max_per_window` / `global_window_seconds` 字段按时间窗口统计 `tool_call` 事件总数, 超限拦截。与按用户+空间的冷却互补, 覆盖 API Key 级别。
+- **空间级串行锁**: 同一 `space_id` 的请求逐条处理, 不同空间并行。锁键优先级 `space_id > source_user > api_key_id > "global"`。非流式在 `create_chat_completion` 的 try/finally 释放; 流式在 `locked_stream` 包装器结束后释放。防止同一群聊并行生成回复导致内容冲突。
+- **内部 tool 拦截**: `InternalToolRegistry` 注册服务端内部工具 (身份绑定等), 仅非流式路径注入主模型。模型调用内部 tool 时, `main_dialogue_node` 拦截执行 handler, 合成 `tool_result`, 再调一轮 LLM 生成自然回复。出站时从 `tool_calls` 中剥离内部 tool, 客户端不可见。
+- **跨平台身份绑定**: 双触发模式。指令触发: 用户发自定义指令词 (默认"绑定"), 服务端拦截生成 6 位验证码, 不调 LLM; 另一端发"绑定 {code}"确认。自然语言触发: 模型调用内部 tool `initiate_identity_binding` / `confirm_identity_binding`, 服务端执行绑定逻辑。绑定复用 UserGroup, 验证码 5 分钟 TTL。指令词可通过 `runtime.identity_bind_command` / `runtime.identity_bind_confirm_prefix` 自定义。
+- **管线调试事件**: `DebugEventBus.emit_pipeline()` 发射语义管线事件 (tool_policy / tool_transaction / tool_call_decision / trigger_reason / expressor_rewrite / cooldown_blocked), 通过现有 SSE 流推送, 前端按类型渲染卡片和详情。
+- **交互事务聚合**: `GET /panel/admin/conversation-turns/interactions` 列出最近的逻辑交互摘要; `InteractionList.vue` 组件可展开查看同一 `interaction_id` 的所有事件 (message / tool_call / tool_result)。
+- **评估维度统计**: `GET /panel/admin/debug/evaluation` 从 `conversation_turns` 聚合统计 (回复平均长度 / 工具调用分布 / 交互事务比例)。
+- **仍有限制**: 流式路径不支持内部 tool 拦截 (SSE 帧已发出无法回改); 全局频率限制在流式路径仅影响持久化不阻断已发出的调用。
 - **调试面板 (v0.2.5)**: `debug_hook` 模块级单例被 lifespan 注入 `set_debug_bus(bus)`, 让 forwarder 每次出/入方向都写一条 event 到 DebugEventBus; 订阅数为 0 时 emit 走惰性 gate 近似 no-op
 
 ---
