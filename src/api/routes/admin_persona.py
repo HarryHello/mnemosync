@@ -7,9 +7,9 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from src.api.deps import (
     get_conversation_store,
@@ -421,4 +421,90 @@ async def rollback_persona_version(
     if not ok:
         raise HTTPException(404, detail="Version not found")
     return {"success": True, "version_id": version_id}
+
+
+# ============================================================================
+# Character Card Import (v0.3.3, SillyTavern V1/V2)
+# ============================================================================
+
+
+class CharacterCardPreview(BaseModel):
+    """角色卡预览."""
+
+    name: str
+    source_format: str
+    identity: PersonaIdentityBody
+    has_lorebook: bool = False
+    has_examples: bool = False
+
+
+@router.post("/persona/import-card", response_model=CharacterCardPreview)
+async def import_character_card(
+    request: Request,
+    body: dict | None = None,
+):
+    """从上传的角色卡文件解析并返回预览.
+
+    支持 SillyTavern V1 (PNG) / V2 (PNG tEXt) / JSON 格式。
+    返回解析后的人格字段供预览确认, 确认后调用 PUT /persona/definition 保存。
+    """
+    from src.infra.character_card import CharacterCardError, create_persona_definition, parse_file
+
+    # 支持两种上传方式: raw bytes body 或 JSON body 含 file_path
+    if body and "file_path" in body:
+        file_path = body["file_path"]
+    else:
+        # 直接从 request body 读取上传的文件 bytes
+        file_path = None
+
+    if file_path:
+        # 服务端已有文件路径 (CLI / 测试场景)
+        try:
+            card = parse_file(file_path)
+        except CharacterCardError as e:
+            raise HTTPException(400, detail=str(e)) from e
+    else:
+        # 从 HTTP body 读取上传的 PNG/JSON 文件
+        raw = await request.body()
+        if not raw:
+            raise HTTPException(400, detail="No file uploaded")
+        if len(raw) > 10 * 1024 * 1024:
+            raise HTTPException(400, detail="File too large (max 10MB)")
+
+        from src.infra.character_card import parse_png, _sanitize_data, CharacterCard
+
+        if raw[:4] == b"\x89PNG":
+            metadata = parse_png(raw)
+            if metadata is None:
+                raise HTTPException(400, detail="No character metadata found in PNG")
+            data = _sanitize_data(metadata)
+            fmt = "v2" if "spec" in data else "v1"
+            card = CharacterCard(data, fmt)
+        else:
+            try:
+                import json as _json
+                metadata = _json.loads(raw.decode("utf-8"))
+                data = _sanitize_data(metadata)
+                card = CharacterCard(data, "json")
+            except (_json.JSONDecodeError, UnicodeDecodeError):
+                raise HTTPException(400, detail="Not a valid PNG or JSON file")
+
+    from src.infra.character_card import map_to_persona
+
+    identity_data = map_to_persona(card)
+    return CharacterCardPreview(
+        name=card.name,
+        source_format=card.source_format,
+        identity=PersonaIdentityBody(
+            personality=identity_data.get("personality", ""),
+            speaking_style=identity_data.get("speaking_style", ""),
+            values=identity_data.get("values", []),
+            persona_addressing=identity_data.get("persona_addressing", "角色"),
+            user_addressing=identity_data.get("user_addressing", "用户"),
+            context=identity_data.get("context", ""),
+        ),
+        has_lorebook=card.character_book is not None,
+        has_examples=bool(card.mes_example),
+    )
+
 
