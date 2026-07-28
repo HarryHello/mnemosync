@@ -105,6 +105,14 @@ async def app_lifespan(app: FastAPI):
     identity_plugins = discover_plugins()
     logger.info("已加载 %d 个身份解析插件: %s", len(identity_plugins), list(identity_plugins.keys()))
 
+    # 内部 tool 注册表 (v0.3.3)
+    from src.core.tools.internal_registry import InternalToolRegistry, set_internal_tool_registry
+    from src.core.tools.identity_binding import register_identity_binding_tools
+    internal_tools = InternalToolRegistry()
+    register_identity_binding_tools(internal_tools)
+    set_internal_tool_registry(internal_tools)
+    logger.info("已注册 %d 个内部 tool: %s", len(internal_tools.names), list(internal_tools.names))
+
     resolver = RoleResolver(llm_service_store)
     multi_forwarder = MultiForwarder(resolver)
 

@@ -101,7 +101,7 @@ def _build_graph_config(http_request: Request) -> dict[str, Any]:
     state = http_request.app.state
     configurable: dict[str, Any] = {}
     for key in ("multi_forwarder", "resolver", "memory_store",
-                "vector_store", "notification_store", "debug_bus"):
+                "vector_store", "notification_store", "debug_bus", "identity_store"):
         val = getattr(state, key, None)
         if val is not None:
             configurable[key] = val
@@ -392,6 +392,99 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     # 入站工具过滤: 在模型看到之前移除策略禁止的工具
     allowed_tools = filter_client_tools(request.tools, tool_policy)
 
+    # 注入内部 tools (身份绑定等), 与客户端 tools 合并
+    # 仅非流式: 流式无法拦截已发出的 SSE 帧重调 LLM
+    from src.core.tools.internal_registry import get_internal_tool_registry
+    internal_registry = get_internal_tool_registry()
+    internal_tool_names: set[str] = set()
+    if not internal_registry.is_empty() and not tool_transaction and not request.stream:
+        internal_tools = internal_registry.to_openai_tools()
+        allowed_tools = (allowed_tools or []) + internal_tools
+        internal_tool_names = internal_registry.names
+        logger.debug("  🔧 注入 %d 个内部 tool", len(internal_tools))
+
+    # 指令触发: 身份绑定 (可自定义指令词)
+    if not tool_transaction and actor_id:
+        bind_cmd = settings.runtime.identity_bind_command
+        bind_prefix = settings.runtime.identity_bind_confirm_prefix
+        last_user_msg = ""
+        for m in reversed(messages_dict):
+            if m.get("role") == "user":
+                last_user_msg = m.get("content", "").strip()
+                break
+        if last_user_msg == bind_cmd:
+            # 发起绑定: 生成验证码
+            from src.core.tools.identity_binding import get_binding_code_store
+            code_store = get_binding_code_store()
+            code = await code_store.generate(
+                actor_id=actor_id, space_id=space_id, display_name=current_speaker,
+            )
+            from fastapi.responses import JSONResponse
+            return JSONResponse(content={
+                "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+                "object": "chat.completion",
+                "model": main_model if (main_model := await _resolve_main_model(http_request)) else VIRTUAL_MODEL_ANY,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": f"跨平台绑定验证码: {code}\n请在另一端发送「{bind_prefix} {code}」完成绑定。验证码 5 分钟内有效。",
+                    },
+                    "finish_reason": "stop",
+                }],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            })
+        if last_user_msg.startswith(bind_prefix + " ") and len(last_user_msg.split()) == 2:
+            # 确认绑定: 校验验证码
+            input_code = last_user_msg.split(None, 1)[1].strip()
+            from src.core.tools.identity_binding import get_binding_code_store
+            code_store = get_binding_code_store()
+            entry = await code_store.verify(input_code)
+            if entry is None:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(content={
+                    "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+                    "object": "chat.completion",
+                    "model": VIRTUAL_MODEL_ANY,
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "验证码无效或已过期。"},
+                        "finish_reason": "stop",
+                    }],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                })
+            # 执行绑定
+            identity_store = _get_identity_store(http_request)
+            if identity_store:
+                target_actor_id = entry["actor_id"]
+                target_groups = await identity_store.list_actor_groups(target_actor_id)
+                current_groups = await identity_store.list_actor_groups(actor_id)
+                if current_groups:
+                    msg = "当前账号已绑定, 无法重复绑定。"
+                elif target_groups:
+                    group_id = target_groups[0].id
+                    await identity_store.bind_actor_to_group(actor_id, group_id)
+                    msg = f"绑定成功! 已加入用户组 {group_id}。"
+                else:
+                    group = await identity_store.create_group(name=None)
+                    await identity_store.bind_actor_to_group(target_actor_id, group.id)
+                    await identity_store.bind_actor_to_group(actor_id, group.id)
+                    msg = f"绑定成功! 已创建新用户组 {group.id}。"
+            else:
+                msg = "身份存储不可用, 绑定失败。"
+            from fastapi.responses import JSONResponse
+            return JSONResponse(content={
+                "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+                "object": "chat.completion",
+                "model": VIRTUAL_MODEL_ANY,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": msg},
+                    "finish_reason": "stop",
+                }],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            })
+
     main_model = await _resolve_main_model(
         http_request,
         require_tools=bool(allowed_tools),
@@ -460,6 +553,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "tool_policy": tool_policy,
         "expression_style": expression_style,
         "interaction_id": interaction_id,
+        "internal_tool_names": internal_tool_names,
         "source_user": source_user,
         "current_speaker": current_speaker,
         "actor_id": actor_id,

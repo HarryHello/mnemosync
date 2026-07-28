@@ -524,17 +524,27 @@ Checkpoint 应记录：
 已有的 `committed_sequence`、`late_arrival` 和幂等重放继续作为事后修正机制。
 多进程部署下的分布式锁不在当前范围内 (单进程 asyncio.Lock 足够)。
 
-### 8.3 跨平台身份绑定
+### 8.3 跨平台身份绑定（✅ 已实现）
 
-UserGroup 已支持管理员手动归并多个 Actor，但尚未实现：
+采用双触发模式:
 
-- 跨平台身份自动或半自动绑定；
-- 用户确认与撤销绑定；
-- 冲突身份的拆分；
-- 绑定变更后的记忆与关系迁移；
-- 身份绑定审计。
+**指令触发** (可靠兜底): 用户发送可自定义的指令词 (默认"绑定"), 服务端在 LLM 调用前拦截,
+生成 6 位验证码。另一端发送"绑定 {code}"完成确认。不调 LLM, 零成本。
 
-未经明确绑定，不得根据昵称、自然语言自述或 LLM 猜测合并身份。
+**自然语言触发** (交互增强): Mnemosync 注入内部 tool
+(`initiate_identity_binding` / `confirm_identity_binding`), 模型在对话中自然判断意图
+并调用。服务端拦截内部 tool_calls, 执行 handler, 合成 tool_result, 再调一轮 LLM
+生成自然回复。客户端永远看不到内部 tool_calls。
+
+**内部 tool 架构**: InternalToolRegistry 注册表 + handler, 可扩展其他内部能力。
+注入仅限非流式 (流式无法拦截已发出的 SSE 帧)。
+
+**绑定逻辑**: 复用 UserGroup, 把两个 Actor 归到同一组。
+验证码 5 分钟 TTL, 内存存储。
+
+**配置**: `runtime.identity_bind_command` / `runtime.identity_bind_confirm_prefix` 可自定义。
+
+未经明确绑定, 不得根据昵称或 LLM 猜测合并身份。
 
 ### 8.4 用户记忆治理
 

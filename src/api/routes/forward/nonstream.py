@@ -134,11 +134,22 @@ async def _handle_non_stream(
 
     # 出站工具过滤: 移除模型违反策略生成的工具调用
     policy = initial_state.get("tool_policy")
+    internal_names: set[str] = initial_state.get("internal_tool_names") or set()
     removed_calls: list[str] = []
     if response_message and response_message.get("tool_calls"):
+        # 剥离内部 tool_calls (不返回给客户端)
+        if internal_names:
+            original = response_message["tool_calls"]
+            response_message["tool_calls"] = [
+                tc for tc in original
+                if tc.get("function", {}).get("name") not in internal_names
+            ] or None
+            stripped = len(original) - len(response_message.get("tool_calls") or [])
+            if stripped:
+                logger.debug("  🔧 剥离 %d 个内部 tool_calls", stripped)
         # 确定性隐私检查: UUID 泄露、参数体积、JSON 合法性
         valid_calls, privacy_issues = validate_tool_arguments(
-            response_message["tool_calls"], initial_state.get("tools"),
+            response_message.get("tool_calls") or [], initial_state.get("tools"),
         )
         if privacy_issues:
             logger.debug("  🔧 工具参数检查: 移除 %s", privacy_issues)

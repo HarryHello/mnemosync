@@ -198,6 +198,9 @@ class RuntimeConfig:
     host: str = "0.0.0.0"
     port: int = 16125
     log_level: str = "info"
+    # 身份绑定指令 (用户发消息触发绑定流程的关键词)
+    identity_bind_command: str = "绑定"
+    identity_bind_confirm_prefix: str = "绑定"  # "绑定 123456" 的前缀
 
 
 @dataclass

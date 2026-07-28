@@ -349,6 +349,74 @@ async def main_dialogue_node(
             tool_choice=state.get("tool_choice"),
             parallel_tool_calls=state.get("parallel_tool_calls"),
         )
+
+        # 内部 tool 拦截: 模型调用了内部 tool 时, 服务端执行, 再调一轮 LLM
+        internal_names: set[str] = state.get("internal_tool_names") or set()
+        if dialogue.finish_reason == "tool_calls" and internal_names:
+            import json as _json
+            from src.core.tools.internal_registry import get_internal_tool_registry
+
+            registry = get_internal_tool_registry()
+            tool_calls = dialogue.message.get("tool_calls") or []
+            internal_calls = [
+                tc for tc in tool_calls
+                if tc.get("function", {}).get("name") in internal_names
+            ]
+            client_calls = [
+                tc for tc in tool_calls
+                if tc.get("function", {}).get("name") not in internal_names
+            ]
+
+            if internal_calls:
+                logger.debug("  🔧 内部 tool 拦截: %d 个", len(internal_calls))
+                # 执行内部 tool, 构建 tool_result
+                messages_with_tools = list(messages) + [dict(dialogue.message)]
+                identity_store = stores.get("identity_store")
+                for tc in internal_calls:
+                    func = tc.get("function", {})
+                    tool_name = func.get("name", "")
+                    handler_tool = registry.get(tool_name)
+                    if handler_tool is None:
+                        continue
+                    # 解析参数
+                    try:
+                        args = _json.loads(func.get("arguments") or "{}")
+                    except _json.JSONDecodeError:
+                        args = {}
+                    # 执行 handler
+                    try:
+                        result = await handler_tool.handler(
+                            actor_id=state.get("actor_id"),
+                            space_id=state.get("space_id"),
+                            display_name=state.get("current_speaker"),
+                            identity_store=identity_store,
+                            **args,
+                        )
+                    except Exception as e:
+                        result = {"success": False, "error": str(e)}
+                    messages_with_tools.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": _json.dumps(result, ensure_ascii=False),
+                    })
+                    logger.debug("  🔧 内部 tool %s 结果: %s", tool_name, result)
+
+                # 再调一轮 LLM, 让模型基于 tool_result 生成自然回复
+                logger.debug("  🚀 内部 tool 执行完毕, 再调 LLM...")
+                dialogue = await run_main_dialogue(
+                    forwarder,
+                    messages_with_tools,
+                    tools=state.get("tools"),
+                    tool_choice=None,  # 第二轮不强制工具
+                    parallel_tool_calls=state.get("parallel_tool_calls"),
+                )
+                # 第二轮如果仍有内部 tool_calls, 放弃拦截直接返回 (防死循环)
+                # 合并第一轮的客户端 tool_calls (如果有)
+                second_tool_calls = dialogue.message.get("tool_calls") or []
+                if client_calls and not second_tool_calls:
+                    dialogue.message["tool_calls"] = client_calls
+                    dialogue.finish_reason = "tool_calls"
+
         content = dialogue.message.get("content")
         response = content if isinstance(content, str) else ""
 
