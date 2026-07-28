@@ -16,12 +16,13 @@ upstream_status 等), UI 按 category 决定是否展开。
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Iterator
+from datetime import datetime, UTC
+from typing import Any
 
 import aiosqlite
+
+from src.persistence.base import SqliteStore
 
 
 @dataclass
@@ -38,36 +39,10 @@ class Notification:
     read_at: datetime | None
 
 
-class NotificationStore:
+class NotificationStore(SqliteStore):
     """通知的 SQLite 存储 (append + 标记已读 + 删除)."""
 
-    def __init__(self, db_path: str) -> None:
-        self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
-
-    async def connect(self) -> None:
-        if self._db is not None:
-            return
-        from pathlib import Path
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        await self._init_schema(self._db)
-        await self._db.commit()
-
-    async def close(self) -> None:
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
-
-    @asynccontextmanager
-    async def _conn(self) -> Iterator[aiosqlite.Connection]:
-        if self._db is not None:
-            yield self._db
-        else:
-            async with aiosqlite.connect(self.db_path) as db:
-                yield db
+    _enable_foreign_keys = False
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
@@ -111,7 +86,7 @@ class NotificationStore:
             raise ValueError(f"invalid level: {level!r}")
         if not category or not title:
             raise ValueError("category / title must be non-empty")
-        stamp = datetime.now(timezone.utc).isoformat()
+        stamp = datetime.now(UTC).isoformat()
         meta_json = json.dumps(meta, ensure_ascii=False) if meta else None
         async with self._conn() as db:
             cur = await db.execute(
@@ -158,7 +133,7 @@ class NotificationStore:
 
     async def mark_read(self, notification_id: int) -> bool:
         """标记单条已读, 返回是否命中未读记录."""
-        stamp = datetime.now(timezone.utc).isoformat()
+        stamp = datetime.now(UTC).isoformat()
         async with self._conn() as db:
             cur = await db.execute(
                 "UPDATE notifications SET read_at = ? "
@@ -170,7 +145,7 @@ class NotificationStore:
 
     async def mark_all_read(self) -> int:
         """标记全部已读, 返回受影响条数."""
-        stamp = datetime.now(timezone.utc).isoformat()
+        stamp = datetime.now(UTC).isoformat()
         async with self._conn() as db:
             cur = await db.execute(
                 "UPDATE notifications SET read_at = ? WHERE read_at IS NULL",
@@ -207,7 +182,7 @@ class NotificationStore:
 
     @staticmethod
     def _row_to_notification(row: tuple) -> Notification:
-        created = datetime.fromisoformat(row[1]) if row[1] else datetime.now(timezone.utc)
+        created = datetime.fromisoformat(row[1]) if row[1] else datetime.now(UTC)
         read = datetime.fromisoformat(row[7]) if row[7] else None
         meta_json = row[6]
         meta: dict[str, Any] | None = None

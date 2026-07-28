@@ -151,19 +151,10 @@ watch(() => props.active, (active) => {
       subtitle="按重要度/衰减规则汰换，列头可点击排序 / 过滤。"
     >
       <template #actions>
-        <el-popconfirm
-          title="确认批量删除当前筛选条件下的所有记忆？"
-          confirm-button-text="删除"
-          cancel-button-text="取消"
-          @confirm="onBatchDelete"
-        >
-          <template #reference>
-            <el-button type="danger" plain :disabled="total === 0" :loading="loading">
-              <el-icon><Delete /></el-icon>
-              <span>批量删除</span>
-            </el-button>
-          </template>
-        </el-popconfirm>
+        <el-button type="danger" plain :disabled="total === 0" :loading="loading" @click="onBatchDelete">
+          <el-icon><Delete /></el-icon>
+          <span>批量删除</span>
+        </el-button>
         <el-button :loading="loading" @click="refresh">
           <el-icon><Refresh /></el-icon>
           <span>刷新</span>

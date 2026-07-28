@@ -6,11 +6,10 @@
 from __future__ import annotations
 
 import aiosqlite
-import base64
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Optional
 
-from cryptography.fernet import Fernet, InvalidToken
+from src.infra.crypto import FernetEncryptor
 
 from .models import (
     LLMServiceProvider,
@@ -31,42 +30,23 @@ class LLMServiceStore:
 
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self._fernet: Optional[Fernet] = None
+        self._encryptor = FernetEncryptor(
+            db_path=self.db_path,
+            config_table="config",
+            key_id=self._ENCRYPTION_KEY_ID,
+            raise_on_decrypt_failure=True,
+        )
 
     # ============ 加密 ============
 
-    async def _load_or_create_key(self) -> bytes:
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT value FROM config WHERE key = ?", (self._ENCRYPTION_KEY_ID,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row and row[0]:
-                    return base64.urlsafe_b64decode(row[0])
-            key = Fernet.generate_key()
-            await db.execute(
-                "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
-                (self._ENCRYPTION_KEY_ID, base64.urlsafe_b64encode(key).decode()),
-            )
-            await db.commit()
-            return key
-
-    async def _get_fernet(self) -> Fernet:
-        if self._fernet is None:
-            key = await self._load_or_create_key()
-            self._fernet = Fernet(key)
-        return self._fernet
-
     async def _encrypt(self, plaintext: str) -> str:
-        f = await self._get_fernet()
-        return f.encrypt(plaintext.encode("utf-8")).decode("utf-8")
+        return await self._encryptor.encrypt(plaintext)
 
     async def _decrypt(self, ciphertext: str) -> str:
-        f = await self._get_fernet()
-        try:
-            return f.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
-        except InvalidToken:
+        result = await self._encryptor.decrypt(ciphertext)
+        if result is None:
             raise ValueError("API Key 解密失败（密钥损坏或数据被篡改）")
+        return result
 
     # ============ 初始化 ============
 
@@ -120,29 +100,15 @@ class LLMServiceStore:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_role_priority ON role_bindings(role, priority)"
             )
-            await self._ensure_role_binding_columns(db)
+            # 命名迁移: 幂等补列 (旧库升级用; 新库 CREATE TABLE 已包含全部列, 自动跳过)
+            from src.persistence.migrations import MigrationRunner, add_column_if_missing
+
+            await MigrationRunner([
+                ("001_add_context_length", add_column_if_missing("role_bindings", "context_length", "INTEGER")),
+                ("002_add_embedding_dim", add_column_if_missing("role_bindings", "embedding_dim", "INTEGER")),
+                ("003_add_send_dimensions", add_column_if_missing("role_bindings", "send_dimensions", "INTEGER NOT NULL DEFAULT 0")),
+            ]).apply(db)
             await db.commit()
-
-    async def _ensure_role_binding_columns(self, db) -> None:
-        """迁移: 幂等地为 role_bindings 表补新列.
-
-        SQLite ALTER TABLE ADD COLUMN 是 O(1) 元数据更新.
-
-        v0.2.4: context_length / embedding_dim
-        v0.2.8: send_dimensions (是否透传 embedding_dim 给上游)
-        """
-        async with db.execute("PRAGMA table_info(role_bindings)") as cur:
-            cols = {r[1] for r in await cur.fetchall()}
-        for col in ("context_length", "embedding_dim"):
-            if col not in cols:
-                await db.execute(
-                    f"ALTER TABLE role_bindings ADD COLUMN {col} INTEGER"
-                )
-        if "send_dimensions" not in cols:
-            await db.execute(
-                "ALTER TABLE role_bindings ADD COLUMN send_dimensions "
-                "INTEGER NOT NULL DEFAULT 0"
-            )
 
     # ============ 服务商 CRUD ============
 
@@ -271,7 +237,7 @@ class LLMServiceStore:
     @staticmethod
     def _parse_dt(v: Optional[str]) -> datetime:
         if v is None:
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
         return datetime.fromisoformat(v)
 
     # ============ 角色绑定 (role_bindings) ============
@@ -369,7 +335,7 @@ class LLMServiceStore:
                         (role.value,),
                     )
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             await db.execute(
                 "INSERT INTO role_bindings "
                 "(role, priority, service_id, model, created_at, "

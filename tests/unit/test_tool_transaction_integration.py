@@ -92,11 +92,11 @@ async def test_non_stream_tool_result_appends_validated_transaction_without_new_
     }
 
     with (
-        patch("src.api.routes.forward.get_settings", return_value=_settings()),
-        patch("src.api.routes.forward._resolve_main_candidate", new=AsyncMock(return_value=None)),
-        patch("src.api.routes.forward.build_short_term_history", new=AsyncMock(return_value=_built())),
-        patch("src.api.routes.forward._get_compiled_graph", return_value=graph),
-        patch("src.api.routes.forward._record_idempotency", new=AsyncMock()),
+        patch("src.api.routes.forward.nonstream.get_settings", return_value=_settings()),
+        patch("src.api.routes.forward.nonstream._resolve_main_candidate", new=AsyncMock(return_value=None)),
+        patch("src.api.routes.forward.nonstream.build_short_term_history", new=AsyncMock(return_value=_built())),
+        patch("src.api.routes.forward.nonstream._get_compiled_graph", return_value=graph),
+        patch("src.api.routes.forward.nonstream._record_idempotency", new=AsyncMock()),
     ):
         response = await _handle_non_stream(http_request, initial_state, request)
 
@@ -156,15 +156,15 @@ async def test_stream_tool_result_appends_validated_transaction_to_upstream_mess
     )
 
     with (
-        patch("src.api.routes.forward.get_settings", return_value=_settings()),
-        patch("src.api.routes.forward._resolve_main_candidate", new=AsyncMock(return_value=None)),
-        patch("src.api.routes.forward.SqliteMemoryStore", return_value=memory_store),
-        patch("src.api.routes.forward.VectorStore"),
-        patch("src.api.routes.forward.MemoryRetriever") as retriever_cls,
-        patch("src.api.routes.forward.build_short_term_history", new=AsyncMock(return_value=_built())),
-        patch("src.api.routes.forward.build_main_dialogue_messages", return_value=[]) as build_messages,
-        patch("src.api.routes.forward._record_idempotency", new=AsyncMock()),
-        patch("src.api.routes.forward._run_memory_graph", new=AsyncMock()),
+        patch("src.api.routes.forward.stream.get_settings", return_value=_settings()),
+        patch("src.api.routes.forward.stream._resolve_main_candidate", new=AsyncMock(return_value=None)),
+        patch("src.api.routes.forward.stream.SqliteMemoryStore", return_value=memory_store),
+        patch("src.api.routes.forward.stream.VectorStore"),
+        patch("src.api.routes.forward.stream.MemoryRetriever") as retriever_cls,
+        patch("src.api.routes.forward.stream.build_short_term_history", new=AsyncMock(return_value=_built())),
+        patch("src.api.routes.forward.stream.build_main_dialogue_messages", return_value=[]) as build_messages,
+        patch("src.api.routes.forward.stream._record_idempotency", new=AsyncMock()),
+        patch("src.api.routes.forward.stream._run_memory_graph", new=AsyncMock()),
     ):
         retriever_cls.return_value.search = AsyncMock(return_value=[])
         response = await _handle_stream(http_request, initial_state, request, False)

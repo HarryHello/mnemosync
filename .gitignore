@@ -6,6 +6,8 @@ __pycache__/
 *.pyc
 data/
 *.db
+*.db-shm
+*.db-wal
 .env
 .env.local
 config.local.toml
@@ -18,4 +20,10 @@ htmlcov/
 .DS_Store
 .qwen
 .ai
-/.qwen/
+tmp/
+.codegraph/
+node_modules/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

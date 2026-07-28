@@ -6,9 +6,7 @@ actors / user_groups / actor_group_memberships / identity_strategies 四张表�
 from __future__ import annotations
 
 import secrets
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Iterator
+from datetime import datetime, UTC
 
 import aiosqlite
 
@@ -17,38 +15,13 @@ from src.core.identity.models import (
     IdentityStrategy,
     UserGroup,
 )
+from src.persistence.base import SqliteStore
 
 
-class SqliteIdentityStore:
+class SqliteIdentityStore(SqliteStore):
     """身份数据的 SQLite 存储."""
 
-    def __init__(self, db_path: str) -> None:
-        self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
-
-    async def connect(self) -> None:
-        if self._db is not None:
-            return
-        from pathlib import Path
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        await self._init_schema(self._db)
-        await self._db.commit()
-
-    async def close(self) -> None:
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
-
-    @asynccontextmanager
-    async def _conn(self) -> Iterator[aiosqlite.Connection]:
-        if self._db is not None:
-            yield self._db
-        else:
-            async with aiosqlite.connect(self.db_path) as db:
-                yield db
+    _enable_foreign_keys = False
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
@@ -121,7 +94,7 @@ class SqliteIdentityStore:
                 row = await cur.fetchone()
             if row:
                 # 存在则返回
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 # 如果 display_name 更新了，写入
                 if display_name and row[3] != display_name:
                     await db.execute(
@@ -137,7 +110,7 @@ class SqliteIdentityStore:
                     updated_at=_parse_dt(row[6]),
                 )
             # 不存在则创建
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             actor_id = f"actor_{secrets.token_hex(12)}"
             await db.execute(
                 "INSERT INTO actors (id, external_key, frontend, display_name, metadata, created_at, updated_at) "
@@ -211,7 +184,7 @@ class SqliteIdentityStore:
     # ============ UserGroup CRUD ============
 
     async def create_group(self, name: str | None = None) -> UserGroup:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         gid = f"group_{secrets.token_hex(12)}"
         async with self._conn() as db:
             await db.execute(
@@ -256,7 +229,7 @@ class SqliteIdentityStore:
 
     async def bind_actor_to_group(self, actor_id: str, group_id: str) -> bool:
         """绑定 Actor 到 UserGroup。如果已存在返回 False。"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         async with self._conn() as db:
             try:
                 await db.execute(
@@ -398,7 +371,7 @@ class SqliteIdentityStore:
     async def create_strategy(
         self, name: str, strategy_type: str, config: str = "{}",
     ) -> IdentityStrategy:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sid = f"strategy_{secrets.token_hex(12)}"
         async with self._conn() as db:
             await db.execute(

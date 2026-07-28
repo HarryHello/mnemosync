@@ -97,6 +97,7 @@ async def test_main_dialogue_node_generates_when_response_missing():
                 "source_user": "default",
                 "messages": [{"role": "user", "content": "你好"}],
                 "extracted_new": [],
+                "persona_id": "default",
             }
         )
 
@@ -177,6 +178,7 @@ async def test_main_dialogue_node_forwards_client_tools_to_main_only():
                 "tools": tools,
                 "tool_choice": "auto",
                 "parallel_tool_calls": False,
+                "persona_id": "default",
             }
         )
 

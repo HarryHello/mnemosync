@@ -6,19 +6,19 @@ SQLite 存储记忆元数据 + 关系状态.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 import aiosqlite
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Any, Protocol
 
 from src.core.memory.models import (
-    DecayState,
     MemoryEntry,
     MemoryType,
     Relationship,
     RelationshipAuditEntry,
     Visibility,
 )
+from src.persistence.base import SqliteStore
 
 
 def _dt(v: datetime | None) -> str | None:
@@ -33,21 +33,7 @@ def _parse_dt(v: str | None) -> datetime | None:
     return datetime.fromisoformat(v)
 
 
-class MemoryStore(Protocol):
-    """记忆存储协议."""
-
-    async def init_db(self) -> None: ...
-    async def save(self, entry: MemoryEntry) -> None: ...
-    async def get_by_id(self, entry_id: str) -> MemoryEntry | None: ...
-    async def delete(self, entry_id: str) -> bool: ...
-    async def list_permanent(self, source_user: str, limit: int = 7) -> list[MemoryEntry]: ...
-    async def list_for_decay(self, skip_hours: int = 24, limit: int = 50) -> list[MemoryEntry]: ...
-    async def update_priority(self, entry_id: str, priority: float, is_forgotten: bool) -> None: ...
-    async def mark_accessed(self, entry_id: str) -> None: ...
-    async def count_permanent(self, source_user: str) -> int: ...
-
-
-class SqliteMemoryStore:
+class SqliteMemoryStore(SqliteStore):
     """SQLite 记忆存储实现.
 
     使用方式:
@@ -55,35 +41,6 @@ class SqliteMemoryStore:
         所有方法共用同一条 aiosqlite 连接, 无每请求 open/close 开销.
       * 短连接 (CLI / 一次性脚本 / 测试): 不调 ``connect()``, 每次方法内部临时开连接 (旧行为).
     """
-
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
-
-    async def connect(self) -> None:
-        """建立长连接并初始化 schema (幂等)."""
-        if self._db is not None:
-            return
-        self._db = await aiosqlite.connect(self.db_path)
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        await self._db.execute("PRAGMA foreign_keys=ON")
-        await self._init_schema(self._db)
-        await self._db.commit()
-
-    async def close(self) -> None:
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
-
-    @asynccontextmanager
-    async def _conn(self):
-        """内部连接上下文: 长连接模式复用 self._db, 否则临时开连接 (旧行为)."""
-        if self._db is not None:
-            yield self._db
-        else:
-            async with aiosqlite.connect(self.db_path) as db:
-                yield db
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
@@ -124,11 +81,6 @@ class SqliteMemoryStore:
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_created_at ON memory_entries(created_at DESC)"
         )
-        # v0.3.0: 向后兼容迁移
-        try:
-            await db.execute("ALTER TABLE memory_entries ADD COLUMN space_id TEXT")
-        except aiosqlite.OperationalError:
-            pass
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_mem_space ON memory_entries(space_id)"
         )
@@ -146,15 +98,6 @@ class SqliteMemoryStore:
                 PRIMARY KEY (persona_id, user_id)
             )
         """)
-        # v0.2.10: 动态称呼演化. NULL = 沿用 TOML 基线.
-        # SQLite 不支持 ADD COLUMN IF NOT EXISTS, 手动查 PRAGMA table_info.
-        async with db.execute("PRAGMA table_info(relationships)") as cur:
-            existing_cols = {row[1] async for row in cur}
-        for col in ("persona_addressing", "user_addressing", "context"):
-            if col not in existing_cols:
-                await db.execute(
-                    f"ALTER TABLE relationships ADD COLUMN {col} TEXT"
-                )
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS relationship_audit_log (
@@ -173,6 +116,16 @@ class SqliteMemoryStore:
             "CREATE INDEX IF NOT EXISTS idx_audit_persona_user "
             "ON relationship_audit_log(persona_id, user_id, changed_at DESC)"
         )
+
+        # 命名迁移: 幂等 ADD COLUMN (捕获 duplicate column 错误)
+        from src.persistence.migrations import MigrationRunner, add_column_if_missing
+
+        await MigrationRunner([
+            ("001_add_space_id", add_column_if_missing("memory_entries", "space_id", "TEXT")),
+            ("002_add_persona_addressing", add_column_if_missing("relationships", "persona_addressing", "TEXT")),
+            ("003_add_user_addressing", add_column_if_missing("relationships", "user_addressing", "TEXT")),
+            ("004_add_context", add_column_if_missing("relationships", "context", "TEXT")),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         """兼容旧接口: 幂等地初始化 schema. 长连接模式下 connect() 已包含此步骤."""
@@ -255,10 +208,9 @@ class SqliteMemoryStore:
             conditions.append("memory_type = ?")
             params.append(memory_type)
         if before:
-            from datetime import timezone as _tz
-            ts = before if before.tzinfo else before.replace(tzinfo=_tz.utc)
+            ts = before if before.tzinfo else before.replace(tzinfo=UTC)
             conditions.append("created_at < ?")
-            params.append(ts.astimezone(_tz.utc).isoformat())
+            params.append(ts.astimezone(UTC).isoformat())
         where = " AND ".join(conditions)
         async with self._conn() as db:
             cur = await db.execute(
@@ -326,9 +278,7 @@ class SqliteMemoryStore:
 
     async def list_for_decay(self, skip_hours: int = 24, limit: int = 50) -> list[MemoryEntry]:
         """列出待衰减评估的普通记忆（跳过 skip_hours 小时内新建的）."""
-        from datetime import timedelta
-
-        threshold = (datetime.now(timezone.utc) - timedelta(hours=skip_hours)).isoformat()
+        threshold = (datetime.now(UTC) - timedelta(hours=skip_hours)).isoformat()
         async with self._conn() as db:
             async with db.execute(
                 """
@@ -358,7 +308,7 @@ class SqliteMemoryStore:
             await db.commit()
 
     async def mark_accessed(self, entry_id: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         async with self._conn() as db:
             await db.execute(
                 """
@@ -442,13 +392,13 @@ class SqliteMemoryStore:
             where.append("memory_type = ?")
             params.append(memory_type)
         if before:
-            ts = before if before.tzinfo else before.replace(tzinfo=timezone.utc)
+            ts = before if before.tzinfo else before.replace(tzinfo=UTC)
             where.append("created_at < ?")
-            params.append(ts.astimezone(timezone.utc).isoformat())
+            params.append(ts.astimezone(UTC).isoformat())
         if after:
-            ts = after if after.tzinfo else after.replace(tzinfo=timezone.utc)
+            ts = after if after.tzinfo else after.replace(tzinfo=UTC)
             where.append("created_at > ?")
-            params.append(ts.astimezone(timezone.utc).isoformat())
+            params.append(ts.astimezone(UTC).isoformat())
         where_sql = " AND ".join(where)
 
         async with self._conn() as db:
@@ -566,7 +516,7 @@ class SqliteMemoryStore:
         if all(v is None for v in proposals.values()):
             raise ValueError("至少需要传入一个待更新字段")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         audit_entries: list[RelationshipAuditEntry] = []
         async with self._conn() as db:
             # 读现状: 若无 relationship 行则创建 stranger 基线
@@ -599,9 +549,9 @@ class SqliteMemoryStore:
                         new_rel.notes,
                     ),
                 )
-                current = {k: None for k in self._ADDRESSING_FIELDS}
+                current = dict.fromkeys(self._ADDRESSING_FIELDS)
             else:
-                current = dict(zip(self._ADDRESSING_FIELDS, row))
+                current = dict(zip(self._ADDRESSING_FIELDS, row, strict=False))
 
             for field_name, new_val in proposals.items():
                 if new_val is None:
@@ -670,7 +620,7 @@ class SqliteMemoryStore:
                 id=r[0],
                 persona_id=r[1],
                 user_id=r[2],
-                changed_at=_parse_dt(r[3]) or datetime.now(timezone.utc),
+                changed_at=_parse_dt(r[3]) or datetime.now(UTC),
                 source=r[4],
                 field_name=r[5],
                 old_value=r[6],
@@ -767,7 +717,7 @@ class SqliteMemoryStore:
             custom_policies=row[11].split("|") if row[11] else [],
             emotional_tags=row[12].split("|") if row[12] else [],
             related_memories=row[13].split("|") if row[13] else [],
-            created_at=_parse_dt(row[14]) or datetime.now(timezone.utc),
+            created_at=_parse_dt(row[14]) or datetime.now(UTC),
             last_accessed=_parse_dt(row[15]),
             expires_at=_parse_dt(row[16]),
             space_id=row[17] if len(row) > 17 else None,

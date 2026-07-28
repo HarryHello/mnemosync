@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
 
+from src.core.config import get_settings
 from src.core.memory.reindex import ReindexProgress
 from src.core.models.resolver import RoleResolver
 from src.infra.debug_bus import DebugEventBus
@@ -31,28 +32,6 @@ from src.persistence.identity_store import SqliteIdentityStore
 logger = logging.getLogger(__name__)
 
 
-# 与旧代码保持一致的默认路径 (相对项目根). CLI 已把 cwd 切到项目根.
-AUTH_DB_PATH = "data/auth.db"
-API_KEY_DB_PATH = "data/api_keys.db"
-HTTP_LOG_DB_PATH = "data/http_logs.db"
-LLM_SERVICE_DB_PATH = "data/llm_service.db"
-NOTIFICATION_DB_PATH = "data/notifications.db"
-IDENTITY_DB_PATH = "data/identity.db"
-IDEMPOTENCY_DB_PATH = "data/idempotency.db"
-
-
-def _memory_db_path() -> str:
-    from src.core.config import get_settings
-
-    return str(get_settings().storage.memory_db_abs)
-
-
-def _conversation_db_path() -> str:
-    from src.core.config import get_settings
-
-    return str(get_settings().storage.conversation_db_abs)
-
-
 async def _conversation_prune_loop(
     store: SqliteConversationStore, window_days: int
 ) -> None:
@@ -60,7 +39,7 @@ async def _conversation_prune_loop(
     interval = 24 * 3600
     # 启动即清一次, 避免服务器长时间不重启导致老数据堆积
     try:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+        cutoff = datetime.now(UTC) - timedelta(days=window_days)
         n = await store.delete_before(cutoff)
         if n > 0:
             logger.info(
@@ -73,7 +52,7 @@ async def _conversation_prune_loop(
     while True:
         try:
             await asyncio.sleep(interval)
-            cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+            cutoff = datetime.now(UTC) - timedelta(days=window_days)
             n = await store.delete_before(cutoff)
             if n > 0:
                 logger.info(
@@ -91,21 +70,24 @@ async def app_lifespan(app: FastAPI):
     """应用启动 / 关闭钩子.
 
     启动:
-      * 打开 4 个 SQLite Store 的长连接 (WAL + NORMAL 同步).
+      * 打开 SQLite Store 的长连接 (WAL + NORMAL 同步).
       * 每个 store 在 connect() 内幂等地建表.
       * HttpLogStore 附带一个后台 asyncio.Task 消费写入队列.
     关闭:
       * 逆序 close, HttpLogStore flush 剩余日志.
     """
-    auth_store = SqliteAuthStore(AUTH_DB_PATH)
-    api_key_store = SqliteApiKeyStore(API_KEY_DB_PATH)
-    memory_store = SqliteMemoryStore(_memory_db_path())
-    http_log_store = HttpLogStore(HTTP_LOG_DB_PATH)
-    llm_service_store = LLMServiceStore(LLM_SERVICE_DB_PATH)
-    conversation_store = SqliteConversationStore(_conversation_db_path())
-    notification_store = NotificationStore(NOTIFICATION_DB_PATH)
-    identity_store = SqliteIdentityStore(IDENTITY_DB_PATH)
-    idempotency_store = SqliteIdempotencyStore(IDEMPOTENCY_DB_PATH)
+    settings = get_settings()
+    storage = settings.storage
+
+    auth_store = SqliteAuthStore(str(storage.auth_db_abs))
+    api_key_store = SqliteApiKeyStore(str(storage.api_key_db_abs))
+    memory_store = SqliteMemoryStore(str(storage.memory_db_abs))
+    http_log_store = HttpLogStore(str(storage.http_log_db_abs))
+    llm_service_store = LLMServiceStore(str(storage.llm_db_abs))
+    conversation_store = SqliteConversationStore(str(storage.conversation_db_abs))
+    notification_store = NotificationStore(str(storage.notification_db_abs))
+    identity_store = SqliteIdentityStore(str(storage.identity_db_abs))
+    idempotency_store = SqliteIdempotencyStore(str(storage.idempotency_db_abs))
 
     await auth_store.connect()
     await api_key_store.connect()
@@ -126,11 +108,7 @@ async def app_lifespan(app: FastAPI):
     multi_forwarder = MultiForwarder(resolver)
 
     # v0.2.4: 向量库 + reindex 进度单例. 向量库路径来自 settings.
-    from src.core.config import get_settings as _get_settings
-    vs_settings = _get_settings()
-    vector_store = VectorStore(
-        str(vs_settings.storage.chroma_dir_abs)
-    )
+    vector_store = VectorStore(str(storage.chroma_dir_abs))
     reindex_progress = ReindexProgress()
 
     # 调试面板事件总线. 订阅数掉到 0 且 grace 到期时清理 panel-debug key.
@@ -169,10 +147,8 @@ async def app_lifespan(app: FastAPI):
     app.state.identity_plugins = identity_plugins
 
     # 后台任务: 每 24h 清理窗外对话流水
-    from src.core.config import get_settings as _gs
-    _window_days = _gs().storage.short_term_days
     prune_task = asyncio.create_task(
-        _conversation_prune_loop(conversation_store, _window_days),
+        _conversation_prune_loop(conversation_store, storage.short_term_days),
         name="conversation-prune-loop",
     )
     app.state.conversation_prune_task = prune_task

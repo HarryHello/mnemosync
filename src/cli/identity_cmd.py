@@ -210,8 +210,8 @@ def _cmd_strategy_update(args: argparse.Namespace) -> int:
             name = args.name if args.name else existing.name
             config = new_config if new_config is not None else existing.config
             is_active = bool(args.active) if args.active is not None else existing.is_active
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
+            from datetime import datetime, UTC
+            now = datetime.now(UTC)
             async with store._conn() as db:  # noqa: SLF001 — CLI 与 store 同仓维护
                 await db.execute(
                     "UPDATE identity_strategies SET name = ?, config = ?, is_active = ?, updated_at = ? "

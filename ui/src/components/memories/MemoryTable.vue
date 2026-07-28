@@ -8,14 +8,11 @@ const props = defineProps<{
   sortBy?: string
   sortOrder?: 'asc' | 'desc'
   typeFilter?: string[]
-  pageSize?: number
 }>()
 
 const emit = defineEmits<{
   delete: [row: Memory]
   openDetail: [row: Memory]
-  pageChange: [page: number]
-  pageSizeChange: [size: number]
   sortChange: [evt: { prop: string | null; order: string | null }]
   filterChange: [filters: Record<string, unknown[]>]
 }>()

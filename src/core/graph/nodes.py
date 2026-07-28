@@ -3,6 +3,10 @@
 每个节点是一个函数: 接收 state, 返回 state 的部分更新.
 所有 LLM 调用统一走 ``MultiForwarder`` + ``RoleResolver``, 角色 → 模型由
 ``role_bindings`` 表决定, 节点内无任何硬编码模型.
+
+v0.3.2 改进: 共享 store 通过 LangGraph ``config["configurable"]`` 传入,
+避免每次节点执行新建 SQLite 连接. CLI 等无 config 的调用路径仍回退到
+懒加载 (从 settings 构建临时 store), 保持向后兼容.
 """
 
 from __future__ import annotations
@@ -10,7 +14,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.core.memory.trigger_reason import infer_trigger_reason
+from langchain_core.runnables import RunnableConfig
+
 from src.core.agents import (
     run_main_dialogue,
     run_memory_analysis,
@@ -24,6 +29,7 @@ from src.core.memory import (
     format_relationship,
 )
 from src.core.memory.audience import RetrievalContext
+from src.core.memory.trigger_reason import infer_trigger_reason
 from src.core.models.resolver import RoleResolver
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.store import LLMServiceStore
@@ -40,9 +46,46 @@ from .state import AgentState
 
 logger = logging.getLogger(__name__)
 
-# 与 src.api.lifespan 保持一致的默认路径 (相对项目根)
-_LLM_SERVICE_DB_PATH = "data/llm_service.db"
-_NOTIFICATION_DB_PATH = "data/notifications.db"
+
+def _get_stores(config: RunnableConfig | None) -> dict[str, Any]:
+    """从 LangGraph config 中提取共享 store 实例.
+
+    config["configurable"] 中可能包含的键:
+      - multi_forwarder: MultiForwarder
+      - resolver: RoleResolver
+      - memory_store: SqliteMemoryStore
+      - vector_store: VectorStore
+      - notification_store: NotificationStore
+
+    服务器模式下这些由 lifespan 注入 config, 共享长连接;
+    CLI/测试模式下未提供时回退到懒加载 (临时构建短连接, 用完关闭).
+    """
+    configurable = (config or {}).get("configurable", {}) if config else {}
+    stores: dict[str, Any] = dict(configurable)
+
+    if "multi_forwarder" not in stores:
+        stores["multi_forwarder"] = _make_multi_forwarder()
+        stores["_owns_forwarder"] = True
+    if "resolver" not in stores:
+        _, stores["resolver"] = _make_multi_forwarder_with_resolver()
+    if "memory_store" not in stores:
+        s = get_settings()
+        stores["memory_store"] = SqliteMemoryStore(str(s.storage.memory_db_abs))
+    if "vector_store" not in stores:
+        s = get_settings()
+        stores["vector_store"] = VectorStore(str(s.storage.chroma_dir_abs))
+    if "notification_store" not in stores:
+        try:
+            s = get_settings()
+            stores["notification_store"] = NotificationStore(
+                str(s.storage.notification_db_abs),
+            )
+        except (AttributeError, Exception):
+            # 测试环境可能 mock 了 settings 但不含 notification_db_abs;
+            # 不使用通知的节点不受影响
+            stores["notification_store"] = None
+
+    return stores
 
 
 def _resolve_addressing(rel, settings) -> tuple[str, str, str]:
@@ -79,7 +122,8 @@ def _retrieval_context(state: AgentState, rel=None) -> RetrievalContext:
 
 def _make_multi_forwarder_with_resolver() -> tuple[MultiForwarder, RoleResolver]:
     """构建 MultiForwarder + resolver 对 (共享同一 store)."""
-    store = LLMServiceStore(_LLM_SERVICE_DB_PATH)
+    from src.core.config import get_settings
+    store = LLMServiceStore(str(get_settings().storage.llm_db_abs))
     resolver = RoleResolver(store)
     return MultiForwarder(resolver), resolver
 
@@ -127,7 +171,9 @@ async def parse_request_node(state: AgentState) -> dict[str, Any]:
     return {"extracted_new": extracted, "source_user": source_user}
 
 
-async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
+async def proxy_thinking_node(
+    state: AgentState, config: RunnableConfig | None = None,
+) -> dict[str, Any]:
     """代理思考 Agent (CoT, 可选)."""
     if not state.get("proxy_thinking_enabled"):
         return {}
@@ -135,15 +181,14 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
     logger.debug("=" * 60)
     logger.debug("🤔 [proxy_thinking] 开始处理")
 
-    settings = get_settings()
-    forwarder = _make_multi_forwarder()
+    stores = _get_stores(config)
+    forwarder: MultiForwarder = stores["multi_forwarder"]
+    memory_store: SqliteMemoryStore = stores["memory_store"]
+    owns_fwd = stores.get("_owns_forwarder", False)
     try:
-        memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-        await memory_store.init_db()
-
         source_user = state["source_user"]
         if source_user:
-            rel = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
+            rel = await memory_store.get_relationship(state["persona_id"], source_user)
             perms = await memory_store.list_permanent(
                 source_user, limit=5, space_id=state.get("space_id"),
             )
@@ -181,10 +226,13 @@ async def proxy_thinking_node(state: AgentState) -> dict[str, Any]:
         logger.warning("代理思考失败, 退化为正常模式: %s", e)
         return {"errors": [f"proxy_thinking: {e}"]}
     finally:
-        await forwarder.close()
+        if owns_fwd:
+            await forwarder.close()
 
 
-async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
+async def main_dialogue_node(
+    state: AgentState, config: RunnableConfig | None = None,
+) -> dict[str, Any]:
     """主对话 Agent: 加载记忆 + 拼装上下文 + 生成回复."""
     # 流式模式下 _run_memory_graph 已预填充 response: 直接返回, 不重复调用 LLM
     if "response" in state and state["response"] is not None:
@@ -197,10 +245,11 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
 
     settings = get_settings()
     source_user = state["source_user"]
-    forwarder = _make_multi_forwarder()
-    memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-    await memory_store.init_db()
-    vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
+    stores = _get_stores(config)
+    forwarder: MultiForwarder = stores["multi_forwarder"]
+    memory_store: SqliteMemoryStore = stores["memory_store"]
+    vector_store: VectorStore = stores["vector_store"]
+    owns_fwd = stores.get("_owns_forwarder", False)
 
     logger.debug("=" * 60)
     logger.debug("🤖 [main_dialogue] 开始处理")
@@ -209,7 +258,7 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
     try:
         from src.core.memory.audience import AudienceFilter
 
-        rel = await memory_store.get_relationship(state.get("persona_id", "default"), source_user) if source_user else None
+        rel = await memory_store.get_relationship(state["persona_id"], source_user) if source_user else None
         logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
         retrieval_ctx = _retrieval_context(state, rel)
 
@@ -337,10 +386,13 @@ async def main_dialogue_node(state: AgentState) -> dict[str, Any]:
             result["upstream_usage"] = dialogue.usage
         return result
     finally:
-        await forwarder.close()
+        if owns_fwd:
+            await forwarder.close()
 
 
-async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
+async def memory_analysis_node(
+    state: AgentState, config: RunnableConfig | None = None,
+) -> dict[str, Any]:
     """记忆分析 Agent: ReAct, 提取候选记忆. 衰减由确定性公式处理."""
     if state.get("finish_reason") == "tool_calls":
         logger.debug("🧠 [memory_analysis] 工具中间轮, 跳过")
@@ -353,15 +405,18 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         logger.debug("🧠 [memory_analysis] 非归属模式, 跳过")
         return {"new_memories": [], "decay_evaluations": []}
 
-    forwarder, resolver = _make_multi_forwarder_with_resolver()
-    memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-    await memory_store.init_db()
+    stores = _get_stores(config)
+    forwarder: MultiForwarder = stores["multi_forwarder"]
+    resolver: RoleResolver = stores["resolver"]
+    memory_store: SqliteMemoryStore = stores["memory_store"]
+    vector_store: VectorStore = stores["vector_store"]
+    notification_store: NotificationStore = stores["notification_store"]
+    owns_fwd = stores.get("_owns_forwarder", False)
 
     logger.debug("=" * 60)
     logger.debug("🧠 [memory_analysis] 开始处理")
 
     try:
-        vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
         retriever = MemoryRetriever(forwarder, vector_store, memory_store)
 
         extracted = state.get("extracted_new", [])
@@ -372,7 +427,7 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
             logger.debug("  ⚠️ 无对话内容, 跳过")
             return {"new_memories": [], "decay_evaluations": []}
 
-        rel_for_addressing = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
+        rel_for_addressing = await memory_store.get_relationship(state["persona_id"], source_user)
         persona_addr, user_addr, rel_ctx = _resolve_addressing(rel_for_addressing, settings)
 
         # 受众上下文: 记忆分析 Agent 的查重检索也按当前会话受众过滤
@@ -407,8 +462,6 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         logger.debug("  ✅ 记忆分析完成: 新记忆 %d 条", len(out.new_memories))
 
         lifecycle = MemoryLifecycle(memory_store, vector_store, forwarder, resolver=resolver)
-        notification_store = NotificationStore(_NOTIFICATION_DB_PATH)
-        await notification_store.init_db()
         lifecycle.notification_store = notification_store
         for cand in out.new_memories:
             await lifecycle.store_candidate(
@@ -432,10 +485,13 @@ async def memory_analysis_node(state: AgentState) -> dict[str, Any]:
         logger.error("记忆分析失败: %s", e)
         return {"errors": [f"memory_analysis: {e}"]}
     finally:
-        await forwarder.close()
+        if owns_fwd:
+            await forwarder.close()
 
 
-async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
+async def relationship_analysis_node(
+    state: AgentState, config: RunnableConfig | None = None,
+) -> dict[str, Any]:
     """关系分析 Agent: CoT, 计算亲密度增量."""
     if state.get("finish_reason") == "tool_calls":
         logger.debug("💝 [relationship_analysis] 工具中间轮, 跳过")
@@ -448,15 +504,16 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
         logger.debug("💝 [relationship_analysis] 非归属模式, 跳过")
         return {"relationship_delta": {}}
 
-    forwarder = _make_multi_forwarder()
-    memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-    await memory_store.init_db()
+    stores = _get_stores(config)
+    forwarder: MultiForwarder = stores["multi_forwarder"]
+    memory_store: SqliteMemoryStore = stores["memory_store"]
+    owns_fwd = stores.get("_owns_forwarder", False)
 
     logger.debug("=" * 60)
     logger.debug("💝 [relationship_analysis] 开始处理")
 
     try:
-        rel = await memory_store.get_relationship(state.get("persona_id", "default"), source_user)
+        rel = await memory_store.get_relationship(state["persona_id"], source_user)
         current_rel_str = format_relationship(rel)
         logger.debug("  当前关系: %s", current_rel_str if current_rel_str else "(无)")
 
@@ -485,7 +542,7 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
             conversation=conversation,
             tools=[
                 make_update_addressing_tool(
-                    memory_store, state.get("persona_id", "default"), source_user,
+                    memory_store, state["persona_id"], source_user,
                     actor_id=state.get("actor_id"),
                 ),
             ],
@@ -504,7 +561,7 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
 
         lifecycle = MemoryLifecycle(memory_store, None, forwarder)  # type: ignore[arg-type]
         await lifecycle.apply_relationship_update(
-            persona_id=state.get("persona_id", "default"),
+            persona_id=state["persona_id"],
             user_id=source_user,
             intimacy_delta=out.intimacy_delta,
             trust_delta=out.trust_delta,
@@ -524,4 +581,5 @@ async def relationship_analysis_node(state: AgentState) -> dict[str, Any]:
         logger.error("关系分析失败: %s", e)
         return {"errors": [f"relationship_analysis: {e}"]}
     finally:
-        await forwarder.close()
+        if owns_fwd:
+            await forwarder.close()

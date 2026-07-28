@@ -9,10 +9,10 @@
 """
 
 import json
+import logging
 import os
 import time
-import logging
-from typing import Callable
+from collections.abc import Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware, _StreamingResponse
 from starlette.requests import Request
@@ -22,10 +22,9 @@ from src.infra.debug_context import new_correlation_id, set_correlation_id
 
 logger = logging.getLogger(__name__)
 
-# 默认配置 (向后兼容 cleanup_old_logs 的调用点)
+# 默认日志保留配置 (与 HttpLogStore.cleanup() 参数一致, 供管理面板使用)
 DEFAULT_RETENTION_DAYS = 7
 DEFAULT_MAX_RECORDS = 10000
-DEFAULT_DB_PATH = "data/http_logs.db"
 
 
 def _print_debug(method: str, direction: str, url: str, headers: dict = None, body: any = None, status: int = None):
@@ -219,27 +218,3 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         _log(response_body)
         return response
 
-
-def cleanup_old_logs(
-    db_path: str = DEFAULT_DB_PATH,
-    retention_days: int = DEFAULT_RETENTION_DAYS,
-    max_records: int = DEFAULT_MAX_RECORDS,
-):
-    """清理过期日志 (同步, 用于离线维护脚本)."""
-    import sqlite3
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "DELETE FROM http_logs WHERE created_at < datetime('now', ? || ' days')",
-            (-retention_days,),
-        )
-        conn.execute(
-            "DELETE FROM http_logs WHERE id NOT IN ("
-            "SELECT id FROM http_logs ORDER BY created_at DESC LIMIT ?)",
-            (max_records,),
-        )
-        conn.commit()
-        conn.close()
-        logger.info("Cleaned up old HTTP logs")
-    except Exception as e:
-        logger.warning("Failed to cleanup HTTP logs: %s", e)

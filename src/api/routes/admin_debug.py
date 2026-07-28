@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -78,7 +78,7 @@ async def get_session_key(
             note=reusable.note,
             created_at=reusable.created_at.isoformat(),
         )
-    ts = datetime.now(timezone.utc).strftime("%H%M%S")
+    ts = datetime.now(UTC).strftime("%H%M%S")
     ak = ApiKey.generate(note=f"panel-debug ({ts})", source=API_KEY_SOURCE_PANEL_DEBUG)
     await store.save(ak)
     logger.info("生成 panel-debug key: %s (note=%s)", ak.id, ak.note)

@@ -81,11 +81,11 @@ async def test_non_stream_response_preserves_tool_calls_and_finish_reason():
     )
 
     with (
-        patch("src.api.routes.forward.get_settings", return_value=settings),
-        patch("src.api.routes.forward._resolve_main_candidate", new=AsyncMock(return_value=None)),
-        patch("src.api.routes.forward.build_short_term_history", new=AsyncMock(return_value=built)),
-        patch("src.api.routes.forward._get_compiled_graph", return_value=graph),
-        patch("src.api.routes.forward._record_idempotency", new=AsyncMock()),
+        patch("src.api.routes.forward.nonstream.get_settings", return_value=settings),
+        patch("src.api.routes.forward.nonstream._resolve_main_candidate", new=AsyncMock(return_value=None)),
+        patch("src.api.routes.forward.nonstream.build_short_term_history", new=AsyncMock(return_value=built)),
+        patch("src.api.routes.forward.nonstream._get_compiled_graph", return_value=graph),
+        patch("src.api.routes.forward.nonstream._record_idempotency", new=AsyncMock()),
     ):
         response = await _handle_non_stream(http_request, initial_state, request)
 

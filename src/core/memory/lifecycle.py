@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+import aiosqlite
+
 from src.core.config import get_settings
 from src.core.memory.models import (
     CandidateMemory,
@@ -23,6 +25,7 @@ from src.core.memory.models import (
     Relationship,
 )
 from src.core.models.resolver import RoleResolver
+from src.infra.forwarder.forwarder import UpstreamError, UpstreamTimeout
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
 
@@ -54,11 +57,11 @@ class MemoryLifecycle:
     def __init__(
         self,
         memory_store: SqliteMemoryStore,
-        vector_store: "VectorStore | None",
+        vector_store: VectorStore | None,
         forwarder: MultiForwarder,
         resolver: RoleResolver | None = None,
-        reindex_progress: "ReindexProgress | None" = None,
-        notification_store: "NotificationStore | None" = None,
+        reindex_progress: ReindexProgress | None = None,
+        notification_store: NotificationStore | None = None,
     ):
         self.memory_store = memory_store
         self.vector_store = vector_store
@@ -124,7 +127,7 @@ class MemoryLifecycle:
             from src.infra.debug_context import use_agent
             with use_agent("memory_lifecycle"):
                 vecs = await self.forwarder.embed(entry.content)
-        except Exception as e:
+        except (UpstreamError, UpstreamTimeout) as e:
             logger.error("生成 embedding 失败, 记忆未入库: %s", e)
             await self._notify_write_failure(
                 stage="embed",
@@ -136,11 +139,12 @@ class MemoryLifecycle:
         # 校验向量库嵌入锁 (首次写入自动 lock; 换模型未走 reindex 会抛)
         if self.vector_store is not None and self.resolver is not None:
             try:
+                from src.infra.vector_store import VectorStoreLockError
                 cand = await self.resolver.first(ModelType.EMBEDDING)
                 self.vector_store.assert_embedding_matches(
                     cand.service_id, cand.model, len(vecs[0])
                 )
-            except Exception as e:
+            except VectorStoreLockError as e:
                 logger.error("向量库嵌入锁校验失败, 记忆未入库: %s", e)
                 await self._notify_write_failure(
                     stage="vector_lock",
@@ -153,7 +157,7 @@ class MemoryLifecycle:
             await self.memory_store.save(entry)
             if self.vector_store is not None:
                 self.vector_store.add(entry, vecs[0])
-        except Exception as e:
+        except aiosqlite.Error as e:
             logger.error("记忆入库失败: %s", e)
             await self._notify_write_failure(
                 stage="persist",
@@ -187,7 +191,7 @@ class MemoryLifecycle:
                 if is_forgotten:
                     self.vector_store.delete(ev.memory_id)
                 count += 1
-            except Exception as e:
+            except (aiosqlite.Error, RuntimeError) as e:
                 logger.error("应用衰减评估失败 mem=%s: %s", ev.memory_id, e)
         return count
 
@@ -230,7 +234,7 @@ class MemoryLifecycle:
                     self.vector_store.delete(entry.id)
                     forgotten_count += 1
                 count += 1
-            except Exception as e:
+            except (aiosqlite.Error, RuntimeError) as e:
                 logger.error("确定性衰减失败 mem=%s: %s", entry.id, e)
 
         if count > 0:
@@ -262,18 +266,18 @@ class MemoryLifecycle:
         for mid in memory_ids:
             try:
                 await self.memory_store.mark_accessed(mid)
-            except Exception as e:
+            except aiosqlite.Error as e:
                 logger.error("标记访问失败 mem=%s: %s", mid, e)
 
     async def _delete_memory(self, memory_id: str) -> None:
         """删除一条记忆（SQLite + ChromaDB）."""
         try:
             await self.memory_store.delete(memory_id)
-        except Exception as e:
+        except aiosqlite.Error as e:
             logger.error("SQLite 删除记忆失败 %s: %s", memory_id, e)
         try:
             self.vector_store.delete(memory_id)
-        except Exception as e:
+        except RuntimeError as e:
             logger.error("ChromaDB 删除记忆失败 %s: %s", memory_id, e)
 
     async def _notify_write_failure(

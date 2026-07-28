@@ -16,6 +16,7 @@ import { ElMessage } from 'element-plus'
 import { useDebugStore } from '@/stores/debug'
 import { chatCompletionRaw, getDebugEventDetail, listV1Models } from '@/api/client'
 import type { ChatMessage, DebugEventDetailResponse } from '@/types/api'
+import { OPENAI_STREAM_DONE, parseSSEBuffer } from '@/utils/sse'
 import PageHeader from '@/components/common/PageHeader.vue'
 import MySplitter from '@/components/common/MySplitter.vue'
 import ChatArea from '@/components/debug-chat/ChatArea.vue'
@@ -140,24 +141,18 @@ async function sendMessage(text: string) {
         const { value, done } = await reader.read()
         if (done) break
         buf += dec.decode(value, { stream: true })
-        let idx: number
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const frame = buf.slice(0, idx)
-          buf = buf.slice(idx + 2)
-          const line = frame.split('\n').find((l) => l.startsWith('data:'))
-          if (!line) continue
-          const data = line.slice(5).trim()
-          if (data === '[DONE]') continue
+        const { events, remainder } = parseSSEBuffer(buf)
+        buf = remainder
+        for (const ev of events) {
+          if (ev.data === OPENAI_STREAM_DONE) continue
           try {
-            const obj = JSON.parse(data) as {
+            const obj = JSON.parse(ev.data) as {
               choices?: Array<{ delta?: { content?: string } }>
             }
             const delta = obj.choices?.[0]?.delta?.content
             if (delta) {
               const msg = conversation.value[assistantIdx]
-              if (msg) {
-                msg.content += delta
-              }
+              if (msg) msg.content += delta
             }
           } catch {
             // ignore parse

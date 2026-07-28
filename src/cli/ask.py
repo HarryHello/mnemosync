@@ -128,7 +128,8 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
             if entry:
                 retrieved_entries.append(entry)
 
-        rel = await memory_store.get_relationship("default", source_user) if source_user else None
+        from src.core.constants import DEFAULT_PERSONA_ID
+        rel = await memory_store.get_relationship(DEFAULT_PERSONA_ID, source_user) if source_user else None
         print(
             f"🧠 记忆: 永久 {len(perms)} 条 · 检索 {len(retrieved_entries)} 条 · 关系 "
             f"{format_relationship(rel) if rel else '(无)'}",

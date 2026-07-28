@@ -2,17 +2,70 @@
 
 复用旧 accounts/sqlite_auth.py 的核心逻辑（bcrypt + session token）,
 适配新目录结构.
+
+v0.3.2: Session token 使用 HMAC-SHA256 签名. 数据库仅存储随机 token 的
+HMAC 摘要; 验证时需要服务器密钥 (从 MNEMOSYNC_SESSION_KEY 环境变量或
+自动生成的本地密钥派生), 数据库泄漏后攻击者无法离线伪造有效令牌.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import os
+from pathlib import Path
+
 import aiosqlite
 import bcrypt
 import secrets
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Protocol
+
+from src.persistence.base import SqliteStore
+
+
+# 会话签名密钥路径 (data/.session_key); 启动时若不存在则自动生成
+_SESSION_KEY_PATH = Path("data/.session_key")
+
+
+def _load_or_create_session_key() -> bytes:
+    """加载或创建 HMAC 签名密钥.
+
+    优先读取 MNEMOSYNC_SESSION_KEY 环境变量 (hex 或 base64 编码),
+    否则从 data/.session_key 文件加载, 文件不存在则自动生成 32 字节
+    随机密钥并持久化 (跨重启保持已有会话有效).
+    """
+    env_key = os.environ.get("MNEMOSYNC_SESSION_KEY")
+    if env_key:
+        import base64
+        try:
+            return bytes.fromhex(env_key)
+        except ValueError:
+            return base64.b64decode(env_key)
+
+    _SESSION_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if _SESSION_KEY_PATH.exists():
+        return _SESSION_KEY_PATH.read_bytes()
+    key = secrets.token_bytes(32)
+    _SESSION_KEY_PATH.write_bytes(key)
+    try:
+        os.chmod(_SESSION_KEY_PATH, 0o600)
+    except OSError:
+        pass
+    return key
+
+
+def _sign_token(raw_token: str, key: bytes | None = None) -> str:
+    """对 token 计算 HMAC-SHA256 签名 (hex)."""
+    if key is None:
+        key = _load_or_create_session_key()
+    return hmac.new(key, raw_token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _hash_token(raw_token: str) -> str:
+    """计算 token 的存储摘要: HMAC-SHA256 签名 (替代裸 SHA-256)."""
+    return _sign_token(raw_token)
 
 
 def hash_password(password: str) -> str:
@@ -39,14 +92,14 @@ class User:
     username: str
     password_hash: str
     must_change_password: bool = True
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_login_at: datetime | None = None
     is_active: bool = True
 
     @staticmethod
     def create(username: str, password_hash: str, must_change_password: bool = True) -> "User":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return User(
             id=secrets.token_hex(16),
             username=username,
@@ -64,24 +117,23 @@ class SessionToken:
     token_hash: str
     raw_token: str  # 仅生成时持有，不入库
     expires_at: datetime
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     is_valid: bool = True
 
     @staticmethod
     def generate(user_id: str, expires_hours: int = 24) -> "SessionToken":
         raw = secrets.token_urlsafe(32)
-        import hashlib
-        token_hash = hashlib.sha256(raw.encode()).hexdigest()
+        token_hash = _hash_token(raw)
         return SessionToken(
             id=secrets.token_hex(16),
             user_id=user_id,
             token_hash=token_hash,
             raw_token=raw,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=expires_hours),
+            expires_at=datetime.now(UTC) + timedelta(hours=expires_hours),
         )
 
     def is_expired(self) -> bool:
-        return datetime.now(timezone.utc) > self.expires_at
+        return datetime.now(UTC) > self.expires_at
 
 
 class AuthStore(Protocol):
@@ -97,7 +149,7 @@ class AuthStore(Protocol):
     async def has_any_user(self) -> bool: ...
 
 
-class SqliteAuthStore:
+class SqliteAuthStore(SqliteStore):
     """SQLite 认证存储实现.
 
     使用方式:
@@ -105,36 +157,6 @@ class SqliteAuthStore:
         所有方法共用同一条 aiosqlite 连接, 无每请求 open/close 开销.
       * 短连接 (CLI / 一次性脚本): 不调 ``connect()``, 每次方法内部临时开连接 (旧行为).
     """
-
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
-
-    async def connect(self) -> None:
-        """建立长连接并初始化 schema (幂等)."""
-        if self._db is not None:
-            return
-        self._db = await aiosqlite.connect(self.db_path)
-        # WAL + NORMAL 同步, 并发读性能显著优于默认 rollback journal.
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        await self._db.execute("PRAGMA foreign_keys=ON")
-        await self._init_schema(self._db)
-        await self._db.commit()
-
-    async def close(self) -> None:
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
-
-    @asynccontextmanager
-    async def _conn(self):
-        """内部连接上下文: 长连接模式复用 self._db, 否则临时开连接 (旧行为)."""
-        if self._db is not None:
-            yield self._db
-        else:
-            async with aiosqlite.connect(self.db_path) as db:
-                yield db
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
@@ -221,7 +243,7 @@ class SqliteAuthStore:
         async with self._conn() as db:
             await db.execute(
                 "UPDATE users SET last_login_at = ? WHERE id = ?",
-                (datetime.now(timezone.utc).isoformat(), user.id),
+                (datetime.now(UTC).isoformat(), user.id),
             )
             await db.commit()
         return user
@@ -241,10 +263,12 @@ class SqliteAuthStore:
         return session
 
     async def get_session(self, token: str) -> SessionToken:
-        """根据 raw_token 查询会话（raw_token 本身即作为查询 key，简化）."""
-        # 注意: 生产环境应 hash token 后比对。此处用 token_hash 字段存储 raw 的 sha256。
-        import hashlib
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        """根据 raw_token 查询会话.
+
+        token_hash 字段存储 HMAC-SHA256(server_secret, raw_token);
+        验证时用相同密钥计算 HMAC 比对, 防止数据库泄漏后离线伪造令牌.
+        """
+        token_hash = _hash_token(token)
         async with self._conn() as db:
             async with db.execute(
                 "SELECT * FROM sessions WHERE token_hash = ? AND is_valid = 1",
@@ -260,8 +284,7 @@ class SqliteAuthStore:
                 return session
 
     async def invalidate_session(self, token: str) -> None:
-        import hashlib
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        token_hash = _hash_token(token)
         async with self._conn() as db:
             await db.execute(
                 "UPDATE sessions SET is_valid = 0 WHERE token_hash = ?", (token_hash,)
@@ -281,7 +304,7 @@ class SqliteAuthStore:
             raise ValueError(err or "密码强度不足")
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
-        user.updated_at = datetime.now(timezone.utc)
+        user.updated_at = datetime.now(UTC)
         async with self._conn() as db:
             await db.execute(
                 """
@@ -314,7 +337,7 @@ class SqliteAuthStore:
         user.username = new_username
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
-        user.updated_at = datetime.now(timezone.utc)
+        user.updated_at = datetime.now(UTC)
 
         async with self._conn() as db:
             await db.execute(
@@ -332,8 +355,8 @@ class SqliteAuthStore:
         return User(
             id=row[0], username=row[1], password_hash=row[2],
             must_change_password=bool(row[3]),
-            created_at=datetime.fromisoformat(row[4]) if row[4] else datetime.now(timezone.utc),
-            updated_at=datetime.fromisoformat(row[5]) if row[5] else datetime.now(timezone.utc),
+            created_at=datetime.fromisoformat(row[4]) if row[4] else datetime.now(UTC),
+            updated_at=datetime.fromisoformat(row[5]) if row[5] else datetime.now(UTC),
             last_login_at=datetime.fromisoformat(row[6]) if row[6] else None,
             is_active=bool(row[7]),
         )
@@ -341,7 +364,7 @@ class SqliteAuthStore:
     def _row_to_session(self, row: tuple, raw_token: str) -> SessionToken:
         return SessionToken(
             id=row[0], user_id=row[1], token_hash=row[2], raw_token=raw_token,
-            expires_at=datetime.fromisoformat(row[3]) if row[3] else datetime.now(timezone.utc),
-            created_at=datetime.fromisoformat(row[4]) if row[4] else datetime.now(timezone.utc),
+            expires_at=datetime.fromisoformat(row[3]) if row[3] else datetime.now(UTC),
+            created_at=datetime.fromisoformat(row[4]) if row[4] else datetime.now(UTC),
             is_valid=bool(row[5]),
         )

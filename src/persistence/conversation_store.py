@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, UTC
 from typing import Iterator
+
+from src.persistence.base import SqliteStore
 
 import aiosqlite
 
@@ -111,40 +112,15 @@ _SELECT_COLUMNS = (
 )
 
 
-class SqliteConversationStore:
+class SqliteConversationStore(SqliteStore):
     """高频 append-only 对话事件存储."""
 
-    def __init__(self, db_path: str) -> None:
-        self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
-
-    async def connect(self) -> None:
-        if self._db is not None:
-            return
-        from pathlib import Path
-
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        await self._init_schema(self._db)
-        await self._db.commit()
-
-    async def close(self) -> None:
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
-
-    @asynccontextmanager
-    async def _conn(self) -> Iterator[aiosqlite.Connection]:
-        if self._db is not None:
-            yield self._db
-        else:
-            async with aiosqlite.connect(self.db_path) as db:
-                yield db
+    _enable_foreign_keys = False
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner, add_column_if_missing
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS conversation_turns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -164,65 +140,71 @@ class SqliteConversationStore:
                 origin TEXT NOT NULL DEFAULT 'legacy',
                 event_fingerprint TEXT,
                 observed_at TIMESTAMP,
-                request_id TEXT
+                request_id TEXT,
+                interaction_id TEXT,
+                event_type TEXT NOT NULL DEFAULT 'message',
+                tool_call_id TEXT
             )
         """)
-        migrations = (
-            "ALTER TABLE conversation_turns ADD COLUMN actor_id TEXT",
-            "ALTER TABLE conversation_turns ADD COLUMN space_id TEXT",
-            "ALTER TABLE conversation_turns ADD COLUMN external_event_id TEXT",
-            "ALTER TABLE conversation_turns ADD COLUMN committed_sequence INTEGER",
-            "ALTER TABLE conversation_turns ADD COLUMN late_arrival INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE conversation_turns ADD COLUMN effective_user_id TEXT",
-            "ALTER TABLE conversation_turns ADD COLUMN display_name_snapshot TEXT",
-            "ALTER TABLE conversation_turns ADD COLUMN external_key_snapshot TEXT",
-            "ALTER TABLE conversation_turns ADD COLUMN origin TEXT NOT NULL DEFAULT 'legacy'",
-            "ALTER TABLE conversation_turns ADD COLUMN event_fingerprint TEXT",
-            "ALTER TABLE conversation_turns ADD COLUMN observed_at TIMESTAMP",
-            "ALTER TABLE conversation_turns ADD COLUMN request_id TEXT",
-            "ALTER TABLE conversation_turns ADD COLUMN interaction_id TEXT",
-            "ALTER TABLE conversation_turns ADD COLUMN event_type TEXT NOT NULL DEFAULT 'message'",
-            "ALTER TABLE conversation_turns ADD COLUMN tool_call_id TEXT",
-        )
-        for ddl in migrations:
-            try:
-                await db.execute(ddl)
-            except aiosqlite.OperationalError:
-                pass
-        await db.execute(
-            "UPDATE conversation_turns SET observed_at = ts WHERE observed_at IS NULL"
-        )
-        # 早期结构化事件混用了 +08:00 与 +00:00 ISO 文本。SQLite 对 TEXT
-        # 按字典序排序，不会换算时区；启动迁移统一为 UTC，之后普通索引排序即可。
-        async with db.execute(
-            "SELECT id, ts, observed_at FROM conversation_turns "
-            "WHERE ts NOT LIKE '%+00:00' OR "
-            "(observed_at IS NOT NULL AND observed_at NOT LIKE '%+00:00')"
-        ) as cur:
-            mixed_timezone_rows = await cur.fetchall()
-        for row_id, ts_raw, observed_raw in mixed_timezone_rows:
-            updates: list[str] = []
-            params: list[str | int] = []
-            try:
-                ts_utc = _utc_iso(datetime.fromisoformat(ts_raw))
-                if ts_utc != ts_raw:
-                    updates.append("ts = ?")
-                    params.append(ts_utc)
-            except (TypeError, ValueError):
-                pass
-            try:
-                observed_utc = _utc_iso(datetime.fromisoformat(observed_raw))
-                if observed_utc != observed_raw:
-                    updates.append("observed_at = ?")
-                    params.append(observed_utc)
-            except (TypeError, ValueError):
-                pass
-            if updates:
-                params.append(row_id)
-                await db.execute(
-                    f"UPDATE conversation_turns SET {', '.join(updates)} WHERE id = ?",
-                    tuple(params),
-                )
+
+        # 命名迁移: 替代裸 try/except ALTER TABLE
+        async def _migrate_normalize_utc(conn: aiosqlite.Connection) -> None:
+            """早期数据混用 +08:00 / +00:00 ISO 文本; 统一为 UTC."""
+            await conn.execute(
+                "UPDATE conversation_turns SET observed_at = ts WHERE observed_at IS NULL"
+            )
+            async with conn.execute(
+                "SELECT id, ts, observed_at FROM conversation_turns "
+                "WHERE ts NOT LIKE '%+00:00' OR "
+                "(observed_at IS NOT NULL AND observed_at NOT LIKE '%+00:00')"
+            ) as cur:
+                mixed_timezone_rows = await cur.fetchall()
+            for row_id, ts_raw, observed_raw in mixed_timezone_rows:
+                updates: list[str] = []
+                params: list[str | int] = []
+                try:
+                    ts_utc = _utc_iso(datetime.fromisoformat(ts_raw))
+                    if ts_utc != ts_raw:
+                        updates.append("ts = ?")
+                        params.append(ts_utc)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    observed_utc = _utc_iso(datetime.fromisoformat(observed_raw))
+                    if observed_utc != observed_raw:
+                        updates.append("observed_at = ?")
+                        params.append(observed_utc)
+                except (TypeError, ValueError):
+                    pass
+                if updates:
+                    params.append(row_id)
+                    await conn.execute(
+                        f"UPDATE conversation_turns SET {', '.join(updates)} WHERE id = ?",
+                        tuple(params),
+                    )
+
+        await MigrationRunner([
+            # v0.2.x: 逐版本补列 (已内联到 CREATE TABLE, 幂等跳过)
+            ("001_add_actor_id", add_column_if_missing("conversation_turns", "actor_id", "TEXT")),
+            ("002_add_space_id", add_column_if_missing("conversation_turns", "space_id", "TEXT")),
+            ("003_add_external_event_id", add_column_if_missing("conversation_turns", "external_event_id", "TEXT")),
+            ("004_add_committed_sequence", add_column_if_missing("conversation_turns", "committed_sequence", "INTEGER")),
+            ("005_add_late_arrival", add_column_if_missing("conversation_turns", "late_arrival", "INTEGER NOT NULL DEFAULT 0")),
+            ("006_add_effective_user_id", add_column_if_missing("conversation_turns", "effective_user_id", "TEXT")),
+            ("007_add_display_name_snapshot", add_column_if_missing("conversation_turns", "display_name_snapshot", "TEXT")),
+            ("008_add_external_key_snapshot", add_column_if_missing("conversation_turns", "external_key_snapshot", "TEXT")),
+            ("009_add_origin", add_column_if_missing("conversation_turns", "origin", "TEXT NOT NULL DEFAULT 'legacy'")),
+            ("010_add_event_fingerprint", add_column_if_missing("conversation_turns", "event_fingerprint", "TEXT")),
+            ("011_add_observed_at", add_column_if_missing("conversation_turns", "observed_at", "TIMESTAMP")),
+            ("012_add_request_id", add_column_if_missing("conversation_turns", "request_id", "TEXT")),
+            ("013_add_interaction_id", add_column_if_missing("conversation_turns", "interaction_id", "TEXT")),
+            ("014_add_event_type", add_column_if_missing("conversation_turns", "event_type", "TEXT NOT NULL DEFAULT 'message'")),
+            ("015_add_tool_call_id", add_column_if_missing("conversation_turns", "tool_call_id", "TEXT")),
+            # 数据迁移: UTC 时间归一化
+            ("016_normalize_utc_timestamps", _migrate_normalize_utc),
+        ]).apply(db)
+
+        # 索引 (CREATE INDEX IF NOT EXISTS 天然幂等)
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_conversation_turns_ts "
             "ON conversation_turns(ts DESC)"

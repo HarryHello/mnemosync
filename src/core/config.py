@@ -31,6 +31,11 @@ class StorageConfig:
     memory_db_path: str = "data/memory.db"
     llm_db_path: str = "data/llm_service.db"
     auth_db_path: str = "data/auth.db"
+    api_key_db_path: str = "data/api_keys.db"
+    http_log_db_path: str = "data/http_logs.db"
+    notification_db_path: str = "data/notifications.db"
+    identity_db_path: str = "data/identity.db"
+    idempotency_db_path: str = "data/idempotency.db"
     chroma_dir: str = "data/chroma"
     prompts_override_dir: str = "data/prompts"
     conversation_db_path: str = "data/conversation.db"
@@ -47,6 +52,26 @@ class StorageConfig:
     @property
     def auth_db_abs(self) -> Path:
         return PROJECT_ROOT / self.auth_db_path
+
+    @property
+    def api_key_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.api_key_db_path
+
+    @property
+    def http_log_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.http_log_db_path
+
+    @property
+    def notification_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.notification_db_path
+
+    @property
+    def identity_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.identity_db_path
+
+    @property
+    def idempotency_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.idempotency_db_path
 
     @property
     def chroma_dir_abs(self) -> Path:

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  backend:
+    name: Backend (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: Type check (mypy)
+        run: uv run mypy src
+
+      - name: Test (pytest)
+        run: uv run pytest --cov=src --cov-report=term-missing
+
+      - name: Security audit (pip-audit)
+        run: |
+          uv pip install pip-audit
+          uv run pip-audit --descending
+        continue-on-error: true  # 仅警告, 不阻断 CI (新漏洞披露时给修复时间)
+
+  frontend:
+    name: Frontend (Node 22)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test:unit -- --run
+
+      - name: Build
+        run: npm run build
+
+      - name: Security audit (npm audit)
+        run: npm audit --audit-level=moderate
+        continue-on-error: true  # 仅警告, 不阻断 CI

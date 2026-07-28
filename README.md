@@ -4,7 +4,7 @@
 
 **跨平台人格记忆同步代理 | Cross-Platform Persona Memory Sync Proxy**
 
-[![License](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Status](https://img.shields.io/badge/Status-Early%20Development-yellow)](https://github.com/Mnemosync/Mnemosync)
 [![Python](https://img.shields.io/badge/Python-3.12+-green.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-red.svg)](https://fastapi.tiangolo.com/)

@@ -6,7 +6,7 @@
 
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from enum import Enum
 from math import log
 
@@ -146,7 +146,7 @@ class MemoryEntry:
     custom_policies: list[str] = field(default_factory=list)
     emotional_tags: list[str] = field(default_factory=list)
     related_memories: list[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_accessed: datetime | None = None
     expires_at: datetime | None = None
     space_id: str | None = None  # v0.3.0: 诞生空间 (非空 = 空间共享记忆, 受众过滤用)
@@ -194,7 +194,7 @@ class MemoryEntry:
         """是否已过期."""
         if self.expires_at is None:
             return False
-        return datetime.now(timezone.utc) > self.expires_at
+        return datetime.now(UTC) > self.expires_at
 
     @property
     def decay_state(self) -> DecayState:
@@ -217,7 +217,7 @@ class MemoryEntry:
         if self.is_permanent:
             return 1.0
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         days_elapsed = max(0, (now - self.created_at).days)
 
         half_life = decay_rate_to_half_life(self.decay_rate)
@@ -235,7 +235,7 @@ class MemoryEntry:
     def mark_accessed(self) -> None:
         """标记为已访问（access_count + 1, 更新 last_accessed）."""
         self.access_count += 1
-        self.last_accessed = datetime.now(timezone.utc)
+        self.last_accessed = datetime.now(UTC)
 
     def mark_forgotten(self) -> None:
         """标记为遗忘."""
@@ -291,7 +291,7 @@ class Relationship:
             intimacy_score=0.0,
             trust_level=0.0,
             interaction_count=0,
-            last_active=datetime.now(timezone.utc),
+            last_active=datetime.now(UTC),
         )
 
     def apply_delta(
@@ -312,7 +312,7 @@ class Relationship:
         self.intimacy_score = min(1.0, max(0.0, self.intimacy_score + intimacy_delta))
         self.trust_level = min(1.0, max(0.0, self.trust_level + trust_delta))
         self.interaction_count += 1
-        self.last_active = datetime.now(timezone.utc)
+        self.last_active = datetime.now(UTC)
         if new_type is not None:
             self.type = new_type
         if notes is not None:

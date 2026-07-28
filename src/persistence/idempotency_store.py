@@ -14,12 +14,12 @@ OpenAI 兼容端点上, 一次重发 = 一次完整的记忆图执行 + 一次�
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
-from typing import Iterator
 
 import aiosqlite
+
+from src.persistence.base import SqliteStore
 
 
 @dataclass
@@ -35,43 +35,19 @@ class IdempotencyRecord:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
-class SqliteIdempotencyStore:
+class SqliteIdempotencyStore(SqliteStore):
     """幂等键的 SQLite 存储 (独立库 data/idempotency.db).
 
     独立库的原因与 conversation_store 相同: 幂等检查在每次请求的关键路径上,
     与记忆/对话库隔离避免 WAL 相互干扰。
     """
 
-    def __init__(self, db_path: str) -> None:
-        self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
-
-    async def connect(self) -> None:
-        if self._db is not None:
-            return
-        from pathlib import Path
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        await self._init_schema(self._db)
-        await self._db.commit()
-
-    async def close(self) -> None:
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
-
-    @asynccontextmanager
-    async def _conn(self) -> Iterator[aiosqlite.Connection]:
-        if self._db is not None:
-            yield self._db
-        else:
-            async with aiosqlite.connect(self.db_path) as db:
-                yield db
+    _enable_foreign_keys = False
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS idempotency_keys (
                 integration_id TEXT NOT NULL,
@@ -84,19 +60,17 @@ class SqliteIdempotencyStore:
                 PRIMARY KEY (integration_id, external_event_id)
             )
         """)
-        migrations = (
-            "ALTER TABLE idempotency_keys ADD COLUMN response_message TEXT",
-            "ALTER TABLE idempotency_keys ADD COLUMN finish_reason TEXT",
-        )
-        for ddl in migrations:
-            try:
-                await db.execute(ddl)
-            except aiosqlite.OperationalError:
-                pass
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_idempotency_created "
             "ON idempotency_keys(created_at)"
         )
+
+        from src.persistence.migrations import add_column_if_missing
+
+        await MigrationRunner([
+            ("001_add_response_message", add_column_if_missing("idempotency_keys", "response_message", "TEXT")),
+            ("002_add_finish_reason", add_column_if_missing("idempotency_keys", "finish_reason", "TEXT")),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         async with self._conn() as db:
