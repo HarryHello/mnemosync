@@ -257,9 +257,9 @@ AgentRun
 ```text
 1. 记忆纠正 + 用户记忆治理            ✅ 已实现 (supersede 软替代)
 2. AgentSpec / AgentRun 运行契约      📋 RFC 已发布 (rfcs/agent-run-contract.md)
-3. 结构化 PersonaDefinition           📋 RFC 已发布 (rfcs/structured-persona.md)
-4. Character Card 导入                📋 含在结构化人格 RFC §4
-5. Lorebook                          📋 含在结构化人格 RFC §5
+3. 结构化 PersonaDefinition           ✅ 已实现 (definition.py + persona_store)
+4. Character Card 导入                📋 含在结构化人格 RFC §4 (待实现)
+5. Lorebook                          ✅ 已实现 (lorebook_store.py + 关键词匹配)
 6. SocialPolicy 按空间定制             ⏳ Expressor/工具策略已实现, 数据模型待定
 ```
 
