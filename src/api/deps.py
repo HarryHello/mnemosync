@@ -16,6 +16,7 @@ from src.persistence.idempotency_store import SqliteIdempotencyStore
 from src.persistence.lorebook_store import SqliteLorebookStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
+from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 if TYPE_CHECKING:
     from src.core.memory.reindex import ReindexProgress
@@ -78,3 +79,7 @@ def get_idempotency_store(request: Request) -> SqliteIdempotencyStore:
 
 def get_lorebook_store(request: Request) -> "SqliteLorebookStore":
     return request.app.state.lorebook_store
+
+
+def get_space_policy_store(request: Request) -> "SqliteSpacePolicyStore":
+    return request.app.state.space_policy_store

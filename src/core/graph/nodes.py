@@ -442,7 +442,20 @@ async def main_dialogue_node(
         ):
             from src.core.agents import ExpressorConfig, run_expressor
 
-            expressor_cfg = ExpressorConfig(enabled=True)
+            # 从 space_policy_store 加载空间社交策略
+            space_policy = None
+            space_policy_store = stores.get("space_policy_store")
+            space_id = state.get("space_id")
+            if space_policy_store is not None and space_id:
+                try:
+                    space_policy = await space_policy_store.get(space_id)
+                except Exception:
+                    pass
+
+            expressor_cfg = ExpressorConfig(
+                enabled=space_policy.expressor_enabled if (space_policy and space_policy.expressor_enabled is not None) else True,
+                temperature=space_policy.expressor_temperature if space_policy is not None else 0.4,
+            )
             relationship_summary = format_relationship(rel)
             expression_style = state.get("expression_style", "")
             rewritten = await run_expressor(

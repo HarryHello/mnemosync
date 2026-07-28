@@ -107,7 +107,8 @@ def _build_graph_config(http_request: Request) -> dict[str, Any]:
     configurable: dict[str, Any] = {}
     for key in ("multi_forwarder", "resolver", "memory_store",
                 "vector_store", "notification_store", "debug_bus",
-                "identity_store", "persona_store", "lorebook_store"):
+                "identity_store", "persona_store", "lorebook_store",
+                "space_policy_store"):
         val = getattr(state, key, None)
         if val is not None:
             configurable[key] = val

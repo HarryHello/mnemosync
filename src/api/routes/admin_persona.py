@@ -424,6 +424,123 @@ async def rollback_persona_version(
 
 
 # ============================================================================
+# Space Policy (v0.3.3, per-space social behavior)
+# ============================================================================
+
+
+class SpacePolicyBody(BaseModel):
+    """空间社交策略."""
+
+    expressor_enabled: bool = True
+    expressor_temperature: float = 0.4
+    preferred_max_length: int | None = 200
+    use_emojis: bool | None = True
+
+
+class SpacePolicyRead(BaseModel):
+    space_id: str
+    config: SpacePolicyBody
+    updated_at: str
+
+
+@router.get("/space-policies", response_model=list[SpacePolicyRead])
+async def list_space_policies(
+    request: Request,
+):
+    """列出所有空间策略."""
+    from src.persistence.space_policy_store import SqliteSpacePolicyStore
+    store: SqliteSpacePolicyStore = getattr(request.app.state, "space_policy_store", None)
+    if store is None:
+        return []
+    policies = await store.list_all()
+    return [
+        SpacePolicyRead(
+            space_id=p.space_id,
+            config=SpacePolicyBody(
+                expressor_enabled=p.expressor_enabled,
+                expressor_temperature=p.expressor_temperature,
+                preferred_max_length=p.preferred_max_length,
+                use_emojis=p.use_emojis,
+            ),
+            updated_at=p.updated_at.isoformat(),
+        )
+        for p in policies
+    ]
+
+
+@router.get("/space-policies/{space_id}", response_model=SpacePolicyRead)
+async def get_space_policy(
+    space_id: str,
+    request: Request,
+):
+    """获取指定空间策略."""
+    from src.persistence.space_policy_store import SqliteSpacePolicyStore
+    store: SqliteSpacePolicyStore = getattr(request.app.state, "space_policy_store", None)
+    if store is None:
+        raise HTTPException(404, "space_policy_store not available")
+    policy = await store.get(space_id)
+    if policy is None:
+        raise HTTPException(404, f"No policy for space: {space_id}")
+    return SpacePolicyRead(
+        space_id=policy.space_id,
+        config=SpacePolicyBody(
+            expressor_enabled=policy.expressor_enabled,
+            expressor_temperature=policy.expressor_temperature,
+            preferred_max_length=policy.preferred_max_length,
+            use_emojis=policy.use_emojis,
+        ),
+        updated_at=policy.updated_at.isoformat(),
+    )
+
+
+@router.put("/space-policies/{space_id}", response_model=SpacePolicyRead)
+async def upsert_space_policy(
+    space_id: str,
+    body: SpacePolicyBody,
+    request: Request,
+):
+    """创建或更新空间策略."""
+    from src.persistence.space_policy_store import SqliteSpacePolicyStore, SpacePolicy
+    store: SqliteSpacePolicyStore = getattr(request.app.state, "space_policy_store", None)
+    if store is None:
+        raise HTTPException(404, "space_policy_store not available")
+    policy = SpacePolicy(
+        space_id=space_id,
+        expressor_enabled=body.expressor_enabled,
+        expressor_temperature=body.expressor_temperature,
+        preferred_max_length=body.preferred_max_length,
+        use_emojis=body.use_emojis,
+    )
+    await store.upsert(policy)
+    return SpacePolicyRead(
+        space_id=policy.space_id,
+        config=SpacePolicyBody(
+            expressor_enabled=policy.expressor_enabled,
+            expressor_temperature=policy.expressor_temperature,
+            preferred_max_length=policy.preferred_max_length,
+            use_emojis=policy.use_emojis,
+        ),
+        updated_at=policy.updated_at.isoformat(),
+    )
+
+
+@router.delete("/space-policies/{space_id}")
+async def delete_space_policy(
+    space_id: str,
+    request: Request,
+):
+    """删除空间策略 (回退到默认行为)."""
+    from src.persistence.space_policy_store import SqliteSpacePolicyStore
+    store: SqliteSpacePolicyStore = getattr(request.app.state, "space_policy_store", None)
+    if store is None:
+        raise HTTPException(404, "space_policy_store not available")
+    ok = await store.delete(space_id)
+    if not ok:
+        raise HTTPException(404, f"No policy for space: {space_id}")
+    return {"success": True, "space_id": space_id}
+
+
+# ============================================================================
 # Character Card Import (v0.3.3, SillyTavern V1/V2)
 # ============================================================================
 

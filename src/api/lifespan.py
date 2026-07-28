@@ -31,6 +31,7 @@ from src.persistence.notification_store import NotificationStore
 from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.lorebook_store import SqliteLorebookStore
 from src.persistence.persona_store import SqlitePersonaStore
+from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,8 @@ async def app_lifespan(app: FastAPI):
     await persona_store.init_db()
     lorebook_store = SqliteLorebookStore(str(storage.identity_db_abs))  # 复用 identity.db
     await lorebook_store.init_db()
+    space_policy_store = SqliteSpacePolicyStore(str(storage.identity_db_abs))  # 复用 identity.db
+    await space_policy_store.init_db()
 
     # 加载身份解析插件 (v0.3.1)
     from src.core.identity.plugin_registry import discover_plugins
@@ -163,6 +166,7 @@ async def app_lifespan(app: FastAPI):
     app.state.space_locks = SpaceLockManager()
     app.state.persona_store = persona_store
     app.state.lorebook_store = lorebook_store
+    app.state.space_policy_store = space_policy_store
 
     # 自动迁移: 从 config.local.toml 的 legacy 人格创建首个 DB 版本
     from src.core.persona.definition import PersonaDefinition
