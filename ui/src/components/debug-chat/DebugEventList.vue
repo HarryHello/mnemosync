@@ -67,6 +67,7 @@ function directionLabel(d: string): string {
     upstream_response: '上游响应',
     upstream_request_final: '上游请求(完成)',
     upstream_response_final: '上游流式(汇总)',
+    pipeline: '管线',
   }
   return map[d] ?? d
 }
@@ -76,7 +77,63 @@ function directionTag(d: string): 'primary' | 'success' | 'warning' | 'danger' |
   if (d.startsWith('inbound_response')) return 'primary'
   if (d.startsWith('upstream_request')) return 'warning'
   if (d.startsWith('upstream_response')) return 'success'
+  if (d === 'pipeline') return 'danger'
   return 'info'
+}
+
+/** 从 pipeline 事件的 url (pipeline:{kind}) 提取 event_kind */
+function pipelineKind(ev: DebugEventSummary): string {
+  if (ev.direction !== 'pipeline') return ''
+  return ev.url.replace('pipeline:', '')
+}
+
+const PIPELINE_KIND_LABELS: Record<string, string> = {
+  tool_policy: '工具策略',
+  tool_transaction: '工具事务',
+  tool_call_decision: '工具调用决策',
+  trigger_reason: '触发原因',
+  expressor_rewrite: 'Expressor 改写',
+  cooldown_blocked: '冷却拦截',
+}
+
+function pipelineKindLabel(kind: string): string {
+  return PIPELINE_KIND_LABELS[kind] ?? kind
+}
+
+/** 提取 pipeline 事件的摘要文字 (从 body_preview) */
+function pipelineSummary(ev: DebugEventSummary): string {
+  if (ev.direction !== 'pipeline' || !ev.body_preview) return ''
+  const body = ev.body_preview as Record<string, unknown>
+  const kind = pipelineKind(ev)
+  switch (kind) {
+    case 'tool_policy': {
+      const stage = body.stage as string
+      const removed = body.removed_tools as string[] | null
+      if (stage === 'inbound' && removed?.length) return `入站过滤: 移除 ${removed.join(', ')}`
+      if (stage === 'inbound') return '入站过滤: 无移除'
+      return stage || ''
+    }
+    case 'tool_transaction':
+      return `${body.tail_messages ?? 0} 条尾部消息`
+    case 'tool_call_decision': {
+      const removed = body.removed_calls as string[] | null
+      const kept = body.kept_calls as string[] | null
+      const parts: string[] = []
+      if (kept?.length) parts.push(`保留 ${kept.length}`)
+      if (removed?.length) parts.push(`移除 ${removed.length}`)
+      return parts.join(' · ') || '无调用'
+    }
+    case 'trigger_reason':
+      return (body.reason as string) || ''
+    case 'expressor_rewrite':
+      return `${body.original_length ?? 0} → ${body.rewritten_length ?? 0} 字符`
+    case 'cooldown_blocked': {
+      const violations = body.violations as string[] | null
+      return violations?.length ? `拦截 ${violations.length} 个调用` : ''
+    }
+    default:
+      return ''
+  }
 }
 
 function formatBody(body: unknown): string {
@@ -98,7 +155,7 @@ function formatTs(ts: number): string {
 <template>
   <div class="debug-event-list">
     <div class="debug-header">
-      <span class="section-label">HTTP 事件流</span>
+      <span class="section-label">事件流</span>
       <span class="hint">按 correlation_id 分组; 展开卡片查看完整 body</span>
       <el-button size="small" @click="clearAll">清空调试日志</el-button>
     </div>
@@ -115,16 +172,26 @@ function formatTs(ts: number): string {
               <el-tag :type="directionTag(ev.direction)" size="small">
                 {{ directionLabel(ev.direction) }}
               </el-tag>
+              <!-- Pipeline 事件: 显示事件类型标签 + 摘要 -->
+              <template v-if="ev.direction === 'pipeline'">
+                <el-tag type="warning" size="small" effect="plain">
+                  {{ pipelineKindLabel(pipelineKind(ev)) }}
+                </el-tag>
+                <span class="e-summary">{{ pipelineSummary(ev) }}</span>
+              </template>
+              <!-- HTTP 事件: 显示原有字段 -->
+              <template v-else>
+                <span v-if="ev.method" class="e-method">{{ ev.method }}</span>
+                <span class="e-url">{{ ev.url }}</span>
+                <span v-if="ev.port" class="e-port">:{{ ev.port }}</span>
+                <span v-if="ev.agent" class="e-agent">[{{ ev.agent }}]</span>
+                <span v-if="ev.status" class="e-status">{{ ev.status }}</span>
+                <span v-if="ev.duration_ms !== null" class="e-dur">
+                  {{ ev.duration_ms.toFixed(0) }}ms
+                </span>
+                <span v-if="ev.key_note" class="e-key">key: {{ ev.key_note }}</span>
+              </template>
               <span class="e-time">{{ formatTs(ev.ts) }}</span>
-              <span v-if="ev.method" class="e-method">{{ ev.method }}</span>
-              <span class="e-url">{{ ev.url }}</span>
-              <span v-if="ev.port" class="e-port">:{{ ev.port }}</span>
-              <span v-if="ev.agent" class="e-agent">[{{ ev.agent }}]</span>
-              <span v-if="ev.status" class="e-status">{{ ev.status }}</span>
-              <span v-if="ev.duration_ms !== null" class="e-dur">
-                {{ ev.duration_ms.toFixed(0) }}ms
-              </span>
-              <span v-if="ev.key_note" class="e-key">key: {{ ev.key_note }}</span>
               <el-icon class="e-caret">
                 <ArrowDown v-if="expanded.has(ev.id)" />
                 <ArrowRight v-else />
@@ -133,6 +200,52 @@ function formatTs(ts: number): string {
 
             <div v-if="expanded.has(ev.id)" class="event-body">
               <div v-if="detailLoading.has(ev.id)" class="loading">加载中…</div>
+              <!-- Pipeline 事件详情: 结构化展示 -->
+              <template v-else-if="ev.direction === 'pipeline' && details.get(ev.id)">
+                <div class="pipeline-detail">
+                  <!-- Expressor 改写: 前后对比 -->
+                  <template v-if="pipelineKind(ev) === 'expressor_rewrite'">
+                    <div class="expressor-compare">
+                      <div class="compare-col">
+                        <div class="section-label">改写前 ({{ (details.get(ev.id)!.body_full as Record<string, unknown>)?.original_length ?? 0 }} 字符)</div>
+                        <pre class="pre">{{ (details.get(ev.id)!.body_full as Record<string, unknown>)?.original_preview ?? '' }}</pre>
+                      </div>
+                      <div class="compare-col">
+                        <div class="section-label">改写后 ({{ (details.get(ev.id)!.body_full as Record<string, unknown>)?.rewritten_length ?? 0 }} 字符)</div>
+                        <pre class="pre">{{ (details.get(ev.id)!.body_full as Record<string, unknown>)?.rewritten_preview ?? '' }}</pre>
+                      </div>
+                    </div>
+                    <div v-if="(details.get(ev.id)!.body_full as Record<string, unknown>)?.expression_style" class="pipeline-field">
+                      <span class="field-label">表达风格:</span>
+                      <code>{{ (details.get(ev.id)!.body_full as Record<string, unknown>)?.expression_style }}</code>
+                    </div>
+                  </template>
+                  <!-- 工具策略: 列表展示 -->
+                  <template v-else-if="pipelineKind(ev) === 'tool_policy'">
+                    <div class="pipeline-field">
+                      <span class="field-label">阶段:</span>
+                      <code>{{ (details.get(ev.id)!.body_full as Record<string, unknown>)?.stage }}</code>
+                    </div>
+                    <div v-if="(details.get(ev.id)!.body_full as Record<string, unknown>)?.original_tools" class="pipeline-field">
+                      <span class="field-label">原始工具:</span>
+                      <code>{{ ((details.get(ev.id)!.body_full as Record<string, unknown>)?.original_tools as string[])?.join(', ') }}</code>
+                    </div>
+                    <div v-if="(details.get(ev.id)!.body_full as Record<string, unknown>)?.kept_tools" class="pipeline-field">
+                      <span class="field-label">保留:</span>
+                      <code class="kept">{{ ((details.get(ev.id)!.body_full as Record<string, unknown>)?.kept_tools as string[])?.join(', ') }}</code>
+                    </div>
+                    <div v-if="(details.get(ev.id)!.body_full as Record<string, unknown>)?.removed_tools" class="pipeline-field">
+                      <span class="field-label">移除:</span>
+                      <code class="removed">{{ ((details.get(ev.id)!.body_full as Record<string, unknown>)?.removed_tools as string[])?.join(', ') }}</code>
+                    </div>
+                  </template>
+                  <!-- 其他 pipeline 事件: 通用 JSON 展示 -->
+                  <template v-else>
+                    <pre class="pre">{{ formatBody(details.get(ev.id)!.body_full) }}</pre>
+                  </template>
+                </div>
+              </template>
+              <!-- HTTP 事件详情: 原有展示 -->
               <template v-else-if="details.get(ev.id)">
                 <div v-if="details.get(ev.id)!.stream_assembled" class="assembled">
                   <div class="section-label">汇总内容 ({{ details.get(ev.id)!.stream_chunks_count }} chunks)</div>
@@ -153,6 +266,7 @@ function formatTs(ts: number): string {
                   <pre class="pre">{{ formatBody(details.get(ev.id)!.body_full) }}</pre>
                 </div>
               </template>
+              <!-- 无详情时的预览 -->
               <div v-else class="preview">
                 <pre class="pre">{{ formatBody(ev.body_preview) }}</pre>
               </div>
@@ -160,7 +274,7 @@ function formatTs(ts: number): string {
           </div>
         </div>
       </div>
-      <div v-if="!groups.length" class="empty">还没有捕获到 HTTP 事件。发一条消息试试。</div>
+      <div v-if="!groups.length" class="empty">还没有捕获到事件。发一条消息试试。</div>
     </div>
   </div>
 </template>
@@ -234,6 +348,13 @@ function formatTs(ts: number): string {
   &:hover { background: var(--el-fill-color); }
 
   .e-time { color: var(--el-text-color-secondary); }
+  .e-summary {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--el-text-color-primary);
+  }
   .e-method { font-weight: 600; }
   .e-url {
     flex: 1;
@@ -272,6 +393,38 @@ function formatTs(ts: number): string {
 }
 
 .loading { color: var(--el-text-color-secondary); }
+
+.pipeline-detail {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.pipeline-field {
+  display: flex;
+  align-items: baseline;
+  gap: $space-2;
+  font-size: 12px;
+  .field-label {
+    color: var(--el-text-color-secondary);
+    min-width: 70px;
+  }
+  code {
+    font-family: 'JetBrains Mono', Menlo, monospace;
+    &.kept { color: var(--el-color-success); }
+    &.removed { color: var(--el-color-danger); }
+  }
+}
+
+.expressor-compare {
+  display: flex;
+  gap: $space-3;
+  .compare-col {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
 .empty {
   color: var(--el-text-color-secondary);
   padding: $space-4;
