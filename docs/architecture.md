@@ -1,9 +1,9 @@
 # 架构设计文档 | Architecture Design
 
-> **系统版本**: v0.3.0
+> **系统版本**: v0.3.3
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
-> **最后更新**: 2026-07-26
+> **最后更新**: 2026-07-28
 > **作者**: HarryHelloo
 
 ---
@@ -61,7 +61,7 @@ Forwarder ([src/infra/forwarder/](../src/infra/forwarder/)) 不属于任何单�
 
 ### 3.2 Agent 一览
 
-一次请求最多 4 个 Agent, 默认路径激活 3 个 (代理思考默认关):
+一次请求最多 5 个 Agent (不含 Expressor), 默认路径激活 3 个 (代理思考/Expressor 默认关):
 
 | # | Agent | 推理方法 | 触发时机 |
 |---|-------|---------|---------|
@@ -69,6 +69,7 @@ Forwarder ([src/infra/forwarder/](../src/infra/forwarder/)) 不属于任何单�
 | 2 | 代理思考 | CoT (可选) | `proxy_thinking_enabled=True` 时, 在主对话前 |
 | 3 | 记忆分析 | ReAct | 主对话后, 与关系分析并行 |
 | 4 | 关系分析 | ReAct | 主对话后, 与记忆分析并行 |
+| 3 | Expressor | ASSIST 调用 (可选) | 群聊非流式, 主对话后, 文本 > 10 字符 |
 
 详细规格见 [modules/agents.md](modules/agents.md)。
 
@@ -92,7 +93,7 @@ parse_request (纯预处理节点)
                                            END
 ```
 
-**5 个节点**, 无独立的 vector_index 节点——嵌入向量的写入在 `memory_analysis_node` 内由 `MemoryLifecycle.store_candidate()` 顺手完成。代码见 [src/core/graph/builder.py](../src/core/graph/builder.py)。
+**6 个节点**, 无独立的 vector_index 节点——嵌入向量的写入在 `memory_analysis_node` 内由 `MemoryLifecycle.store_candidate()` 顺手完成。Expressor 在主对话后条件执行 (仅群聊非流式 stop 文本 > 10 字符), 不在拓扑图中单独节点。代码见 [src/core/graph/builder.py](../src/core/graph/builder.py)。
 
 ### 3.4 AgentState (共享状态)
 
@@ -280,7 +281,12 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 | `src/infra/vector_store.py` | Chroma 封装 (含 embedding lock, v0.2.4; v0.3.0 复合 where 粗筛) |
 | `src/infra/extraction.py` | 消息提取 (v0.3.0 起无主路径调用方, 保留导出) |
 | `src/infra/debug_bus.py` / `debug_context.py` | v0.2.5 调试事件总线 + correlation_id 传播 |
-| `src/persistence/` | SQLite 存储 (memory / auth / api_key / conversation / http_log / **identity / idempotency**, 后两者 v0.3.0) |
+| `src/infra/character_card.py` | v0.3.3 角色卡导入 (SillyTavern V1/V2) |
+| `src/infra/space_lock.py` | v0.3.3 空间级串行锁 |
+| `src/core/persona/definition.py` | v0.3.3 结构化人格定义 (PersonaDefinition) |
+| `src/core/tools/internal_registry.py` | v0.3.3 内部 tool 注册表 (身份绑定等) |
+| `src/core/tools/identity_binding.py` | v0.3.3 跨平台身份绑定内部 tool |
+| `src/persistence/` | SQLite 存储 (memory / auth / api_key / conversation / http_log / **identity / idempotency / persona / lorebook / space_policy**, 后三者 v0.3.3) |
 | `src/tools/` | Agent 工具工厂 |
 
 数据文件: `data/` 下 memory.db / conversation.db / auth.db / api_keys.db / http_logs.db / llm_service.db / notifications.db, v0.3.0 新增 **identity.db** (身份四表) 与 **idempotency.db** (重放缓存)。备份需覆盖全部, 见 [deployment.md](deployment.md)。
@@ -327,3 +333,4 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 | v0.2.10 | 2026-07-19 | 关系称呼动态演化: `relationships` 加 3 个 nullable 列 + `relationship_audit_log` 表; 关系分析 Agent 获 `update_addressing` 工具; 面板 `RelationshipsPage` 加编辑对话框 + 变更历史 + 回退按钮 |
 | v0.2.11 | 2026-07-19 | 人格面板编辑: `GET/PUT/DELETE /panel/admin/persona` + `data/persona_override.toml` (优先级最高); 面板 `MemoriesPage` 全列 sortable + filter (含 `source_frontend` 枚举筛选); 亲密度 / 信任度进度条按数值分档着色; 全局品牌图标改为 SVG favicon; 文档批量对齐 |
 | v0.3.0 | 2026-07-26 | **单人格多用户**: 身份模型 (Actor / UserGroup / effective_user_id) + 四种身份策略绑定 API Key + 非归属模式; 空间事件流 (space_id / committed_sequence / late_arrival / list_for_space); 幂等重放 (idempotency.db); 受众过滤检索 (AudienceFilter 两级过滤); 关系按 effective_user_id 分区; 移除全部 `"default"` 用户硬编码; 新增 `src/core/identity/`、identity_store / idempotency_store; 面板「身份管理」页 + `mnemosync identity` CLI |
+| v0.3.3 | 2026-07-28 | **工具协议完整闭环**: Expressor 表达改写层; 工具事务桥接 + 幂等重放; API Key 工具策略 (白名单/黑名单/冷却/全局频率); 工具参数隐私检查; 模型候选工具能力声明; 平台能力提示 + 选择性参与指南; 表达习惯学习; **调试与可观测性**: 管线事件 (6 类) + 前端渲染; 交互事务聚合; 评估维度统计; **并发与身份**: 空间级串行锁; 跨平台身份绑定 (指令 + 内部 tool); 内部 tool 注册表; **人格系统**: 结构化人格定义 (PersonaDefinition + SQLite 存储 + 版本化); 按空间覆盖表达倾向; 角色卡导入 (SillyTavern V1/V2); Lorebook 关键词匹配 + 注入; 记忆纠正 (supersede 软替代); SocialPolicy 空间社交策略 |
