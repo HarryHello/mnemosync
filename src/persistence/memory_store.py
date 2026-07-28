@@ -415,6 +415,8 @@ class SqliteMemoryStore:
         memory_type: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        before: datetime | None = None,
+        after: datetime | None = None,
     ) -> tuple[list[MemoryEntry], int]:
         """面板分页: 返回 (当前页, 匹配总数). is_forgotten=0 过滤.
 
@@ -439,6 +441,14 @@ class SqliteMemoryStore:
         if memory_type:
             where.append("memory_type = ?")
             params.append(memory_type)
+        if before:
+            ts = before if before.tzinfo else before.replace(tzinfo=timezone.utc)
+            where.append("created_at < ?")
+            params.append(ts.astimezone(timezone.utc).isoformat())
+        if after:
+            ts = after if after.tzinfo else after.replace(tzinfo=timezone.utc)
+            where.append("created_at > ?")
+            params.append(ts.astimezone(timezone.utc).isoformat())
         where_sql = " AND ".join(where)
 
         async with self._conn() as db:

@@ -230,6 +230,8 @@ export interface MemoryListParams {
   memory_type?: string
   sort_by?: string
   sort_order?: 'asc' | 'desc'
+  before?: string
+  after?: string
 }
 
 export async function listMemories(
@@ -242,6 +244,8 @@ export async function listMemories(
   if (params.memory_type) q.set('memory_type', params.memory_type)
   if (params.sort_by) q.set('sort_by', params.sort_by)
   if (params.sort_order) q.set('sort_order', params.sort_order)
+  if (params.before) q.set('before', params.before)
+  if (params.after) q.set('after', params.after)
   return request<MemoryListResponse>(`${API_BASE}/admin/memories?${q.toString()}`)
 }
 
@@ -251,6 +255,25 @@ export async function getMemory(memoryId: string): Promise<Memory> {
 
 export async function deleteMemory(memoryId: string): Promise<void> {
   await request(`${API_BASE}/admin/memories/${memoryId}`, { method: 'DELETE' })
+}
+
+export interface BatchDeleteMemoriesParams {
+  source_user: string
+  memory_type?: 'permanent' | 'normal'
+  before?: string
+}
+
+export async function deleteMemoriesBatch(
+  params: BatchDeleteMemoriesParams,
+): Promise<{ success: boolean; deleted: number }> {
+  const q = new URLSearchParams()
+  q.set('source_user', params.source_user)
+  if (params.memory_type) q.set('memory_type', params.memory_type)
+  if (params.before) q.set('before', params.before)
+  return request<{ success: boolean; deleted: number }>(
+    `${API_BASE}/admin/memories?${q.toString()}`,
+    { method: 'DELETE' },
+  )
 }
 
 // ============================================================================

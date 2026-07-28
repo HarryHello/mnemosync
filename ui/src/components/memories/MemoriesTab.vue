@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listMemories, deleteMemory } from '@/api/client'
+import { listMemories, deleteMemory, deleteMemoriesBatch } from '@/api/client'
 import type { Memory } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
 import MemoryTable from './MemoryTable.vue'
@@ -107,6 +107,30 @@ function onFilterChange(filters: Record<string, unknown[]>) {
   refresh()
 }
 
+async function onBatchDelete() {
+  const type = typeFilter.value[0]
+  const typeLabel = type === 'permanent' ? '永久记忆' : type === 'normal' ? '普通记忆' : '全部记忆'
+  try {
+    await ElMessageBox.confirm(
+      `确认删除用户 ${sourceUser.value} 的${typeLabel}？此操作不可恢复。共 ${total.value} 条匹配。`,
+      '批量删除记忆',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await deleteMemoriesBatch({
+      source_user: sourceUser.value || 'default',
+      memory_type: type as 'permanent' | 'normal' | undefined,
+    })
+    ElMessage.success(`已删除 ${res.deleted} 条记忆`)
+    await refresh()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
 function openDetail(row: Memory) {
   currentDetailRow.value = row
   detailDrawerVisible.value = true
@@ -127,6 +151,19 @@ watch(() => props.active, (active) => {
       subtitle="按重要度/衰减规则汰换，列头可点击排序 / 过滤。"
     >
       <template #actions>
+        <el-popconfirm
+          title="确认批量删除当前筛选条件下的所有记忆？"
+          confirm-button-text="删除"
+          cancel-button-text="取消"
+          @confirm="onBatchDelete"
+        >
+          <template #reference>
+            <el-button type="danger" plain :disabled="total === 0" :loading="loading">
+              <el-icon><Delete /></el-icon>
+              <span>批量删除</span>
+            </el-button>
+          </template>
+        </el-popconfirm>
         <el-button :loading="loading" @click="refresh">
           <el-icon><Refresh /></el-icon>
           <span>刷新</span>

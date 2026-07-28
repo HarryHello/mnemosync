@@ -508,13 +508,28 @@ async def list_memories(
     memory_type: str | None = Query(None, description="normal | permanent"),
     sort_by: str = Query("created_at", description="created_at | last_accessed | importance | decay_rate | access_count | memory_type | source_user"),
     sort_order: str = Query("desc", description="asc | desc"),
+    before: str | None = Query(None, description="ISO 时间，仅返回此时间之前创建的记忆"),
+    after: str | None = Query(None, description="ISO 时间，仅返回此时间之后创建的记忆"),
     store: SqliteMemoryStore = Depends(get_memory_store),
 ):
     """查询记忆列表 (服务器端分页 + 排序).
 
     total 是符合 source_user + memory_type 过滤的**全量匹配数**, 不是本页返回条数;
     前端据此计算总页数。sort_by 走白名单, 非法值退回 created_at。
+    before/after 支持 ISO 时间范围过滤。
     """
+    before_dt = None
+    after_dt = None
+    if before:
+        try:
+            before_dt = datetime.fromisoformat(before)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid before timestamp: {before}")
+    if after:
+        try:
+            after_dt = datetime.fromisoformat(after)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid after timestamp: {after}")
     offset = (page - 1) * page_size
     items, total = await store.list_page_for_user(
         source_user,
@@ -523,6 +538,8 @@ async def list_memories(
         memory_type=memory_type,
         sort_by=sort_by,
         sort_order=sort_order,
+        before=before_dt,
+        after=after_dt,
     )
     return MemoryListResponse(
         items=[_memory_to_response(m) for m in items],
