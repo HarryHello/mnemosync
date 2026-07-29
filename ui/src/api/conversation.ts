@@ -58,6 +58,16 @@ export async function listConversationTurnSources(): Promise<{ items: string[] }
   return apiGet<{ items: string[] }>('/admin/conversation-turns/sources')
 }
 
+export interface SpeakerItem {
+  effective_user_id: string
+  display_name: string
+  actor_id: string
+}
+
+export async function listConversationTurnSpeakers(): Promise<{ items: SpeakerItem[] }> {
+  return apiGet<{ items: SpeakerItem[] }>('/admin/conversation-turns/speakers')
+}
+
 export async function deleteConversationTurn(turnId: number): Promise<void> {
   await apiDelete(`/admin/conversation-turns/${turnId}`)
 }

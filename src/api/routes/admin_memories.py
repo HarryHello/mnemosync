@@ -274,9 +274,17 @@ def _relationship_to_response(
 # ============================================================================
 
 
+@router.get("/memories/sources")
+async def list_memory_sources(
+    store: SqliteMemoryStore = Depends(get_memory_store),
+):
+    """列出 memory_entries 中出现过的 source_user, 供下拉框使用."""
+    return {"items": await store.list_distinct_source_users()}
+
+
 @router.get("/memories", response_model=MemoryListResponse)
 async def list_memories(
-    source_user: str = Query(..., min_length=1, description="用户标识 (必填)"),
+    source_user: str = Query("", description="用户标识, 空=全部用户"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     memory_type: str | None = Query(None, description="normal | permanent"),

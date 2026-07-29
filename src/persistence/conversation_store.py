@@ -597,6 +597,33 @@ class SqliteConversationStore(SqliteStore):
             ) as cur:
                 return [row[0] for row in await cur.fetchall()]
 
+    async def list_distinct_speakers(self) -> list[dict[str, str]]:
+        """返回 conversation_turns 中出现过的说话者名单.
+
+        返回 [{effective_user_id, display_name_snapshot, actor_id}] 去重列表,
+        按 display_name_snapshot 排序, 供前端下拉筛选.
+        """
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT DISTINCT effective_user_id, display_name_snapshot, actor_id "
+                "FROM conversation_turns "
+                "WHERE effective_user_id IS NOT NULL AND effective_user_id != '' "
+                "ORDER BY display_name_snapshot ASC, effective_user_id ASC"
+            ) as cur:
+                seen = set()
+                result: list[dict[str, str]] = []
+                for row in await cur.fetchall():
+                    uid, name, aid = row
+                    key = uid or aid or ""
+                    if key and key not in seen:
+                        seen.add(key)
+                        result.append({
+                            "effective_user_id": uid or "",
+                            "display_name": name or uid or aid or "",
+                            "actor_id": aid or "",
+                        })
+                return result
+
     async def delete_by_id(self, turn_id: int) -> bool:
         async with self._conn() as db:
             cur = await db.execute("DELETE FROM conversation_turns WHERE id = ?", (turn_id,))

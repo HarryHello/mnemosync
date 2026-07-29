@@ -9,6 +9,8 @@ const props = defineProps<{
   sortOrder?: 'asc' | 'desc'
   roleFilter?: string[]
   sourceFilter?: string[]
+  speakerFilter?: string[]
+  speakerOpts?: Array<{ text: string; value: string }>
   selectedIds?: number[]
   sources?: Array<{ text: string; value: string }>
 }>()
@@ -142,7 +144,14 @@ function contentPreview(content: string): string {
         </el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="说话者" min-width="190">
+    <el-table-column
+      label="说话者"
+      min-width="190"
+      column-key="effective_user_id"
+      :filters="speakerOpts"
+      :filter-multiple="false"
+      :filtered-value="speakerFilter"
+    >
       <template #default="{ row }: { row: ConversationTurn }">
         <div class="speaker-cell">
           <span class="speaker-name">{{ speakerLabel(row) }}</span>

@@ -120,6 +120,14 @@ async def list_conversation_turns(
     )
 
 
+@router.get("/conversation-turns/speakers")
+async def list_conversation_speakers(
+    store: SqliteConversationStore = Depends(get_conversation_store),
+):
+    """列出对话流水中出现过的说话者, 供前端说话者筛选下拉框."""
+    return {"items": await store.list_distinct_speakers()}
+
+
 @router.get("/conversation-turns/sources")
 async def list_conversation_turn_sources(
     store: SqliteConversationStore = Depends(get_conversation_store),

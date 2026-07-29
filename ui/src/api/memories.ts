@@ -34,7 +34,7 @@ export async function listMemories(
   params: MemoryListParams = {},
 ): Promise<MemoryListResponse> {
   const q = new URLSearchParams()
-  q.set('source_user', params.source_user || 'default')
+  if (params.source_user) q.set('source_user', params.source_user)
   if (params.page) q.set('page', String(params.page))
   if (params.page_size) q.set('page_size', String(params.page_size))
   if (params.memory_type) q.set('memory_type', params.memory_type)
@@ -51,6 +51,10 @@ export async function getMemory(memoryId: string): Promise<Memory> {
 
 export async function deleteMemory(memoryId: string): Promise<void> {
   await apiDelete(`/admin/memories/${memoryId}`)
+}
+
+export async function listMemorySources(): Promise<{ items: string[] }> {
+  return apiGet<{ items: string[] }>('/admin/memories/sources')
 }
 
 export interface BatchDeleteMemoriesParams {

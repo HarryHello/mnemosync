@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listMemories, deleteMemory, deleteMemoriesBatch } from '@/api/client'
+import { listMemories, listMemorySources, deleteMemory, deleteMemoriesBatch } from '@/api/client'
 import type { Memory } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
 import MemoryTable from './MemoryTable.vue'
@@ -19,16 +19,26 @@ const pageSize = ref(10)
 const sortBy = ref('created_at')
 const sortOrder = ref<'asc' | 'desc'>('desc')
 const typeFilter = ref<string[]>([])
-const sourceUser = ref('default')
+const sourceUser = ref('')
+const sourceOptions = ref<string[]>([])
 const loaded = ref(false)
 const detailDrawerVisible = ref(false)
 const currentDetailRow = ref<Memory | null>(null)
+
+async function loadSourceOptions() {
+  try {
+    const res = await listMemorySources()
+    sourceOptions.value = res.items
+  } catch {
+    sourceOptions.value = []
+  }
+}
 
 async function refresh() {
   loading.value = true
   try {
     const res = await listMemories({
-      source_user: sourceUser.value || 'default',
+      source_user: sourceUser.value || undefined,
       page: page.value,
       page_size: pageSize.value,
       memory_type: typeFilter.value[0] || undefined,
@@ -110,9 +120,10 @@ function onFilterChange(filters: Record<string, unknown[]>) {
 async function onBatchDelete() {
   const type = typeFilter.value[0]
   const typeLabel = type === 'permanent' ? '永久记忆' : type === 'normal' ? '普通记忆' : '全部记忆'
+  const userLabel = sourceUser.value || '全部用户'
   try {
     await ElMessageBox.confirm(
-      `确认删除用户 ${sourceUser.value} 的${typeLabel}？此操作不可恢复。共 ${total.value} 条匹配。`,
+      `确认删除用户 ${userLabel} 的${typeLabel}？此操作不可恢复。共 ${total.value} 条匹配。`,
       '批量删除记忆',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
@@ -121,7 +132,7 @@ async function onBatchDelete() {
   }
   try {
     const res = await deleteMemoriesBatch({
-      source_user: sourceUser.value || 'default',
+      source_user: sourceUser.value || '',
       memory_type: type as 'permanent' | 'normal' | undefined,
     })
     ElMessage.success(`已删除 ${res.deleted} 条记忆`)
@@ -138,6 +149,7 @@ function openDetail(row: Memory) {
 
 watch(() => props.active, (active) => {
   if (active && !loaded.value) {
+    loadSourceOptions()
     refresh()
     loaded.value = true
   }
@@ -172,13 +184,20 @@ watch(() => props.active, (active) => {
           <div class="header-right">
             <el-form :inline="true" @submit.prevent="onSourceApply">
               <el-form-item label="source_user">
-                <el-input
+                <el-select
                   v-model="sourceUser"
-                  placeholder="default"
+                  placeholder="全部用户"
                   clearable
-                  style="width: 180px"
-                  @keyup.enter="onSourceApply"
-                />
+                  style="width: 200px"
+                  @change="onSourceApply"
+                >
+                  <el-option
+                    v-for="src in sourceOptions"
+                    :key="src"
+                    :label="src"
+                    :value="src"
+                  />
+                </el-select>
               </el-form-item>
               <el-form-item>
                 <el-button type="primary" @click="onSourceApply">

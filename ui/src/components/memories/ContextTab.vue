@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listConversationTurnSources,
+  listConversationTurnSpeakers,
   listConversationTurns,
   deleteConversationTurn,
   deleteConversationTurns,
@@ -27,6 +28,8 @@ const sortBy = ref('ts')
 const sortOrder = ref<'asc' | 'desc'>('desc')
 const roleFilter = ref<string[]>([])
 const sourceFilter = ref<string[]>([])
+const speakerFilter = ref<string[]>([])
+const speakerOpts = ref<Array<{ text: string; value: string }>>([])
 const sources = ref<Array<{ text: string; value: string }>>([])
 const selectedIds = ref<number[]>([])
 const loaded = ref(false)
@@ -42,6 +45,18 @@ async function refreshSources() {
   }
 }
 
+async function loadSpeakerOptions() {
+  try {
+    const res = await listConversationTurnSpeakers()
+    speakerOpts.value = res.items.map((sp) => ({
+      text: sp.display_name,
+      value: sp.effective_user_id,
+    }))
+  } catch {
+    speakerOpts.value = []
+  }
+}
+
 async function refresh() {
   loading.value = true
   selectedIds.value = []
@@ -51,6 +66,7 @@ async function refresh() {
       page_size: pageSize.value,
       role: (roleFilter.value[0] as 'user' | 'assistant' | undefined) || undefined,
       source_frontend: sourceFilter.value[0] || undefined,
+      effective_user_id: speakerFilter.value[0] || undefined,
       sort_by: sortBy.value,
       sort_order: sortOrder.value,
     })
@@ -146,8 +162,10 @@ function onSortChange(evt: { prop: string | null; order: string | null }) {
 function onFilterChange(filters: Record<string, unknown[]>) {
   const r = filters['role'] as string[] | undefined
   const s = filters['source_frontend'] as string[] | undefined
+  const sp = filters['effective_user_id'] as string[] | undefined
   if (r !== undefined) roleFilter.value = r ?? []
   if (s !== undefined) sourceFilter.value = s ?? []
+  if (sp !== undefined) speakerFilter.value = sp ?? []
   page.value = 1
   refresh()
 }
@@ -176,6 +194,7 @@ function openDetail(row: ConversationTurn): void {
 watch(() => props.active, (active) => {
   if (active && !loaded.value) {
     refreshSources()
+    loadSpeakerOptions()
     refresh()
     loaded.value = true
   }
@@ -230,6 +249,8 @@ watch(() => props.active, (active) => {
         :sort-order="sortOrder"
         :role-filter="roleFilter"
         :source-filter="sourceFilter"
+        :speaker-filter="speakerFilter"
+        :speaker-opts="speakerOpts"
         :selected-ids="selectedIds"
         :sources="sources"
         @delete="onDelete"
@@ -290,5 +311,9 @@ watch(() => props.active, (active) => {
   display: flex;
   justify-content: flex-end;
   padding-top: $space-3;
+}
+
+.context-card + .interaction-list {
+  margin-top: $space-4;
 }
 </style>
