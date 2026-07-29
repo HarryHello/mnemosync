@@ -30,7 +30,7 @@ const MainRoutes: RouteRecordRaw = {
     {
       path: 'identity',
       name: 'identity',
-      component: () => import('@/views/IdentityPage.vue'),
+      component: () => import('@/views/IdentityRelationsPage.vue'),
     },
     {
       path: 'logs',
@@ -41,11 +41,6 @@ const MainRoutes: RouteRecordRaw = {
       path: 'memories',
       name: 'memories',
       component: () => import('@/views/MemoriesPage.vue'),
-    },
-    {
-      path: 'relationships',
-      name: 'relationships',
-      component: () => import('@/views/RelationshipsPage.vue'),
     },
     {
       path: 'upstream',

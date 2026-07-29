@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getRelationship,
@@ -11,10 +11,13 @@ import type {
   ListRelationshipsParams,
 } from '@/api/client'
 import type { Relationship, RelationshipAuditEntry, RelationshipUpdateBody } from '@/types/api'
-import PageHeader from '@/components/common/PageHeader.vue'
-import RelationshipListTable from '@/components/relationships/RelationshipListTable.vue'
-import RelationshipEditDialog from '@/components/relationships/RelationshipEditDialog.vue'
-import RelationshipAuditTable from '@/components/relationships/RelationshipAuditTable.vue'
+import RelationshipListTable from './RelationshipListTable.vue'
+import RelationshipEditDialog from './RelationshipEditDialog.vue'
+import RelationshipAuditTable from './RelationshipAuditTable.vue'
+
+const props = defineProps<{
+  active?: boolean
+}>()
 
 // ─── 列表状态 ────────────────────────────────
 
@@ -232,212 +235,216 @@ function onPageSizeChange(size: number) {
   refreshList()
 }
 
-onMounted(refreshList)
+watch(() => props.active, (active) => {
+  if (active) {
+    refreshList()
+  }
+}, { immediate: true })
 </script>
 
 <template>
-  <div class="page-container">
-    <PageHeader
-      title="关系状态"
-      subtitle="当前人格与各用户之间的亲密度、信任度、称呼与关系背景。选择一个用户查看详情或编辑。"
-    >
-      <template #actions>
-        <el-button v-if="selectedUserId" :loading="listLoading" @click="backToList">
-          <el-icon><Back /></el-icon>
-          <span>返回列表</span>
-        </el-button>
-        <el-button :loading="listLoading" @click="refreshList">
-          <el-icon><Refresh /></el-icon>
-          <span>刷新</span>
-        </el-button>
-      </template>
-    </PageHeader>
-
-    <!-- 列表模式 -->
-    <template v-if="!selectedUserId">
-      <RelationshipListTable
-        :items="listItems"
-        :loading="listLoading"
-        :total="listTotal"
-        :page="listPage"
-        :page-size="listPageSize"
-        @select="onSelectRow"
-        @update:page="onPageChange"
-        @update:page-size="onPageSizeChange"
-        @refresh="refreshList"
-      />
-    </template>
-
-    <!-- 详情模式 -->
-    <template v-else>
-      <el-alert
-        v-if="errMsg"
-        :title="'加载失败: ' + errMsg"
-        type="error"
-        :closable="false"
-        show-icon
-        class="mb"
-      />
-
-      <el-alert
-        v-if="rel && !rel.updated_at"
-        title="关系尚未建立"
-        description="新装或刚重置后, 此用户还没有与人格交互过。下次对话时会自动创建关系记录, 当前称呼沿用安装基线 (TOML)。"
-        type="info"
-        :closable="false"
-        show-icon
-        class="mb"
-      />
-
-      <div v-loading="detailLoading">
-        <div v-if="rel" class="grid">
-          <el-card class="metric">
-            <template #header>
-              <div class="metric-head">
-                <span>亲密度</span>
-                <el-tag size="small" :type="levelType(rel.intimacy)">
-                  {{ levelText(rel.intimacy) }}
-                </el-tag>
-              </div>
-            </template>
-            <div class="metric-value mono">{{ rel.intimacy.toFixed(3) }}</div>
-            <el-progress
-              :percentage="intimacyPct"
-              :stroke-width="10"
-              :status="levelStatus(rel.intimacy)"
-            />
-            <div class="metric-hint">
-              与用户互动的亲密程度, 由对话行为与情感极性驱动累积。
-            </div>
-          </el-card>
-
-          <el-card class="metric">
-            <template #header>
-              <div class="metric-head">
-                <span>信任度</span>
-                <el-tag size="small" :type="levelType(rel.trust)">
-                  {{ levelText(rel.trust) }}
-                </el-tag>
-              </div>
-            </template>
-            <div class="metric-value mono">{{ rel.trust.toFixed(3) }}</div>
-            <el-progress
-              :percentage="trustPct"
-              :stroke-width="10"
-              :status="levelStatus(rel.trust)"
-            />
-            <div class="metric-hint">
-              信任等级影响记忆可见性 (CONFIDENTIAL / FRIENDS_ONLY 门槛)。
-            </div>
-          </el-card>
-
-          <el-card class="addressing">
-            <template #header>
-              <div class="addressing-head">
-                <span>当前称呼与关系背景</span>
-                <el-button size="small" type="primary" @click="openEditDialog">
-                  <el-icon><Edit /></el-icon>
-                  <span>编辑</span>
-                </el-button>
-              </div>
-            </template>
-            <el-descriptions :column="1" border size="small">
-              <el-descriptions-item label="人格自称">
-                <span class="mono">{{ rel.persona_addressing }}</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="用户称呼">
-                <span class="mono">{{ rel.user_addressing }}</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="关系背景">
-                <span class="context">{{ rel.context }}</span>
-              </el-descriptions-item>
-            </el-descriptions>
-            <div class="metric-hint">
-              这些值优先取自 relationships 表, 未被覆盖时沿用 TOML 安装基线。
-              关系分析 Agent 可在对话中自动更新它们并写入下方变更历史。
-            </div>
-          </el-card>
-
-          <el-card class="info">
-            <template #header>
-              <span>关系元数据</span>
-            </template>
-            <el-descriptions :column="1" border size="small">
-              <el-descriptions-item label="人格 ID">
-                <span class="mono">{{ rel.persona_id }}</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="用户">
-                <span>{{ selectedIdentityName }}</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="身份来源">
-                <div v-if="selectedIdentity?.accounts.length" class="account-list">
-                  <div
-                    v-for="account in selectedIdentity.accounts"
-                    :key="account.actor_id"
-                    class="account-item"
-                  >
-                    <el-tag size="small" type="info">{{ account.frontend }}</el-tag>
-                    <span v-if="account.display_name">{{ account.display_name }}</span>
-                    <span class="mono">{{ account.external_key }}</span>
-                  </div>
-                </div>
-                <span v-else class="muted">未关联身份数据</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="内部用户 ID">
-                <span class="mono muted">{{ rel.user_id }}</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="关系类型">
-                <el-tag v-if="rel.relationship_type" size="small">
-                  {{ rel.relationship_type }}
-                </el-tag>
-                <span v-else class="muted">未定义</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="最近活跃">
-                <span class="mono">{{ fmtDate(rel.updated_at) }}</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="备注">
-                <span v-if="rel.notes" class="notes">{{ rel.notes }}</span>
-                <span v-else class="muted">—</span>
-              </el-descriptions-item>
-            </el-descriptions>
-          </el-card>
-
-          <el-card class="audit">
-            <template #header>
-              <div class="addressing-head">
-                <span>变更历史 (最近 20 条)</span>
-                <el-button size="small" text @click="refreshAudit" :loading="auditLoading">
-                  <el-icon><Refresh /></el-icon>
-                  <span>刷新</span>
-                </el-button>
-              </div>
-            </template>
-            <RelationshipAuditTable
-              :items="audit"
-              :loading="auditLoading"
-              @refresh="refreshAudit"
-              @revert="revertToAudit"
-            />
-          </el-card>
-        </div>
-
-        <el-empty
-          v-else-if="!detailLoading && !errMsg"
-          description="尚无该用户的关系记录"
-        />
-      </div>
-    </template>
-
-    <RelationshipEditDialog
-      v-model="editDialogVisible"
-      :submitting="editSaving"
-      :relationship="rel"
-      @submit="submitEdit"
+  <!-- 列表模式 -->
+  <template v-if="!selectedUserId">
+    <RelationshipListTable
+      :items="listItems"
+      :loading="listLoading"
+      :total="listTotal"
+      :page="listPage"
+      :page-size="listPageSize"
+      @select="onSelectRow"
+      @update:page="onPageChange"
+      @update:page-size="onPageSizeChange"
+      @refresh="refreshList"
     />
-  </div>
+  </template>
+
+  <!-- 详情模式 -->
+  <template v-else>
+    <div class="detail-toolbar">
+      <el-button :loading="listLoading" @click="backToList">
+        <el-icon><Back /></el-icon>
+        <span>返回列表</span>
+      </el-button>
+      <el-button :loading="listLoading" @click="refreshList">
+        <el-icon><Refresh /></el-icon>
+        <span>刷新</span>
+      </el-button>
+    </div>
+
+    <el-alert
+      v-if="errMsg"
+      :title="'加载失败: ' + errMsg"
+      type="error"
+      :closable="false"
+      show-icon
+      class="mb"
+    />
+
+    <el-alert
+      v-if="rel && !rel.updated_at"
+      title="关系尚未建立"
+      description="新装或刚重置后, 此用户还没有与人格交互过。下次对话时会自动创建关系记录, 当前称呼沿用安装基线 (TOML)。"
+      type="info"
+      :closable="false"
+      show-icon
+      class="mb"
+    />
+
+    <div v-loading="detailLoading">
+      <div v-if="rel" class="grid">
+        <el-card class="metric">
+          <template #header>
+            <div class="metric-head">
+              <span>亲密度</span>
+              <el-tag size="small" :type="levelType(rel.intimacy)">
+                {{ levelText(rel.intimacy) }}
+              </el-tag>
+            </div>
+          </template>
+          <div class="metric-value mono">{{ rel.intimacy.toFixed(3) }}</div>
+          <el-progress
+            :percentage="intimacyPct"
+            :stroke-width="10"
+            :status="levelStatus(rel.intimacy)"
+          />
+          <div class="metric-hint">
+            与用户互动的亲密程度, 由对话行为与情感极性驱动累积。
+          </div>
+        </el-card>
+
+        <el-card class="metric">
+          <template #header>
+            <div class="metric-head">
+              <span>信任度</span>
+              <el-tag size="small" :type="levelType(rel.trust)">
+                {{ levelText(rel.trust) }}
+              </el-tag>
+            </div>
+          </template>
+          <div class="metric-value mono">{{ rel.trust.toFixed(3) }}</div>
+          <el-progress
+            :percentage="trustPct"
+            :stroke-width="10"
+            :status="levelStatus(rel.trust)"
+          />
+          <div class="metric-hint">
+            信任等级影响记忆可见性 (CONFIDENTIAL / FRIENDS_ONLY 门槛)。
+          </div>
+        </el-card>
+
+        <el-card class="addressing">
+          <template #header>
+            <div class="addressing-head">
+              <span>当前称呼与关系背景</span>
+              <el-button size="small" type="primary" @click="openEditDialog">
+                <el-icon><Edit /></el-icon>
+                <span>编辑</span>
+              </el-button>
+            </div>
+          </template>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="人格自称">
+              <span class="mono">{{ rel.persona_addressing }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="用户称呼">
+              <span class="mono">{{ rel.user_addressing }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="关系背景">
+              <span class="context">{{ rel.context }}</span>
+            </el-descriptions-item>
+          </el-descriptions>
+          <div class="metric-hint">
+            这些值优先取自 relationships 表, 未被覆盖时沿用 TOML 安装基线。
+            关系分析 Agent 可在对话中自动更新它们并写入下方变更历史。
+          </div>
+        </el-card>
+
+        <el-card class="info">
+          <template #header>
+            <span>关系元数据</span>
+          </template>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="人格 ID">
+              <span class="mono">{{ rel.persona_id }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="用户">
+              <span>{{ selectedIdentityName }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="身份来源">
+              <div v-if="selectedIdentity?.accounts.length" class="account-list">
+                <div
+                  v-for="account in selectedIdentity.accounts"
+                  :key="account.actor_id"
+                  class="account-item"
+                >
+                  <el-tag size="small" type="info">{{ account.frontend }}</el-tag>
+                  <span v-if="account.display_name">{{ account.display_name }}</span>
+                  <span class="mono">{{ account.external_key }}</span>
+                </div>
+              </div>
+              <span v-else class="muted">未关联身份数据</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="内部用户 ID">
+              <span class="mono muted">{{ rel.user_id }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="关系类型">
+              <el-tag v-if="rel.relationship_type" size="small">
+                {{ rel.relationship_type }}
+              </el-tag>
+              <span v-else class="muted">未定义</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="最近活跃">
+              <span class="mono">{{ fmtDate(rel.updated_at) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="备注">
+              <span v-if="rel.notes" class="notes">{{ rel.notes }}</span>
+              <span v-else class="muted">—</span>
+            </el-descriptions-item>
+          </el-descriptions>
+        </el-card>
+
+        <el-card class="audit">
+          <template #header>
+            <div class="addressing-head">
+              <span>变更历史 (最近 20 条)</span>
+              <el-button size="small" text @click="refreshAudit" :loading="auditLoading">
+                <el-icon><Refresh /></el-icon>
+                <span>刷新</span>
+              </el-button>
+            </div>
+          </template>
+          <RelationshipAuditTable
+            :items="audit"
+            :loading="auditLoading"
+            @refresh="refreshAudit"
+            @revert="revertToAudit"
+          />
+        </el-card>
+      </div>
+
+      <el-empty
+        v-else-if="!detailLoading && !errMsg"
+        description="尚无该用户的关系记录"
+      />
+    </div>
+  </template>
+
+  <RelationshipEditDialog
+    v-model="editDialogVisible"
+    :submitting="editSaving"
+    :relationship="rel"
+    @submit="submitEdit"
+  />
 </template>
 
 <style lang="scss" scoped>
+.detail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  margin-bottom: $space-4;
+}
+
 .account-list {
   display: flex;
   flex-direction: column;
