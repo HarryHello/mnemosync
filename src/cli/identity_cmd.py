@@ -21,7 +21,10 @@ import sys
 from typing import Any
 
 from src.cli.cli import get_project_root
+from src.core.config import get_settings
+from src.core.constants import DEFAULT_PERSONA_ID
 from src.persistence.identity_store import SqliteIdentityStore
+from src.persistence.memory_store import SqliteMemoryStore
 
 _IDENTITY_DB_PATH = "data/identity.db"
 
@@ -399,6 +402,23 @@ def _cmd_bind(args: argparse.Namespace) -> int:
         if not ok:
             print("ℹ️  该参与者已在此用户组中")
             return 0
+
+        # 迁移既有关系到 group, 防止关系行分裂
+        try:
+            settings = get_settings()
+            memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
+            await memory_store.connect()
+            try:
+                migrated = await memory_store.migrate_relationships_to_group(
+                    DEFAULT_PERSONA_ID, args.actor_id, args.group_id,
+                )
+                if migrated:
+                    print(f"  已迁移 {migrated} 条关系数据到用户组")
+            finally:
+                await memory_store.close()
+        except Exception as e:
+            print(f"  ⚠️ 关系迁移失败 (可忽略, 后续数据将归组): {e}")
+
         print(f"✅ 已绑定: {actor.external_key} ({actor.frontend}) → 组 {args.group_id} ({group.name or '未命名'})")
         print("   从现在起, 该身份的记忆与关系与组内其他身份共享 (effective_user_id = 组 ID)")
         return 0

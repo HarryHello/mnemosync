@@ -480,11 +480,30 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
                 elif target_groups:
                     group_id = target_groups[0].id
                     await identity_store.bind_actor_to_group(actor_id, group_id)
+                    # 迁移 actor 的既有关系到 group, 防止关系行分裂
+                    _memory_store = getattr(http_request.app.state, "memory_store", None)
+                    if _memory_store:
+                        from src.core.constants import DEFAULT_PERSONA_ID
+                        migrated = await _memory_store.migrate_relationships_to_group(
+                            DEFAULT_PERSONA_ID, actor_id, group_id,
+                        )
+                        if migrated:
+                            logger.info("关系迁移: actor=%s → group=%s, %d 条", actor_id, group_id, migrated)
                     msg = f"绑定成功! 已加入用户组 {group_id}。"
                 else:
                     group = await identity_store.create_group(name=None)
                     await identity_store.bind_actor_to_group(target_actor_id, group.id)
                     await identity_store.bind_actor_to_group(actor_id, group.id)
+                    # 迁移两个 actor 的既有关系到新 group
+                    _memory_store = getattr(http_request.app.state, "memory_store", None)
+                    if _memory_store:
+                        from src.core.constants import DEFAULT_PERSONA_ID
+                        for aid in (target_actor_id, actor_id):
+                            migrated = await _memory_store.migrate_relationships_to_group(
+                                DEFAULT_PERSONA_ID, aid, group.id,
+                            )
+                            if migrated:
+                                logger.info("关系迁移: actor=%s → group=%s, %d 条", aid, group.id, migrated)
                     msg = f"绑定成功! 已创建新用户组 {group.id}。"
             else:
                 msg = "身份存储不可用, 绑定失败。"

@@ -13,8 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.deps import (
     get_identity_store,
+    get_memory_store,
     get_multi_forwarder,
 )
+from src.persistence.memory_store import SqliteMemoryStore
 from src.api.routes.auth import get_current_user
 from src.api.schemas.admin import (
     ActorListResponse,
@@ -352,11 +354,25 @@ async def bind_actor_to_group(
     actor_id: str,
     group_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
+    memory_store: SqliteMemoryStore = Depends(get_memory_store),
 ):
-    """绑定 Actor 到 UserGroup."""
+    """绑定 Actor 到 UserGroup.
+
+    绑定后自动迁移 Actor 的现有关系数据到 UserGroup, 防止同一人出现
+    两条独立关系 (绑定前以 actor_id 为 user_id, 绑定后以 group_id 为 user_id).
+    """
     ok = await store.bind_actor_to_group(actor_id, group_id)
     if not ok:
         raise HTTPException(409, detail="绑定已存在或 Actor/Group 不存在")
+    from src.core.constants import DEFAULT_PERSONA_ID
+    migrated = await memory_store.migrate_relationships_to_group(
+        DEFAULT_PERSONA_ID, actor_id, group_id,
+    )
+    if migrated:
+        logger.info(
+            "关系迁移: actor=%s → group=%s, 迁移 %d 条",
+            actor_id, group_id, migrated,
+        )
     return {"success": True, "actor_id": actor_id, "group_id": group_id}
 
 

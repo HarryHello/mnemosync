@@ -278,6 +278,15 @@ class SqliteIdentityStore(SqliteStore):
                 for r in rows
             ]
 
+    async def list_all_bound_actor_ids(self) -> list[tuple[str, str]]:
+        """返回所有已绑定的 (actor_id, group_id) 对, 用于启动迁移."""
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT actor_id, group_id FROM actor_group_memberships"
+            ) as cur:
+                rows = await cur.fetchall()
+            return [(r[0], r[1]) for r in rows]
+
     async def list_group_members(self, group_id: str) -> list[Actor]:
         async with self._conn() as db:
             async with db.execute(

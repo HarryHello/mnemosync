@@ -358,6 +358,9 @@ class SqliteMemoryStore(SqliteStore):
             visited.add(next_id)
             current = next_entry
         return chain
+
+    async def mark_accessed(self, entry_id: str) -> None:
+        """标记一条记忆被访问 (access_count + 1, 更新 last_accessed)."""
         now = datetime.now(UTC).isoformat()
         async with self._conn() as db:
             await db.execute(
@@ -437,8 +440,11 @@ class SqliteMemoryStore(SqliteStore):
         sort_col = sort_by if sort_by in allowed_sort else "created_at"
         direction = "ASC" if sort_order.lower() == "asc" else "DESC"
 
-        where = ["source_user = ?", "is_forgotten = 0", "superseded_by IS NULL"]
-        params: list = [source_user]
+        where = ["is_forgotten = 0", "superseded_by IS NULL"]
+        params: list = []
+        if source_user:
+            where.insert(0, "source_user = ?")
+            params.append(source_user)
         if memory_type:
             where.append("memory_type = ?")
             params.append(memory_type)
@@ -473,6 +479,17 @@ class SqliteMemoryStore(SqliteStore):
                 items = [self._row_to_entry(r) for r in rows]
 
         return items, total
+
+    async def list_distinct_source_users(self) -> list[str]:
+        """返回 memory_entries 表中所有活跃记忆的 source_user 去重列表."""
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT DISTINCT source_user FROM memory_entries "
+                "WHERE source_user IS NOT NULL AND source_user != '' "
+                "AND is_forgotten = 0 AND superseded_by IS NULL "
+                "ORDER BY source_user ASC"
+            ) as cur:
+                return [row[0] for row in await cur.fetchall()]
 
     async def iter_all(self, batch_size: int = 200):
         """按 created_at 升序分批产出所有记忆 (含遗忘). 用于 reindex/prune 遍历."""
@@ -533,6 +550,121 @@ class SqliteMemoryStore(SqliteStore):
                 ),
             )
             await db.commit()
+
+    async def migrate_relationships_to_group(
+        self,
+        persona_id: str,
+        actor_id: str,
+        group_id: str,
+    ) -> int:
+        """将指定 Actor 的关系数据迁移到 UserGroup (绑定后调用).
+
+        当 Actor 被绑定到 UserGroup 后, effective_user_id 变为 group_id.
+        但此前以 actor_id 为 user_id 存储的关系行仍然存在, 导致同一人
+        出现两条独立关系 (绑定前 + 绑定后).
+
+        迁移策略:
+        - 找到所有 persona_id + user_id = actor_id 的关系行
+        - 若 group_id 已有关系行, 合并两行 (取较高亲密度/信任度,
+          累加交互次数, 保留最新 last_active, 非空 addressing 优先)
+        - 删除旧的 actor_id 行
+        - 返回迁移/合并的关系数
+
+        Args:
+            persona_id: 人格 ID
+            actor_id: 旧 user_id (绑定前的 actor_id)
+            group_id: 新 user_id (绑定后的 group_id)
+
+        Returns:
+            受影响的关系行数
+        """
+        async with self._conn() as db:
+            # 1. 查出 actor 现有的所有关系
+            async with db.execute(
+                """
+                SELECT persona_id, user_id, type, intimacy_score, trust_level,
+                       interaction_count, last_active, notes,
+                       persona_addressing, user_addressing, context
+                FROM relationships
+                WHERE persona_id = ? AND user_id = ?
+                """,
+                (persona_id, actor_id),
+            ) as cur:
+                actor_rows = await cur.fetchall()
+
+            if not actor_rows:
+                return 0  # 没有需迁移的关系
+
+            # 2. 尝试加载已有的 group_id 关系行 (每个 persona 最多一个)
+            async with db.execute(
+                """
+                SELECT persona_id, user_id, type, intimacy_score, trust_level,
+                       interaction_count, last_active, notes,
+                       persona_addressing, user_addressing, context
+                FROM relationships
+                WHERE persona_id = ? AND user_id = ?
+                """,
+                (persona_id, group_id),
+            ) as cur:
+                existing = await cur.fetchone()
+
+            for row in actor_rows:
+                p_id, u_id, r_type, intimacy, trust, icount, last_active, notes, \
+                    p_addr, u_addr, ctx = row
+
+                if existing:
+                    # 合并: 取较高的 intimacy/trust, 累加 interaction_count,
+                    # 取更新的 last_active, 非空 addressing/context 优先
+                    e_pid, e_uid, e_type, e_intimacy, e_trust, e_icount, \
+                        e_last, e_notes, e_p_addr, e_u_addr, e_ctx = existing
+
+                    merged_intimacy = max(intimacy, e_intimacy)
+                    merged_trust = max(trust, e_trust)
+                    merged_icount = icount + e_icount
+                    merged_last = max(
+                        _parse_dt(last_active) if last_active else datetime.min,
+                        _parse_dt(e_last) if e_last else datetime.min,
+                    )
+                    merged_notes = (notes or "") + ("; " + e_notes if e_notes else "")
+                    merged_p_addr = p_addr or e_p_addr
+                    merged_u_addr = u_addr or e_u_addr
+                    merged_ctx = ctx or e_ctx
+
+                    # 更新 group_id 行
+                    await db.execute(
+                        """
+                        UPDATE relationships
+                        SET type = ?, intimacy_score = ?, trust_level = ?,
+                            interaction_count = ?, last_active = ?, notes = ?,
+                            persona_addressing = ?, user_addressing = ?, context = ?
+                        WHERE persona_id = ? AND user_id = ?
+                        """,
+                        (
+                            r_type, merged_intimacy, merged_trust,
+                            merged_icount, merged_last.isoformat(), merged_notes,
+                            merged_p_addr, merged_u_addr, merged_ctx,
+                            persona_id, group_id,
+                        ),
+                    )
+                else:
+                    # 直接更新 user_id: actor_id → group_id
+                    await db.execute(
+                        """
+                        UPDATE relationships
+                        SET user_id = ?
+                        WHERE persona_id = ? AND user_id = ?
+                        """,
+                        (group_id, persona_id, actor_id),
+                    )
+
+                # 删除旧 actor_id 行 (已合并或已改 user_id)
+                await db.execute(
+                    "DELETE FROM relationships WHERE persona_id = ? AND user_id = ?",
+                    (persona_id, actor_id),
+                )
+
+            await db.commit()
+            return len(actor_rows)
 
     # ============ Relationship 称呼动态演化 (v0.2.10) ============
 

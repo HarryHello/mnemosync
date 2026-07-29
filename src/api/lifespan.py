@@ -183,6 +183,26 @@ async def app_lifespan(app: FastAPI):
         await persona_store.save(legacy, changelog="从 config.local.toml 自动迁移", author="system")
         logger.info("✅ 自动迁移 legacy 人格到 DB: %s (version=%s)", legacy.name, legacy.version)
 
+    # 启动迁移: 修复 Actor 绑定 UserGroup 前的孤立关系行 (在绑定前以 actor_id
+    # 存储的关系, 绑定后 effective_user_id 变为 group_id, 导致同一人两条关系)
+    from src.core.constants import DEFAULT_PERSONA_ID
+    try:
+        actor_ids_with_groups = await identity_store.list_all_bound_actor_ids()
+        if actor_ids_with_groups:
+            fixed = 0
+            for actor_id, group_id in actor_ids_with_groups:
+                n = await memory_store.migrate_relationships_to_group(
+                    DEFAULT_PERSONA_ID, actor_id, group_id,
+                )
+                fixed += n
+            if fixed:
+                logger.info(
+                    "✅ 关系迁移: 修复 %d 条绑定前的孤立关系 (%d 个 Actor)",
+                    fixed, len(actor_ids_with_groups),
+                )
+    except Exception as e:
+        logger.warning("启动关系迁移失败 (可忽略, 后续绑定自动迁移): %s", e)
+
     # 后台任务: 每 24h 清理窗外对话流水
     prune_task = asyncio.create_task(
         _conversation_prune_loop(conversation_store, storage.short_term_days),
