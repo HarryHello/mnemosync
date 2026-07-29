@@ -218,26 +218,32 @@ async function clearAllEvents() {
 
     <el-alert v-if="debugStore.error" :title="debugStore.error" type="warning" show-icon />
 
-    <div class="params-bar">
-      <el-checkbox v-model="streaming">流式 (stream=true)</el-checkbox>
-      <el-checkbox v-model="useSystem">带 system 消息</el-checkbox>
-      <span class="params-label">模型:</span>
-      <el-select
-        v-model="modelName"
-        filterable
-        allow-create
-        default-first-option
-        size="small"
-        style="width: 220px"
-        placeholder="mnemosync-any"
-      >
-        <el-option v-for="m in availableModels" :key="m" :label="m" :value="m" />
-      </el-select>
-    </div>
+    <el-card class="params-card">
+      <div class="params-card__inner">
+        <div class="params-card__left">
+          <el-switch v-model="streaming"/><span>流式 (stream=true)</span>
+          <el-switch v-model="useSystem"/><span>带 system 消息</span>
+        </div>
+        <div class="params-card__right">
+          <span class="params-label">模型:</span>
+          <el-select
+            v-model="modelName"
+            filterable
+            allow-create
+            default-first-option
+            size="small"
+            style="width: 220px"
+            placeholder="mnemosync-any"
+          >
+            <el-option v-for="m in availableModels" :key="m" :label="m" :value="m" />
+          </el-select>
+        </div>
+      </div>
+    </el-card>
 
     <MySplitter class="content-splitter" layout="vertical" gap-size="12px">
       <el-splitter-panel size="40%" :min="180" resizable>
-        <div class="content-panel">
+        <el-card class="content-panel">
           <ChatArea
             :conversation="conversation"
             :system-prompt="systemPrompt"
@@ -255,16 +261,16 @@ async function clearAllEvents() {
             @send="sendMessage"
             @clear="clearConversation"
           />
-        </div>
+        </el-card>
       </el-splitter-panel>
       <el-splitter-panel v-if="debugMode" size="60%" :min="180" resizable>
-        <div class="content-panel">
+        <el-card class="content-panel">
           <DebugEventList
             :events-by-correlation="debugStore.eventsByCorrelation"
             :on-load-detail="loadEventDetail"
             @clear-all="clearAllEvents"
           />
-        </div>
+        </el-card>
       </el-splitter-panel>
     </MySplitter>
   </div>
@@ -279,21 +285,34 @@ async function clearAllEvents() {
   min-height: 0;
 }
 
-.params-bar {
+.params-card {
+  flex-shrink: 0;
+}
+
+.params-card__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-3;
+  flex-wrap: wrap;
+}
+
+.params-card__left {
   display: flex;
   align-items: center;
   gap: $space-3;
-  flex-wrap: wrap;
-  padding: $space-2 $space-3;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: $radius-sm;
-  background: var(--el-fill-color-lighter);
-  flex-shrink: 0;
+}
+
+.params-card__right {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
 }
 
 .params-label {
   font-size: 13px;
   color: var(--el-text-color-secondary);
+  white-space: nowrap;
 }
 
 .content-splitter {
@@ -305,9 +324,6 @@ async function clearAllEvents() {
   height: 100%;
   min-height: 0;
   padding: $space-3;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: $radius-md;
-  background: var(--el-bg-color);
   display: flex;
   flex-direction: column;
   overflow: hidden;

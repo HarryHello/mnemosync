@@ -159,7 +159,7 @@ function formatTs(ts: number): string {
     <div class="debug-header">
       <span class="section-label">事件流</span>
       <span class="hint">按 correlation_id 分组; 展开卡片查看完整 body</span>
-      <el-button size="small" @click="clearAll">清空调试日志</el-button>
+      <el-button size="small" @click="clearAll" round>清空调试日志</el-button>
     </div>
 
     <div class="groups">

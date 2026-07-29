@@ -35,6 +35,9 @@ import AppSidebar from './AppSidebar.vue'
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background:
+    radial-gradient(circle at top right, rgba(66, 133, 244, 0.06), transparent 28%),
+    var(--el-bg-color-page);
 }
 
 .main {

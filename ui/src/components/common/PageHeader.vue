@@ -22,6 +22,8 @@ defineProps<{
 <style lang="scss" scoped>
 .page-header {
   margin-bottom: $space-5;
+  padding-bottom: $space-4;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .page-header-row {
@@ -43,7 +45,8 @@ defineProps<{
 }
 
 :deep(.page-subtitle) {
-  margin-top: $space-1;
+  margin-top: 6px;
   margin-bottom: 0;
+  max-width: 720px;
 }
 </style>

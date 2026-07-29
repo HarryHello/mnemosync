@@ -42,7 +42,7 @@ const items: MenuItem[] = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer' },
   { path: '/prompts', title: '提示词', icon: 'EditPen' },
   { path: '/models', title: '模型配置', icon: 'Link' },
-  { path: '/api-keys', title: 'API Key', icon: 'Key' },
+  { path: '/api-keys', title: 'API Keys', icon: 'Key' },
   { path: '/identity', title: '关系状态', icon: 'Connection' },
   { path: '/logs', title: '请求日志', icon: 'Document' },
   { path: '/memories', title: '记忆管理', icon: 'Cpu' },
@@ -169,8 +169,8 @@ function handleUserCommand(cmd: string) {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--el-bg-color);
-  border-right: 1px solid var(--el-border-color-lighter);
+  background: var(--el-menu-bg-color);
+  border-right: 1px solid var(--el-border-color);
 }
 
 .brand {
@@ -179,27 +179,51 @@ function handleUserCommand(cmd: string) {
   align-items: center;
   gap: $space-2;
   padding: 0 $space-4;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  font-weight: 600;
+  border-bottom: 1px solid var(--el-border-color);
+  font-weight: 700;
   font-size: 15px;
 }
 
 .brand-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: $radius-sm;
+  width: 30px;
+  height: 30px;
   display: block;
   object-fit: contain;
+  background: transparent;
 }
 
 .menu {
   flex: 1;
   border-right: 0;
+  padding: $space-2 0;
+}
+
+.menu :deep(.el-menu-item) {
+  height: 40px;
+  line-height: 40px;
+  color: var(--el-menu-text-color);
+}
+
+.menu :deep(.el-menu-item .el-icon) {
+  color: inherit;
+}
+
+.menu :deep(.el-menu-item:hover) {
+  color: var(--el-text-color-primary);
+}
+
+.menu :deep(.el-menu-item.is-active) {
+  color: var(--el-menu-active-color);
+  background: rgba(66, 133, 244, 0.14);
+}
+
+:root.dark .menu :deep(.el-menu-item.is-active) {
+  background: rgba(0, 101, 253, 0.24);
 }
 
 .footer {
   padding: $space-2 $space-3 $space-3;
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 1px solid var(--el-border-color);
   display: flex;
   flex-direction: column;
   gap: $space-1;
@@ -210,17 +234,19 @@ function handleUserCommand(cmd: string) {
   align-items: center;
   gap: $space-2;
   cursor: pointer;
-  padding: $space-1 $space-2;
-  border-radius: $radius-sm;
+  padding: $space-2 $space-2;
+  border-radius: $radius-md;
   min-width: 0;
+  border: 1px solid transparent;
 
   &:hover {
-    background: var(--el-fill-color-light);
+    background: rgba(66, 133, 244, 0.08);
+    border-color: rgba(66, 133, 244, 0.12);
   }
 }
 
 .avatar {
-  background: linear-gradient(135deg, $brand-primary, $brand-primary-hover);
+  background: $brand-primary;
   color: #fff;
   font-weight: 600;
   flex: 0 0 auto;
@@ -252,10 +278,23 @@ function handleUserCommand(cmd: string) {
   color: var(--el-text-color-secondary);
   text-align: center;
   margin-left: $space-2;
+  background: rgba(66, 133, 244, 0.08);
+  border-radius: 999px;
+  padding: 2px 6px;
 }
 </style>
 
 <style lang="scss">
+.sidebar-user-popper {
+  border-radius: $radius-lg !important;
+  border: 1px solid var(--el-border-color) !important;
+  box-shadow: var(--el-box-shadow) !important;
+}
+
+.sidebar-user-popper .el-dropdown-menu__item {
+  gap: 8px;
+}
+
 .sidebar-user-popper .el-dropdown-menu__item:last-child {
   background: transparent;
 

@@ -102,20 +102,20 @@ function fmtDate(s: string | null): string {
 
 <style lang="scss" scoped>
 .relationship-card {
-  transition: transform 0.15s ease;
+  border: 1px solid var(--el-border-color);
 }
 
 .card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: $space-3;
-  padding-bottom: $space-2;
+  margin-bottom: $space-4;
+  padding-bottom: $space-3;
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .card-title {
-  font-weight: 600;
+  font-weight: 700;
   font-size: 15px;
   color: var(--el-text-color-primary);
 }
@@ -129,10 +129,11 @@ function fmtDate(s: string | null): string {
 .user-row {
   display: flex;
   flex-direction: column;
-  gap: $space-1;
-  padding: $space-2;
+  gap: $space-2;
+  padding: $space-3;
   border-radius: $radius-md;
-  background: var(--el-fill-color-lighter);
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
 }
 
 .user-identity {
@@ -169,6 +170,14 @@ function fmtDate(s: string | null): string {
   display: flex;
   align-items: center;
   gap: $space-2;
+}
+
+.metric-line :deep(.el-progress) {
+  flex: 1;
+}
+
+.metric-line :deep(.el-progress-bar__outer) {
+  background: var(--el-fill-color-dark);
 }
 
 .metric-label {

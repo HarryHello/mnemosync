@@ -103,8 +103,8 @@ function clearConversation() {
           <el-switch :model-value="debugMode" @update:model-value="(v: boolean) => emit('update:debugMode', v)" inline-prompt />
         </div>
         <div class="composer-btns">
-          <el-button size="small" @click="clearConversation">清空对话</el-button>
-          <el-button type="primary" size="small" :loading="sending" @click="send">发送</el-button>
+          <el-button size="small" @click="clearConversation" round>清空对话</el-button>
+          <el-button type="primary" size="small" :loading="sending" @click="send" round>发送</el-button>
         </div>
       </div>
     </div>

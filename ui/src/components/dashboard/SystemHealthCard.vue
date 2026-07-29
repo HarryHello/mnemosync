@@ -39,5 +39,8 @@ const props = defineProps<{
   display: flex;
   align-items: center;
   gap: $space-2;
+  justify-content: space-between;
+  width: 100%;
+  font-weight: 700;
 }
 </style>

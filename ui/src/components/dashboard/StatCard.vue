@@ -46,7 +46,7 @@ function go() {
 
 <style lang="scss" scoped>
 .stat-card {
-  transition: transform 0.15s ease;
+  border: 1px solid var(--el-border-color);
 }
 
 .stat {
@@ -60,26 +60,43 @@ function go() {
   height: 44px;
   border-radius: $radius-md;
   @include flex-center;
-  color: #fff;
+  border: 1px solid transparent;
 
-  &.prompt { background: linear-gradient(135deg, #4f8cff, #6ba0ff); }
-  &.key    { background: linear-gradient(135deg, #67c23a, #85ce61); }
-  &.memory { background: linear-gradient(135deg, #e6a23c, #ebb563); }
-  &.log    { background: linear-gradient(135deg, #909399, #a6a9ad); }
+  &.prompt {
+    color: white;
+    background: #4285f4;
+  }
+
+  &.key {
+    color: white;
+    background: #34a853;
+  }
+
+  &.memory {
+    color: white;
+    background: #ef820e;
+  }
+
+  &.log {
+    color: white;
+    background: #64748b;
+  }
 }
 
 .stat-body { min-width: 0; }
 
 .stat-label {
-  font-size: 13px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
   color: var(--el-text-color-secondary);
 }
 
 .stat-value {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 700;
   color: var(--el-text-color-primary);
-  margin-top: 2px;
+  margin-top: 4px;
+  letter-spacing: -0.03em;
 }
 
 .stat-total {
@@ -90,8 +107,8 @@ function go() {
 
 .stat-footer {
   margin-top: $space-3;
-  padding-top: $space-2;
-  border-top: 1px dashed var(--el-border-color-lighter);
+  padding-top: $space-3;
+  border-top: 1px solid var(--el-border-color-lighter);
   text-align: right;
 }
 </style>

@@ -107,6 +107,8 @@ async function onSubmit() {
   width: 100%;
   max-width: 400px;
   padding: $space-3 $space-2;
+  border: 1px solid rgba(66, 133, 244, 0.1);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.06);
 }
 
 .brand {
@@ -118,16 +120,17 @@ async function onSubmit() {
     width: 56px;
     height: 56px;
     margin: 0 auto $space-2;
-    border-radius: 12px;
+    border-radius: $radius-lg;
+    padding: 8px;
+    background: rgba(66, 133, 244, 0.08);
+    border: 1px solid rgba(66, 133, 244, 0.12);
   }
 
   h1 {
     font-size: 24px;
     font-weight: 700;
-    background: linear-gradient(135deg, $brand-primary, $brand-primary-hover);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--el-text-color-primary);
+    letter-spacing: -0.03em;
   }
 
   .subtitle {
