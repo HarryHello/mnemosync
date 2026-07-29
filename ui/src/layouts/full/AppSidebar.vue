@@ -40,11 +40,11 @@ onUnmounted(() => {
 
 const items: MenuItem[] = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer' },
-  { path: '/prompts', title: '提示词管理', icon: 'EditPen' },
+  { path: '/prompts', title: '提示词', icon: 'EditPen' },
   { path: '/upstream', title: '上游 API', icon: 'Link' },
   { path: '/models', title: '模型管理', icon: 'Rank' },
   { path: '/api-keys', title: 'API Key', icon: 'Key' },
-  { path: '/identity', title: '身份与关系', icon: 'UserFilled' },
+  { path: '/identity', title: '关系状态', icon: 'Connection' },
   { path: '/logs', title: '请求日志', icon: 'Document' },
   { path: '/memories', title: '记忆管理', icon: 'Cpu' },
   { path: '/debug-chat', title: '调试聊天', icon: 'ChatDotRound' },
