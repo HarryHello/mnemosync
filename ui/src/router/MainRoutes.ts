@@ -44,8 +44,7 @@ const MainRoutes: RouteRecordRaw = {
     },
     {
       path: 'upstream',
-      name: 'upstream',
-      component: () => import('@/views/UpstreamPage.vue'),
+      redirect: '/models',
     },
     {
       path: 'models',
