@@ -30,17 +30,19 @@ function onSubTabChange(tab: string | number) {
   <div class="page-container">
     <el-tabs v-model="activeTab" class="page-tabs">
       <el-tab-pane label="身份管理" name="identity">
-        <el-tabs v-model="identitySubTab" @tab-change="onSubTabChange">
-          <el-tab-pane label="身份策略" name="strategies" lazy>
-            <StrategyTab ref="strategyTab" />
-          </el-tab-pane>
-          <el-tab-pane label="参与者" name="actors" lazy>
-            <ActorTab ref="actorTab" />
-          </el-tab-pane>
-          <el-tab-pane label="用户组" name="groups" lazy>
-            <GroupTab ref="groupTab" />
-          </el-tab-pane>
-        </el-tabs>
+        <el-card>
+          <el-tabs v-model="identitySubTab" @tab-change="onSubTabChange">
+            <el-tab-pane label="身份策略" name="strategies" lazy>
+              <StrategyTab ref="strategyTab" />
+            </el-tab-pane>
+            <el-tab-pane label="参与者" name="actors" lazy>
+              <ActorTab ref="actorTab" />
+            </el-tab-pane>
+            <el-tab-pane label="用户组" name="groups" lazy>
+              <GroupTab ref="groupTab" />
+            </el-tab-pane>
+          </el-tabs>
+        </el-card>
       </el-tab-pane>
       <el-tab-pane label="关系状态" name="relationships">
         <RelationshipTab :active="activeTab === 'relationships'" />
