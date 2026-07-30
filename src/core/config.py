@@ -239,21 +239,9 @@ def _write_persona_override(data: dict[str, Any]) -> None:
     data 需包含 name / prompt / relation (嵌套 dict, 含 persona_addressing /
     user_addressing / context). 全量写入, 调用方应保证包含所有字段.
 
-    转义策略:
-    - name / relation 三字段用 basic string (双引号), 反斜杠与双引号需转义
-    - prompt 用三引号多行字符串, 内容中包含 ``\"\"\"`` 时替换为 ``\\\"\\\"\\\"``
+    使用 ``_toml_write`` 标准序列化器处理 basic / multiline basic 字符串转义.
     """
-    def _escape_basic(s: str) -> str:
-        # TOML basic string: 反斜杠 + 双引号需转义, 其他 unicode 直接落盘
-        return s.replace("\\", "\\\\").replace('"', '\\"')
-
-    def _escape_triple(s: str) -> str:
-        # 对于 TOML multi-line basic string ("""):
-        # 1. 反斜杠需要转义为 \\ (因为它是转义字符)
-        # 2. 连续三个双引号需要用 \""" 避免结束字符串
-        s = s.replace("\\", "\\\\")
-        s = s.replace('"""', '\\"""')
-        return s
+    from src.core._toml_write import _escape_basic_string, _escape_multiline_basic
 
     PERSONA_OVERRIDE_PATH.parent.mkdir(parents=True, exist_ok=True)
     name = str(data.get("name", ""))
@@ -268,16 +256,16 @@ def _write_persona_override(data: dict[str, Any]) -> None:
         "# 优先级: 本文件 > config.local.toml [persona] > 资源默认值",
         "# 面板 '重置为默认' 操作会删除本文件, 回退到上一级",
         "",
-        f'name = "{_escape_basic(name)}"',
+        f'name = "{_escape_basic_string(name)}"',
         "",
         'prompt = """',
-        _escape_triple(prompt),
+        _escape_multiline_basic(prompt),
         '"""',
         "",
         "[relation]",
-        f'persona_addressing = "{_escape_basic(persona_addr)}"',
-        f'user_addressing = "{_escape_basic(user_addr)}"',
-        f'context = "{_escape_basic(ctx)}"',
+        f'persona_addressing = "{_escape_basic_string(persona_addr)}"',
+        f'user_addressing = "{_escape_basic_string(user_addr)}"',
+        f'context = "{_escape_basic_string(ctx)}"',
         "",
     ]
     PERSONA_OVERRIDE_PATH.write_text("\n".join(lines), encoding="utf-8")

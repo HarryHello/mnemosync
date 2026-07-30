@@ -42,7 +42,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    auth_store: SqliteAuthStore = request.app.state.auth_store
+    auth_store: SqliteAuthStore = get_auth_store(request)
     token = credentials.credentials
 
     try:

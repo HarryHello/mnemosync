@@ -30,10 +30,12 @@ from src.api.tool_transactions import (
 )
 from src.core.agents import run_prompt_cleaning
 from src.core.config import get_settings
-from src.core.constants import DEFAULT_PERSONA_ID, VIRTUAL_MODEL_ANY
+from src.core.constants import DEFAULT_PERSONA_ID as _DEFAULT_PERSONA_ID
+from src.core.constants import VIRTUAL_MODEL_ANY
 from src.core.graph import build_graph
 from src.infra.debug_context import emit_pipeline
 from src.infra.forwarder.multi import MultiForwarder
+from src.infra.space_lock import SpaceLockManager
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.idempotency_store import SqliteIdempotencyStore
@@ -62,38 +64,46 @@ def _get_compiled_graph():
 
 
 def _get_multi_forwarder(http_request: Request) -> MultiForwarder:
-    """从 app.state 取共享 MultiForwarder (由 lifespan 建立)."""
-    return http_request.app.state.multi_forwarder
+    """从 AppState 取共享 MultiForwarder (由 lifespan 建立)."""
+    from src.api.deps import _state
+    return _state(http_request).multi_forwarder
 
 
 def _get_conversation_store(http_request: Request) -> SqliteConversationStore:
-    """从 app.state 取共享 SqliteConversationStore (由 lifespan 建立)."""
-    return http_request.app.state.conversation_store
+    """从 AppState 取共享 SqliteConversationStore (由 lifespan 建立)."""
+    from src.api.deps import _state
+    return _state(http_request).conversation_store
 
 
 def _get_identity_store(http_request: Request) -> SqliteIdentityStore | None:
-    """从 app.state 取共享 SqliteIdentityStore (由 lifespan 建立)."""
-    return getattr(http_request.app.state, "identity_store", None)
+    """从 AppState 取共享 SqliteIdentityStore (由 lifespan 建立)."""
+    from src.api.deps import _state
+    return _state(http_request).identity_store
 
 
 def _get_plugins(http_request: Request) -> dict[str, Any]:
-    """从 app.state 取已加载的插件注册表."""
-    return getattr(http_request.app.state, "identity_plugins", {})
+    """从 AppState 取已加载的插件注册表."""
+    from src.api.deps import _state
+    plugins = _state(http_request).identity_plugins
+    return dict(plugins) if plugins else {}
 
 
 def _get_idempotency_store(http_request: Request) -> SqliteIdempotencyStore | None:
-    """从 app.state 取共享 SqliteIdempotencyStore (由 lifespan 建立)."""
-    return getattr(http_request.app.state, "idempotency_store", None)
+    """从 AppState 取共享 SqliteIdempotencyStore (由 lifespan 建立)."""
+    from src.api.deps import _state
+    return _state(http_request).idempotency_store
 
 
 def _get_debug_bus(http_request: Request):
-    """从 app.state 取 DebugEventBus (可能为 None)."""
-    return getattr(http_request.app.state, "debug_bus", None)
+    """从 AppState 取 DebugEventBus (可能为 None)."""
+    from src.api.deps import _state
+    return _state(http_request).debug_bus
 
 
 def _get_persona_store(http_request: Request):
-    """从 app.state 取 SqlitePersonaStore (可能为 None)."""
-    return getattr(http_request.app.state, "persona_store", None)
+    """从 AppState 取 SqlitePersonaStore (可能为 None)."""
+    from src.api.deps import _state
+    return _state(http_request).persona_store
 
 
 def _build_graph_config(http_request: Request) -> dict[str, Any]:
@@ -103,7 +113,8 @@ def _build_graph_config(http_request: Request) -> dict[str, Any]:
     避免每次节点执行新建 SQLite 连接. 测试环境下缺失的属性自动跳过
     (节点回退到懒加载).
     """
-    state = http_request.app.state
+    from src.api.deps import _state
+    state = _state(http_request)
     configurable: dict[str, Any] = {}
     for key in ("multi_forwarder", "resolver", "memory_store",
                 "vector_store", "notification_store", "debug_bus",
@@ -481,7 +492,9 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
                     group_id = target_groups[0].id
                     await identity_store.bind_actor_to_group(actor_id, group_id)
                     # 迁移 actor 的既有关系到 group, 防止关系行分裂
-                    _memory_store = getattr(http_request.app.state, "memory_store", None)
+                    from src.api.deps import _state_or_none
+                    state = _state_or_none(http_request)
+                    _memory_store = state.memory_store if state else None
                     if _memory_store:
                         from src.core.constants import DEFAULT_PERSONA_ID
                         migrated = await _memory_store.migrate_relationships_to_group(
@@ -495,7 +508,9 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
                     await identity_store.bind_actor_to_group(target_actor_id, group.id)
                     await identity_store.bind_actor_to_group(actor_id, group.id)
                     # 迁移两个 actor 的既有关系到新 group
-                    _memory_store = getattr(http_request.app.state, "memory_store", None)
+                    from src.api.deps import _state_or_none
+                    state = _state_or_none(http_request)
+                    _memory_store = state.memory_store if state else None
                     if _memory_store:
                         from src.core.constants import DEFAULT_PERSONA_ID
                         for aid in (target_actor_id, actor_id):
@@ -594,7 +609,7 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         "actor_id": actor_id,
         "persona": persona,
         "persona_name": persona_name,
-        "persona_id": DEFAULT_PERSONA_ID,
+        "persona_id": _DEFAULT_PERSONA_ID,
         "persona_definition": persona_definition,
         "proxy_thinking_enabled": use_proxy,
         "stream_mode": bool(request.stream),
@@ -613,8 +628,8 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
         initial_state["prompt_cleaning_result"] = prompt_cleaning_result
 
     # 同空间串行: 同一空间内的请求逐条处理, 不同空间并行
-    from src.infra.space_lock import SpaceLockManager
-    space_locks: SpaceLockManager = http_request.app.state.space_locks
+    from src.api.deps import _state
+    space_locks: SpaceLockManager = _state(http_request).space_locks
     lock_key = space_locks.lock_key(
         space_id=space_id, source_user=source_user, api_key_id=api_key_id,
     )

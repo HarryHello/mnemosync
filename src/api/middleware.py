@@ -27,28 +27,26 @@ DEFAULT_RETENTION_DAYS = 7
 DEFAULT_MAX_RECORDS = 10000
 
 
-def _print_debug(method: str, direction: str, url: str, headers: dict = None, body: any = None, status: int = None):
-    """打印调试信息到控制台."""
-    colors = {
-        "REQUEST": "\033[96m",
-        "RESPONSE": "\033[92m",
-        "UPSTREAM": "\033[93m",
-        "RESET": "\033[0m",
+def _log_debug(method: str, direction: str, url: str, headers: dict = None, body: any = None, status: int = None):
+    """通过标准 logger 输出调试请求/响应信息."""
+    extra: dict[str, object] = {
+        "direction": direction,
+        "method": method,
+        "url": str(url),
     }
-
-    color = colors.get(direction, colors["RESET"])
-    reset = colors["RESET"]
-
-    print(f"\n{color}{'='*60}")
-    print(f"[{direction}] {method} {url}")
-    if status:
-        print(f"  Status: {status}")
+    if status is not None:
+        extra["status"] = status
     if headers:
-        print(f"  Headers: {json.dumps(headers, indent=2, ensure_ascii=False)[:500]}")
+        extra["headers"] = _truncate_json(headers, 500)
     if body:
-        body_str = json.dumps(body, indent=2, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
-        print(f"  Body: {body_str[:1000]}")
-    print(f"{'='*60}{reset}\n")
+        body_str = json.dumps(body, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
+        extra["body"] = body_str[:1000]
+    logger.debug("http %s %s %s", direction, method, url, extra=extra)
+
+
+def _truncate_json(obj: object, max_len: int) -> str:
+    s = json.dumps(obj, ensure_ascii=False)
+    return s[:max_len]
 
 
 class HttpLogMiddleware(BaseHTTPMiddleware):
@@ -104,7 +102,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                 request_headers[key] = "***"
 
         if self.debug:
-            _print_debug(
+            _log_debug(
                 request.method,
                 "REQUEST",
                 str(request.url),
@@ -144,7 +142,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
 
         def _log(response_body):
             if self.debug:
-                _print_debug(
+                _log_debug(
                     request.method,
                     "RESPONSE",
                     str(request.url),

@@ -8,13 +8,14 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from src.api.deps import (
     get_conversation_store,
     get_memory_store,
+    get_persona_store,
     get_reindex_progress,
+    get_space_policy_store,
     get_vector_store,
 )
 from src.api.routes.auth import get_current_user
@@ -34,7 +35,7 @@ from src.core.config import (
 )
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.memory_store import SqliteMemoryStore
-
+from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 # ============================================================================
 # Structured Persona API (v0.3.3, SQLite-based)
@@ -276,7 +277,7 @@ async def reset_persona_config():
 
 
 def _get_persona_store(request: Request):
-    return getattr(request.app.state, "persona_store", None)
+    return get_persona_store(request)
 
 
 @router.get("/persona/definition", response_model=PersonaDefinitionRead)
@@ -445,13 +446,9 @@ class SpacePolicyRead(BaseModel):
 
 @router.get("/space-policies", response_model=list[SpacePolicyRead])
 async def list_space_policies(
-    request: Request,
+    store: SqliteSpacePolicyStore = Depends(get_space_policy_store),
 ):
     """列出所有空间策略."""
-    from src.persistence.space_policy_store import SqliteSpacePolicyStore
-    store: SqliteSpacePolicyStore = getattr(request.app.state, "space_policy_store", None)
-    if store is None:
-        return []
     policies = await store.list_all()
     return [
         SpacePolicyRead(
@@ -471,13 +468,9 @@ async def list_space_policies(
 @router.get("/space-policies/{space_id}", response_model=SpacePolicyRead)
 async def get_space_policy(
     space_id: str,
-    request: Request,
+    store: SqliteSpacePolicyStore = Depends(get_space_policy_store),
 ):
     """获取指定空间策略."""
-    from src.persistence.space_policy_store import SqliteSpacePolicyStore
-    store: SqliteSpacePolicyStore = getattr(request.app.state, "space_policy_store", None)
-    if store is None:
-        raise HTTPException(404, "space_policy_store not available")
     policy = await store.get(space_id)
     if policy is None:
         raise HTTPException(404, f"No policy for space: {space_id}")
@@ -497,13 +490,10 @@ async def get_space_policy(
 async def upsert_space_policy(
     space_id: str,
     body: SpacePolicyBody,
-    request: Request,
+    store: SqliteSpacePolicyStore = Depends(get_space_policy_store),
 ):
     """创建或更新空间策略."""
-    from src.persistence.space_policy_store import SqliteSpacePolicyStore, SpacePolicy
-    store: SqliteSpacePolicyStore = getattr(request.app.state, "space_policy_store", None)
-    if store is None:
-        raise HTTPException(404, "space_policy_store not available")
+    from src.persistence.space_policy_store import SpacePolicy
     policy = SpacePolicy(
         space_id=space_id,
         expressor_enabled=body.expressor_enabled,
@@ -527,13 +517,9 @@ async def upsert_space_policy(
 @router.delete("/space-policies/{space_id}")
 async def delete_space_policy(
     space_id: str,
-    request: Request,
+    store: SqliteSpacePolicyStore = Depends(get_space_policy_store),
 ):
     """删除空间策略 (回退到默认行为)."""
-    from src.persistence.space_policy_store import SqliteSpacePolicyStore
-    store: SqliteSpacePolicyStore = getattr(request.app.state, "space_policy_store", None)
-    if store is None:
-        raise HTTPException(404, "space_policy_store not available")
     ok = await store.delete(space_id)
     if not ok:
         raise HTTPException(404, f"No policy for space: {space_id}")
@@ -565,7 +551,7 @@ async def import_character_card(
     支持 SillyTavern V1 (PNG) / V2 (PNG tEXt) / JSON 格式。
     返回解析后的人格字段供预览确认, 确认后调用 PUT /persona/definition 保存。
     """
-    from src.infra.character_card import CharacterCardError, create_persona_definition, parse_file
+    from src.infra.character_card import CharacterCardError, parse_file
 
     # 支持两种上传方式: raw bytes body 或 JSON body 含 file_path
     if body and "file_path" in body:
@@ -588,7 +574,7 @@ async def import_character_card(
         if len(raw) > 10 * 1024 * 1024:
             raise HTTPException(400, detail="File too large (max 10MB)")
 
-        from src.infra.character_card import parse_png, _sanitize_data, CharacterCard
+        from src.infra.character_card import CharacterCard, _sanitize_data, parse_png
 
         if raw[:4] == b"\x89PNG":
             metadata = parse_png(raw)
@@ -603,8 +589,8 @@ async def import_character_card(
                 metadata = _json.loads(raw.decode("utf-8"))
                 data = _sanitize_data(metadata)
                 card = CharacterCard(data, "json")
-            except (_json.JSONDecodeError, UnicodeDecodeError):
-                raise HTTPException(400, detail="Not a valid PNG or JSON file")
+            except (_json.JSONDecodeError, UnicodeDecodeError) as err:
+                raise HTTPException(400, detail="Not a valid PNG or JSON file") from err
 
     from src.infra.character_card import map_to_persona
 

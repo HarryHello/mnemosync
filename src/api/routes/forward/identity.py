@@ -28,7 +28,8 @@ async def _resolve_main_candidate(
     当请求携带 tools 时 (require_tools=True), 优先选择支持工具的候选;
     不支持工具的候选跳过. 返回 ResolvedCandidate 或 None (无候选).
     """
-    resolver = http_request.app.state.resolver
+    from src.api.deps import _state
+    resolver = _state(http_request).resolver
     try:
         if require_tools:
             return await resolver.first_for_tools(ModelType.MAIN, streaming=streaming)
@@ -59,7 +60,11 @@ async def _resolve_source_frontend(request: Request, api_key_id: str | None) -> 
     """
     if api_key_id is None:
         return None
-    store = getattr(request.app.state, "api_key_store", None) or _get_api_key_store()
+    from src.api.deps import _state_or_none
+    state = _state_or_none(request)
+    store = state.api_key_store if state else None
+    if store is None:
+        store = _get_api_key_store()
     try:
         ak: ApiKey | None = await store.get_by_id(api_key_id)
     except Exception:
