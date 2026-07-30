@@ -170,7 +170,7 @@ function handleUserCommand(cmd: string) {
   display: flex;
   flex-direction: column;
   background: var(--el-menu-bg-color);
-  border-right: 1px solid var(--el-border-color);
+  border-right: 1px solid var(--el-border-color-light);
 }
 
 .brand {
@@ -287,7 +287,7 @@ function handleUserCommand(cmd: string) {
 <style lang="scss">
 .sidebar-user-popper {
   border-radius: $radius-lg !important;
-  border: 1px solid var(--el-border-color) !important;
+  border: 1px solid transparent !important;
   box-shadow: var(--el-box-shadow) !important;
 }
 
