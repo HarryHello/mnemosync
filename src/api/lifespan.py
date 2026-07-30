@@ -115,13 +115,13 @@ async def _connect_stores(settings) -> dict:
 
     connect_order = [
         "auth_store", "api_key_store", "memory_store", "http_log_store",
-        "llm_service_store", "conversation_store", "notification_store",
+        "conversation_store", "notification_store",
         "identity_store", "idempotency_store",
     ]
     for key in connect_order:
         await instances[key].connect()
 
-    for key in ("persona_store", "lorebook_store", "space_policy_store"):
+    for key in ("llm_service_store", "persona_store", "lorebook_store", "space_policy_store"):
         await instances[key].init_db()
 
     return instances

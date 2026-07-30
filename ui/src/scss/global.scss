@@ -198,12 +198,11 @@ a {
 .el-card {
   border-radius: $radius-lg;
   border-color: var(--el-border-color);
-  box-shadow: none;
+  box-shadow: var(--el-box-shadow-light);
   transition: all 0.3s ease-in-out;
 
   &:hover {
     transform: translateY(-2px);
-    box-shadow: var(--el-box-shadow);
   }
 }
 

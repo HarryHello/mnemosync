@@ -45,9 +45,6 @@ function go() {
 </template>
 
 <style lang="scss" scoped>
-.stat-card {
-  border: 1px solid var(--el-border-color);
-}
 
 .stat {
   display: flex;

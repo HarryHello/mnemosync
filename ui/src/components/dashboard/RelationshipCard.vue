@@ -101,9 +101,6 @@ function fmtDate(s: string | null): string {
 </template>
 
 <style lang="scss" scoped>
-.relationship-card {
-  border: 1px solid var(--el-border-color);
-}
 
 .card-header {
   display: flex;
