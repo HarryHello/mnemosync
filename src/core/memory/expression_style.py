@@ -141,7 +141,7 @@ def extract_style_from_turns(
     # 句长统计
     lengths = [len(s) for s in sentences]
     style.avg_sentence_length = sum(lengths) / len(lengths)
-    style.short_sentence_ratio = sum(1 for l in lengths if l < 10) / len(lengths)
+    style.short_sentence_ratio = sum(1 for n in lengths if n < 10) / len(lengths)
 
     # 语气词频率: 句末出现语气词的句子占比
     particle_counts: dict[str, int] = dict.fromkeys(_FINAL_PARTICLES, 0)

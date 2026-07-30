@@ -18,10 +18,10 @@ async def test_same_key_serial():
     acquired = asyncio.Event()
 
     async def wait_and_acquire():
-        l = await mgr.acquire("space-A")
-        await l.acquire()
+        lock = await mgr.acquire("space-A")
+        await lock.acquire()
         acquired.set()
-        l.release()
+        lock.release()
 
     task = asyncio.create_task(wait_and_acquire())
     # 等一小段时间, 确认第二个协程被阻塞
