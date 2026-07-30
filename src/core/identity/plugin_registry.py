@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 PLUGIN_DIR = Path(__file__).resolve().parent.parent.parent.parent / "plugins"
 
 
-def discover_plugins() -> dict[str, "IdentityPlugin"]:
+def discover_plugins() -> dict[str, IdentityPlugin]:
     """扫描 plugins/ 目录, 返回 {plugin_name: plugin_instance}.
 
     插件目录结构::
@@ -40,7 +40,7 @@ def discover_plugins() -> dict[str, "IdentityPlugin"]:
         logger.info("插件目录不存在, 跳过扫描: %s", PLUGIN_DIR)
         return {}
 
-    plugins: dict[str, "IdentityPlugin"] = {}
+    plugins: dict[str, IdentityPlugin] = {}
 
     for py_file in _find_plugin_files(PLUGIN_DIR):
         try:

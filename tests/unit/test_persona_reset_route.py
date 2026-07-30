@@ -10,14 +10,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
 from src.api.state import AppState
@@ -28,12 +27,12 @@ from src.core.memory.models import (
     Visibility,
 )
 from src.core.memory.reindex import ReindexProgress, ReindexState
+from src.infra.vector_store import VectorStore
 from src.persistence.auth_store import User
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.memory_store import SqliteMemoryStore
-from src.infra.vector_store import VectorStore
 
-NOW = datetime(2026, 7, 18, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 18, tzinfo=UTC)
 
 
 def _mk_entry(idx: int, memory_type: MemoryType = MemoryType.NORMAL) -> MemoryEntry:

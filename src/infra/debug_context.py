@@ -9,15 +9,15 @@ from __future__ import annotations
 import logging
 import uuid
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.infra.debug_bus import DebugEventBus
 
 logger = logging.getLogger(__name__)
 
-_correlation_id: ContextVar[Optional[str]] = ContextVar("mnemosync_debug_cid", default=None)
-_agent_name: ContextVar[Optional[str]] = ContextVar("mnemosync_debug_agent", default=None)
+_correlation_id: ContextVar[str | None] = ContextVar("mnemosync_debug_cid", default=None)
+_agent_name: ContextVar[str | None] = ContextVar("mnemosync_debug_agent", default=None)
 
 
 def new_correlation_id() -> str:
@@ -57,7 +57,7 @@ class use_agent:
 
 
 def emit_pipeline(
-    bus: "DebugEventBus | None",
+    bus: DebugEventBus | None,
     *,
     event_kind: str,
     **data: object,

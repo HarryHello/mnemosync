@@ -6,14 +6,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from src.api import api_router
 from src.api.routes.auth import get_current_user
 from src.api.state import AppState

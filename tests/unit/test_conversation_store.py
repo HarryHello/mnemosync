@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -30,7 +30,7 @@ async def store(tmp_path: Path) -> SqliteConversationStore:
 
 @pytest.mark.asyncio
 async def test_append_and_list_recent(store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "你好", token_count=4, source_frontend="astrbot", ts=now)
     await store.append("assistant", "hi", token_count=2, source_frontend="astrbot",
                        ts=now + timedelta(seconds=1))
@@ -44,7 +44,7 @@ async def test_append_and_list_recent(store: SqliteConversationStore) -> None:
 
 @pytest.mark.asyncio
 async def test_list_since_filters_by_time(store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "old", token_count=1, ts=now - timedelta(days=10))
     await store.append("assistant", "recent", token_count=1, ts=now - timedelta(hours=1))
     turns = await store.list_since(now - timedelta(days=7))
@@ -61,7 +61,7 @@ async def test_list_since_filters_by_time(store: SqliteConversationStore) -> Non
 
 @pytest.mark.asyncio
 async def test_delete_before(store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "old", token_count=1, ts=now - timedelta(days=10))
     await store.append("assistant", "recent", token_count=1, ts=now - timedelta(hours=1))
     n = await store.delete_before(now - timedelta(days=7))
@@ -73,7 +73,7 @@ async def test_delete_before(store: SqliteConversationStore) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_all(store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "a", token_count=1, ts=now)
     await store.append("assistant", "b", token_count=1, ts=now)
     n = await store.delete_all()
@@ -94,7 +94,7 @@ async def test_multi_frontend_appended_to_same_bucket(store: SqliteConversationS
     没有按 source_frontend 分区, 装填时统一读所有记录 — 这就是 Mnemosync
     "跨前端统一记忆" 的技术承诺。
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "在 astrbot 说的", token_count=8, source_frontend="astrbot", ts=now)
     await store.append("user", "在 airi 说的", token_count=7, source_frontend="airi",
                        ts=now + timedelta(seconds=1))
@@ -112,7 +112,7 @@ async def test_multi_frontend_appended_to_same_bucket(store: SqliteConversationS
 @pytest.mark.asyncio
 async def test_committed_sequence_assigned_per_space(store: SqliteConversationStore) -> None:
     """同空间内序号从 0 单调递增; 空间之间互不干扰."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "群A-1", token_count=1, space_id="group-a", ts=now)
     await store.append("assistant", "群A-2", token_count=1, space_id="group-a",
                        ts=now + timedelta(seconds=1))
@@ -133,7 +133,7 @@ async def test_committed_sequence_assigned_per_space(store: SqliteConversationSt
 @pytest.mark.asyncio
 async def test_no_sequence_without_space(store: SqliteConversationStore) -> None:
     """私聊/非归属 (space_id=None) 的轮次不分配序号, 仍按 ts 定序."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "私聊", token_count=1, ts=now)
     turns = await store.list_since(now - timedelta(days=1))
     assert len(turns) == 1
@@ -144,7 +144,7 @@ async def test_no_sequence_without_space(store: SqliteConversationStore) -> None
 @pytest.mark.asyncio
 async def test_list_for_space_isolates_spaces(store: SqliteConversationStore) -> None:
     """群聊装填只读本空间 — 其他群/私聊的对话不能泄入."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "群A的话", token_count=1, space_id="group-a", ts=now)
     await store.append("user", "群B的话", token_count=1, space_id="group-b",
                        ts=now + timedelta(seconds=1))
@@ -159,7 +159,7 @@ async def test_list_for_space_isolates_spaces(store: SqliteConversationStore) ->
 @pytest.mark.asyncio
 async def test_list_for_space_time_window(store: SqliteConversationStore) -> None:
     """list_for_space 的 since 过滤与全局 list_since 口径一致."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "太老了", token_count=1, space_id="g",
                        ts=now - timedelta(days=10))
     await store.append("user", "窗内", token_count=1, space_id="g",
@@ -171,7 +171,7 @@ async def test_list_for_space_time_window(store: SqliteConversationStore) -> Non
 @pytest.mark.asyncio
 async def test_late_arrival_flag(store: SqliteConversationStore) -> None:
     """事件时间早于空间内最新已提交时间 → late_arrival=True (乱序到达)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "正常-1", token_count=1, space_id="g", ts=now)
     await store.append("user", "正常-2", token_count=1, space_id="g",
                        ts=now + timedelta(seconds=10))
@@ -191,7 +191,7 @@ async def test_late_arrival_flag(store: SqliteConversationStore) -> None:
 
 @pytest.mark.asyncio
 async def test_external_event_id_roundtrip(store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.append("user", "带事件ID", token_count=1, space_id="g",
                        external_event_id="qq-msg-12345", ts=now)
     turns = await store.list_for_space("g")
@@ -202,7 +202,7 @@ async def test_external_event_id_roundtrip(store: SqliteConversationStore) -> No
 async def test_append_events_deduplicates_snapshot_in_one_transaction(
     store: SqliteConversationStore,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     event = ConversationEvent(
         role="user",
         content="重复历史",
@@ -239,7 +239,7 @@ async def test_append_events_deduplicates_snapshot_in_one_transaction(
 async def test_duplicate_does_not_consume_committed_sequence(
     store: SqliteConversationStore,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     duplicate = ConversationEvent(
         role="user", content="A", token_count=1, ts=now,
         space_id="g", origin="history_snapshot", event_fingerprint="same",

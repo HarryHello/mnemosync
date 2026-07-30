@@ -6,7 +6,7 @@ actors / user_groups / actor_group_memberships / identity_strategies 四张表�
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import aiosqlite
 

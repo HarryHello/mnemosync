@@ -74,7 +74,7 @@ class IdentityPlugin(ABC):
         self,
         messages: list[dict[str, Any]],
         config: dict[str, Any],
-        store: "SqliteIdentityStore",
+        store: SqliteIdentityStore,
     ) -> PluginResult | None:
         """从原始消息中提取当前请求者与空间身份."""
         ...
@@ -84,8 +84,8 @@ class IdentityPlugin(ABC):
         self,
         messages: list[dict[str, Any]],
         config: dict[str, Any],
-        store: "SqliteIdentityStore",
-        identity: "IdentityContext",
+        store: SqliteIdentityStore,
+        identity: IdentityContext,
     ) -> PluginPreprocessResult:
         """生成模型消息与逐说话者规范化事件."""
         ...

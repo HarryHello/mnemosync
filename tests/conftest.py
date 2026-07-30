@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.core.config import _reset_settings
 
 

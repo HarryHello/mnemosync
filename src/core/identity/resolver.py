@@ -15,8 +15,8 @@ from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
 
 if TYPE_CHECKING:
-    from src.persistence.identity_store import SqliteIdentityStore
     from src.core.identity.plugin import IdentityPlugin
+    from src.persistence.identity_store import SqliteIdentityStore
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +31,16 @@ class IdentityResolver:
 
     def __init__(
         self,
-        store: "SqliteIdentityStore",
+        store: SqliteIdentityStore,
         forwarder: MultiForwarder | None = None,
-        plugins: dict[str, "IdentityPlugin"] | None = None,
+        plugins: dict[str, IdentityPlugin] | None = None,
     ):
         self.store = store
         self.forwarder = forwarder
         self._plugins = plugins or {}
 
     @property
-    def plugins(self) -> dict[str, "IdentityPlugin"]:
+    def plugins(self) -> dict[str, IdentityPlugin]:
         return self._plugins
 
     async def resolve(

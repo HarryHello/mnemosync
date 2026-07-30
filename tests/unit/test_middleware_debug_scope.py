@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from src.api.middleware import HttpLogMiddleware
 from src.api.state import AppState
 from src.infra.debug_bus import DebugEventBus

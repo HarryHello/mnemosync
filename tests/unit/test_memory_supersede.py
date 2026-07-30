@@ -1,8 +1,6 @@
 """记忆纠正 (supersede) 测试."""
 
-import asyncio
 import pytest
-
 from src.core.memory.models import MemoryEntry, MemoryType, Visibility
 from src.persistence.memory_store import SqliteMemoryStore
 

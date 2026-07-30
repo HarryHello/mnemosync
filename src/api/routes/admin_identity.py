@@ -16,7 +16,6 @@ from src.api.deps import (
     get_memory_store,
     get_multi_forwarder,
 )
-from src.persistence.memory_store import SqliteMemoryStore
 from src.api.routes.auth import get_current_user
 from src.api.schemas.admin import (
     ActorListResponse,
@@ -34,6 +33,7 @@ from src.api.schemas.admin import (
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
 from src.persistence.identity_store import SqliteIdentityStore
+from src.persistence.memory_store import SqliteMemoryStore
 
 logger = logging.getLogger(__name__)
 

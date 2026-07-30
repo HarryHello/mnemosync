@@ -10,7 +10,6 @@ import os
 import subprocess
 import sys
 
-
 # ============================================================================
 # 工具函数
 # ============================================================================
@@ -89,6 +88,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.staticfiles import StaticFiles
         from starlette.responses import FileResponse
+
         from src.api import api_router, forward_router
         from src.api.lifespan import app_lifespan
         from src.api.middleware import HttpLogMiddleware
@@ -154,7 +154,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             # 父进程
             print(f"🚀 Mnemosync 已启动 (PID: {pid})")
             print(f"   日志: {os.path.join(project_root, 'data', 'mnemosync.log')}")
-            print(f"   停止: mnemosync stop")
+            print("   停止: mnemosync stop")
             return 0
 
         # 子进程
@@ -298,7 +298,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
     # 检查本地进程
     if os.path.exists(pid_file):
         try:
-            with open(pid_file, "r") as f:
+            with open(pid_file) as f:
                 pid = int(f.read().strip())
 
             # 检查进程是否存在

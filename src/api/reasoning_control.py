@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-import uuid
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from src.api.schemas.forward import ChatCompletionRequest
 from src.core.config import Settings
@@ -120,7 +120,7 @@ def _split_reasoning(text: str, size: int = _REASONING_CHUNK_SIZE) -> list[str]:
 
 
 def _sse_frame(payload: dict[str, Any]) -> bytes:
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
 def build_reasoning_stream_frames(

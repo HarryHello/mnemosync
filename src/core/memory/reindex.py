@@ -21,8 +21,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from src.core.memory.models import MemoryEntry, MemoryType
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ReindexState(str, Enum):
+class ReindexState(StrEnum):
     IDLE = "idle"
     RUNNING = "running"
     SUCCESS = "success"
@@ -125,10 +125,10 @@ class Reindexer:
 
     def __init__(
         self,
-        memory_store: "SqliteMemoryStore",
-        vector_store: "VectorStore",
-        forwarder: "MultiForwarder",
-        resolver: "RoleResolver",
+        memory_store: SqliteMemoryStore,
+        vector_store: VectorStore,
+        forwarder: MultiForwarder,
+        resolver: RoleResolver,
         progress: ReindexProgress,
     ):
         self.memory_store = memory_store
@@ -244,8 +244,8 @@ class Pruner:
 
     def __init__(
         self,
-        memory_store: "SqliteMemoryStore",
-        vector_store: "VectorStore",
+        memory_store: SqliteMemoryStore,
+        vector_store: VectorStore,
     ):
         self.memory_store = memory_store
         self.vector_store = vector_store

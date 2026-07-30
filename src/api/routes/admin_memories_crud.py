@@ -12,7 +12,6 @@ from src.api.deps import (
     get_memory_store,
     get_multi_forwarder,
     get_resolver,
-    get_vector_store,
 )
 from src.api.routes.auth import get_current_user
 from src.persistence.memory_store import SqliteMemoryStore

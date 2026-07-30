@@ -12,12 +12,11 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-
 from src.core.models.resolver import NoCandidateForRoleError, RoleResolver
 from src.infra.forwarder.forwarder import Forwarder, UpstreamError, UpstreamTimeout
 from src.infra.forwarder.multi import (
@@ -34,7 +33,7 @@ async def resolver(tmp_path):
     """预置三个服务, 三个 main 候选."""
     store = LLMServiceStore(str(tmp_path / "llm.db"))
     await store.init_db()
-    for i, letter in enumerate("abc"):
+    for _i, letter in enumerate("abc"):
         await store.save_service(
             LLMServiceProvider.create(f"svc-{letter}", f"https://{letter}.example/v1", f"sk-{letter}")
         )

@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.tools import tool
 
 from src.infra.forwarder.multi import MultiForwarder
-from src.infra.llm_service.models import ModelType
 from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
 
@@ -68,7 +67,7 @@ class MemoryRetriever:
         top_k: int = 5,
         source_user: str | None = None,
         use_rerank: bool = True,
-        retrieval_ctx: "RetrievalContext | None" = None,
+        retrieval_ctx: RetrievalContext | None = None,
     ) -> list[RetrievedMemory]:
         """语义检索.
 
@@ -166,7 +165,7 @@ class MemoryRetriever:
 
 def make_vector_search_tool(
     retriever: MemoryRetriever,
-    retrieval_ctx: "RetrievalContext | None" = None,
+    retrieval_ctx: RetrievalContext | None = None,
 ):
     """创建 vector_search LangChain Tool.
 

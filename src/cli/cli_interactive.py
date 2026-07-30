@@ -715,6 +715,7 @@ Persona State (v0.2.7, via panel HTTP):
     async def cmd_memory_reindex(self, argv: list[str]) -> None:
         """memory reindex [--prune] [--threshold F]. 阻塞到完成."""
         import argparse as _argparse
+
         import httpx
 
         parser = _argparse.ArgumentParser(prog="memory reindex", add_help=False)
@@ -777,6 +778,7 @@ Persona State (v0.2.7, via panel HTTP):
     async def cmd_memory_prune(self, argv: list[str]) -> None:
         """memory prune [--threshold F] [--dry-run]."""
         import argparse as _argparse
+
         import httpx
 
         parser = _argparse.ArgumentParser(prog="memory prune", add_help=False)
@@ -836,6 +838,7 @@ Persona State (v0.2.7, via panel HTTP):
         (含 PERMANENT) / 关系 / 短期流水 / 向量库. 不动 API Key / 服务商 / 提示词.
         """
         import argparse as _argparse
+
         import httpx
 
         parser = _argparse.ArgumentParser(prog="persona reset", add_help=False)
@@ -907,7 +910,7 @@ Persona State (v0.2.7, via panel HTTP):
                     f"vector_reset={res['vector_reset']}"
                 )
                 if res.get("errors"):
-                    print(f"⚠️  部分失败:")
+                    print("⚠️  部分失败:")
                     for err in res["errors"]:
                         print(f"    - {err}")
                 print()
@@ -937,6 +940,7 @@ Persona State (v0.2.7, via panel HTTP):
         复用 src.cli.ask.run_ask, 与 `mnemosync ask` 走同一条 in-process 路径.
         """
         import argparse as _argparse
+
         from src.cli.ask import run_ask
 
         parser = _argparse.ArgumentParser(prog="ask", add_help=False, description="in-process 主对话调试")

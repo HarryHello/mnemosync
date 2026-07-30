@@ -6,12 +6,12 @@
 
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from math import log
 
 
-class MemoryType(str, Enum):
+class MemoryType(StrEnum):
     """记忆类型.
 
     - PERMANENT: 永久记忆，不衰减，除非被覆盖或删除
@@ -24,7 +24,7 @@ class MemoryType(str, Enum):
     EXPRESSION_STYLE = "expression_style"
 
 
-class Visibility(str, Enum):
+class Visibility(StrEnum):
     """记忆可见性.
 
     - PUBLIC: 所有用户可见
@@ -39,7 +39,7 @@ class Visibility(str, Enum):
     SOURCE_RESTRICTED = "source_restricted"
 
 
-class DecayState(str, Enum):
+class DecayState(StrEnum):
     """衰减状态（按有效优先级区间划分）.
 
     - ACTIVE: 优先级 > 0.3，保持在上下文中

@@ -13,8 +13,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
-from src.infra.debug_bus import DebugEventBus, _redact_headers, BODY_PREVIEW_MAX
+from src.infra.debug_bus import BODY_PREVIEW_MAX, DebugEventBus, _redact_headers
 
 
 @pytest.mark.asyncio

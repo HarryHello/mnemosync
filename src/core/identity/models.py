@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 
 
-class StrategyType(str, Enum):
+class StrategyType(StrEnum):
     """身份识别策略类型."""
 
     DIRECT = "direct"           # 使用 request.user 字段

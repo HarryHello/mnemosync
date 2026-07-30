@@ -9,12 +9,11 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import datetime, UTC
-from typing import Iterator
-
-from src.persistence.base import SqliteStore
+from datetime import UTC, datetime
 
 import aiosqlite
+
+from src.persistence.base import SqliteStore
 
 
 @dataclass

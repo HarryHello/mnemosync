@@ -1,16 +1,16 @@
 """角色卡导入测试."""
 
 import json
-import pytest
 
+import pytest
 from src.infra.character_card import (
     CharacterCard,
     CharacterCardError,
-    map_to_persona,
-    create_persona_definition,
     _sanitize_data,
     _validate_json_depth,
     _validate_string_length,
+    create_persona_definition,
+    map_to_persona,
 )
 
 
@@ -92,7 +92,6 @@ async def test_png_v1_parse():
     import zlib
 
     width, height = 1, 1
-    raw_data = b""
     # 创建最小 PNG
     raw = b"\x89PNG\r\n\x1a\n"  # signature
     # IHDR chunk

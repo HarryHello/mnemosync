@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.persistence.api_key_store import (
     API_KEY_SOURCE_PANEL_DEBUG,
     API_KEY_SOURCE_USER,

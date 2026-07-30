@@ -13,8 +13,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Iterable
+from typing import Any
 
 import httpx
 
@@ -255,7 +256,7 @@ class MultiForwarder:
                 logger.exception("Forwarder close failed")
         self._forwarders.clear()
 
-    async def __aenter__(self) -> "MultiForwarder":
+    async def __aenter__(self) -> MultiForwarder:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

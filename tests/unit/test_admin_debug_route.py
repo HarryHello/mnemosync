@@ -9,13 +9,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-
 from src.api.routes.admin_debug import router as admin_debug_router
 from src.api.routes.auth import get_current_user
 from src.api.state import AppState

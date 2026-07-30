@@ -13,15 +13,17 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, AsyncIterator
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
+from src.infra.debug_context import get_agent_name, get_correlation_id
+
 from .connection_pool import ConnectionPool
 from .debug_hook import get_debug_bus
-from src.infra.debug_context import get_agent_name, get_correlation_id
 
 
 def _emit_debug(direction: str, url: str, **fields) -> str | None:
@@ -435,7 +437,7 @@ class Forwarder:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self) -> "Forwarder":
+    async def __aenter__(self) -> Forwarder:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

@@ -20,7 +20,6 @@ from pathlib import Path
 from src.core.prompts import get_prompt_store
 from src.core.prompts.registry import PROMPT_REGISTRY
 
-
 # ── 展示辅助 ──────────────────────────────────────────────────
 
 

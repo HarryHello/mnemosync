@@ -9,14 +9,13 @@ Reindex 是异步背景任务, 完整测试太重, 这里只覆盖:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
 from src.api.state import AppState
@@ -29,7 +28,7 @@ from src.infra.vector_store import VectorStore
 from src.persistence.auth_store import User
 from src.persistence.memory_store import SqliteMemoryStore
 
-NOW = datetime(2026, 7, 17, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 17, tzinfo=UTC)
 
 
 def _mk_entry(

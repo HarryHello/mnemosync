@@ -1,8 +1,8 @@
 """空间串行锁测试."""
 
 import asyncio
-import pytest
 
+import pytest
 from src.infra.space_lock import SpaceLockManager
 
 

@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.core.memory.models import MemoryEntry, Relationship, Visibility
 from src.core.memory.trigger_reason import (
     TriggerReason,
     format_trigger_reason,
 )
-from src.core.memory.models import MemoryEntry, Relationship, Visibility
 from src.core.prompts import get_prompt_store
 
 
@@ -152,7 +152,7 @@ def _build_persona_section(
     if persona_definition is not None:
         from src.core.persona.definition import PersonaDefinition
         if isinstance(persona_definition, PersonaDefinition):
-            identity = persona_definition.get_identity_for_space(space_id)
+            persona_definition.get_identity_for_space(space_id)
             return persona_definition.to_legacy_prompt()
     return persona_prompt
 

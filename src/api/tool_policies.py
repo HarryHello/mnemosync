@@ -116,7 +116,7 @@ async def check_global_rate_limit(
     # conversation_turns 没有 api_key_id 列; 使用 request_id 的前缀关联不可靠.
     # 改用 source_frontend='mnemosync' + event_type='tool_call' + 时间窗口
     # 在空间范围内统计. 这覆盖了同一 API Key 绑定的身份策略下的所有调用.
-    cutoff = datetime.now(UTC) - timedelta(seconds=policy.global_window_seconds)
+    datetime.now(UTC) - timedelta(seconds=policy.global_window_seconds)
     recent, total = await conversation_store.list_page(
         limit=1,
         offset=0,

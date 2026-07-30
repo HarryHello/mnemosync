@@ -18,7 +18,10 @@ import random
 import time
 from typing import Any
 
-from src.core.tools.internal_registry import InternalTool, InternalToolRegistry, get_internal_tool_registry
+from src.core.tools.internal_registry import (
+    InternalTool,
+    InternalToolRegistry,
+)
 from src.persistence.identity_store import SqliteIdentityStore
 
 logger = logging.getLogger(__name__)

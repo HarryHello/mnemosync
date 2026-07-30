@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from src.core.identity.resolver import IdentityResolver
 from src.persistence.identity_store import SqliteIdentityStore
 

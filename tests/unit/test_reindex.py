@@ -5,11 +5,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from src.core.memory.models import MemoryEntry, MemoryType, Visibility
 from src.core.memory.reindex import (
     Pruner,
@@ -26,8 +25,7 @@ from src.infra.llm_service.store import LLMServiceStore
 from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
 
-
-NOW = datetime(2026, 7, 17, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 17, 12, 0, 0, tzinfo=UTC)
 
 
 def _mk_entry(

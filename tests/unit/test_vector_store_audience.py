@@ -6,10 +6,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from src.core.memory.audience import AudienceFilter, RetrievalContext
 from src.core.memory.models import MemoryEntry, Visibility
 from src.infra.vector_store import VectorStore
@@ -29,7 +28,7 @@ def _entry(
         source_user=source_user,
         visibility=visibility,
         space_id=space_id,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     return e
 
@@ -37,7 +36,7 @@ def _entry(
 @pytest.fixture
 def store(tmp_path):
     vs = VectorStore(str(tmp_path / "chroma"), collection_name="test_audience")
-    now = datetime.now(timezone.utc)
+    datetime.now(UTC)
     # 所有向量几乎相同 → 粗筛结果只由 where 决定
     vec = [0.1, 0.2, 0.3]
     vs.add(_entry("own", "bob"), vec)

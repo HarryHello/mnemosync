@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import httpx
-from typing import Optional
 
 
 class ConnectionPool:
@@ -21,7 +20,7 @@ class ConnectionPool:
             max_keepalive_connections=max_keepalive_connections,
         )
         self._timeout = httpx.Timeout(timeout, connect=connect_timeout)
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -37,7 +36,7 @@ class ConnectionPool:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self) -> "ConnectionPool":
+    async def __aenter__(self) -> ConnectionPool:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

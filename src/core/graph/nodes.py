@@ -368,6 +368,7 @@ async def main_dialogue_node(
         internal_names: set[str] = state.get("internal_tool_names") or set()
         if dialogue.finish_reason == "tool_calls" and internal_names:
             import json as _json
+
             from src.core.tools.internal_registry import get_internal_tool_registry
 
             registry = get_internal_tool_registry()

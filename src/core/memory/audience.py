@@ -40,14 +40,14 @@ class RetrievalContext:
     actor_id: str | None = None        # 查看者的 Actor ID (custom_policies 用)
     space_id: str | None = None        # 当前会话空间 (None = 私聊/无空间)
     channel_type: str | None = None    # "direct" | "group" | None
-    relationship: "Relationship | None" = None  # 查看者↔人格关系 (门槛判定用)
+    relationship: Relationship | None = None  # 查看者↔人格关系 (门槛判定用)
 
 
 class AudienceFilter:
     """记忆可见性判定. 全部为纯函数, 便于测试."""
 
     @staticmethod
-    def is_visible(entry: "MemoryEntry", ctx: RetrievalContext) -> bool:
+    def is_visible(entry: MemoryEntry, ctx: RetrievalContext) -> bool:
         """判定一条记忆对 ctx 的查看者是否可见."""
         # 1. custom_policies: deny 一票否决; allow 白名单
         if not AudienceFilter._check_policies(entry.custom_policies, ctx):
@@ -87,8 +87,8 @@ class AudienceFilter:
 
     @staticmethod
     def filter(
-        entries: "list[MemoryEntry]", ctx: RetrievalContext,
-    ) -> "list[MemoryEntry]":
+        entries: list[MemoryEntry], ctx: RetrievalContext,
+    ) -> list[MemoryEntry]:
         """过滤一批记忆, 只保留查看者可见的."""
         return [e for e in entries if AudienceFilter.is_visible(e, ctx)]
 

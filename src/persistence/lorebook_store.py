@@ -12,7 +12,6 @@ import logging
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
 
 from src.persistence.base import SqliteStore
 
@@ -39,7 +38,7 @@ class LorebookEntry:
         *,
         priority: int = 0,
         space_id: str | None = None,
-    ) -> "LorebookEntry":
+    ) -> LorebookEntry:
         return LorebookEntry(
             id=f"lb_{secrets.token_hex(12)}",
             content=content,
@@ -76,7 +75,7 @@ class SqliteLorebookStore(SqliteStore):
             await self._init_schema(db)
             await db.commit()
 
-    async def save(self, entry: "LorebookEntry") -> None:
+    async def save(self, entry: LorebookEntry) -> None:
         async with self._conn() as db:
             await db.execute(
                 "INSERT OR REPLACE INTO lorebook_entries "
@@ -95,7 +94,7 @@ class SqliteLorebookStore(SqliteStore):
             )
             await db.commit()
 
-    async def get_by_id(self, entry_id: str) -> "LorebookEntry | None":
+    async def get_by_id(self, entry_id: str) -> LorebookEntry | None:
         async with self._conn() as db:
             async with db.execute(
                 "SELECT * FROM lorebook_entries WHERE id = ?", (entry_id,)
@@ -119,7 +118,7 @@ class SqliteLorebookStore(SqliteStore):
         space_id: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
-    ) -> tuple[list["LorebookEntry"], int]:
+    ) -> tuple[list[LorebookEntry], int]:
         allowed_sort = {"created_at", "priority", "content"}
         sort_col = sort_by if sort_by in allowed_sort else "created_at"
         direction = "ASC" if sort_order.lower() == "asc" else "DESC"
@@ -149,7 +148,7 @@ class SqliteLorebookStore(SqliteStore):
         space_id: str | None = None,
         *,
         limit: int = 5,
-    ) -> list["LorebookEntry"]:
+    ) -> list[LorebookEntry]:
         """关键词匹配: 返回当前空间命中的 Lorebook 条目, 按优先级排序."""
         if not text:
             return []
@@ -170,7 +169,7 @@ class SqliteLorebookStore(SqliteStore):
                 rows = await cur.fetchall()
         candidates = [self._row_to_entry(r) for r in rows]
         # 在 Python 侧做关键词匹配 (支持中文分词)
-        matched: list["LorebookEntry"] = []
+        matched: list[LorebookEntry] = []
         for entry in candidates:
             for kw in entry.keywords:
                 if kw and kw.lower() in text.lower():
@@ -188,7 +187,7 @@ class SqliteLorebookStore(SqliteStore):
                 return row[0] if row else 0
 
     @staticmethod
-    def _row_to_entry(row) -> "LorebookEntry | None":
+    def _row_to_entry(row) -> LorebookEntry | None:
         if row is None:
             return None
         try:

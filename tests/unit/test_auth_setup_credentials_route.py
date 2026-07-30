@@ -7,13 +7,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from src.api import api_router
 from src.api.state import AppState
 from src.persistence.auth_store import SqliteAuthStore

@@ -6,18 +6,18 @@ Forwarder 层不能直接依赖 FastAPI 的 app.state (它是纯 httpx 客户端
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.infra.debug_bus import DebugEventBus
 
-_bus: Optional["DebugEventBus"] = None
+_bus: DebugEventBus | None = None
 
 
-def set_debug_bus(bus: "DebugEventBus | None") -> None:
+def set_debug_bus(bus: DebugEventBus | None) -> None:
     global _bus
     _bus = bus
 
 
-def get_debug_bus() -> "DebugEventBus | None":
+def get_debug_bus() -> DebugEventBus | None:
     return _bus

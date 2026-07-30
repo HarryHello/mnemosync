@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.persistence.memory_store import SqliteMemoryStore
 from src.tools import make_update_addressing_tool
 

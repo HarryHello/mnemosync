@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -126,15 +126,15 @@ async def stream_events(request: Request):
         sub_id, q = await bus.subscribe()
         try:
             # 首帧: 发一个 ready 事件, 让前端知道订阅成功
-            yield f"event: ready\ndata: {json.dumps({'sub_id': sub_id})}\n\n".encode("utf-8")
+            yield f"event: ready\ndata: {json.dumps({'sub_id': sub_id})}\n\n".encode()
             while True:
                 if await request.is_disconnected():
                     break
                 try:
                     ev = await asyncio.wait_for(q.get(), timeout=15.0)
                     payload = json.dumps(vars(ev), ensure_ascii=False, default=str)
-                    yield f"data: {payload}\n\n".encode("utf-8")
-                except asyncio.TimeoutError:
+                    yield f"data: {payload}\n\n".encode()
+                except TimeoutError:
                     # keep-alive comment (SSE 允许 : 开头的注释, 不会触发 onmessage)
                     yield b": keepalive\n\n"
         finally:

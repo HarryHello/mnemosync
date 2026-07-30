@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from src.cli.cli import main
 
 
@@ -88,6 +87,7 @@ def test_group_bind_collapses_effective_user_id(
     """bind 后 actor show 的 effective_user_id 收敛到组 ID."""
     # 模拟请求自动建档
     import asyncio
+
     from src.persistence.identity_store import SqliteIdentityStore
 
     async def seed() -> str:
@@ -130,6 +130,7 @@ def test_bind_unknown_actor_returns_1(isolated: Path) -> None:
 
 def test_bind_idempotent(isolated: Path, capsys: pytest.CaptureFixture[str]) -> None:
     import asyncio
+
     from src.persistence.identity_store import SqliteIdentityStore
 
     async def seed() -> tuple[str, str]:

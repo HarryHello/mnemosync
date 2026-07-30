@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from src.core.memory.models import MemoryEntry, MemoryType, Visibility
 from src.persistence.memory_store import SqliteMemoryStore
 

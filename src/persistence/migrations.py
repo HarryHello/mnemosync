@@ -20,7 +20,7 @@ MigrationRunner 在 _init_schema 中幂等执行未应用的迁移, 记录到 _m
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 import aiosqlite
 

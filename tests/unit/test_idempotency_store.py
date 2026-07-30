@@ -9,11 +9,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-
 from src.persistence.idempotency_store import SqliteIdempotencyStore
 
 
@@ -34,7 +33,7 @@ async def test_record_and_get_roundtrip(store: SqliteIdempotencyStore) -> None:
     assert rec.external_event_id == "evt-100"
     assert rec.event_id == "chatcmpl-abc"
     assert rec.response_text == "你好！"
-    assert rec.created_at <= datetime.now(timezone.utc)
+    assert rec.created_at <= datetime.now(UTC)
 
 
 @pytest.mark.asyncio
@@ -69,7 +68,7 @@ async def test_same_event_id_across_integrations(store: SqliteIdempotencyStore) 
 @pytest.mark.asyncio
 async def test_prune_before(store: SqliteIdempotencyStore) -> None:
     await store.record("key-1", "evt-old", "chatcmpl-old", "旧")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # 记录刚写入, cutoff 取未来 → 全部清掉
     n = await store.prune_before(now + timedelta(seconds=5))
     assert n == 1
@@ -81,6 +80,6 @@ async def test_prune_before(store: SqliteIdempotencyStore) -> None:
 async def test_prune_before_keeps_recent(store: SqliteIdempotencyStore) -> None:
     await store.record("key-1", "evt-new", "chatcmpl-new", "新")
     # cutoff 取过去 → 刚写入的记录保留
-    n = await store.prune_before(datetime.now(timezone.utc) - timedelta(days=1))
+    n = await store.prune_before(datetime.now(UTC) - timedelta(days=1))
     assert n == 0
     assert await store.count() == 1

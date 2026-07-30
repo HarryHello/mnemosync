@@ -9,10 +9,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from src.core.memory.models import MemoryEntry, MemoryType, Visibility
 from src.infra.vector_store import VectorStore, VectorStoreLockError
 
@@ -29,8 +28,8 @@ def _make_entry(idx: int = 0) -> MemoryEntry:
         priority=0.5,
         access_count=0,
         is_forgotten=False,
-        created_at=datetime.now(timezone.utc),
-        last_accessed=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        last_accessed=datetime.now(UTC),
         emotional_tags=[],
         visibility=Visibility.SOURCE_RESTRICTED,
         expires_at=None,

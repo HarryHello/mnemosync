@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.api.tool_policies import (
     ToolPolicy,
     filter_client_tools,

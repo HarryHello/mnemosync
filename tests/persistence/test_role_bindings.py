@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.core.models.resolver import NoCandidateForRoleError, RoleResolver
 from src.infra.llm_service.models import LLMServiceProvider, ModelType
 from src.infra.llm_service.store import LLMServiceStore

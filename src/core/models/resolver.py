@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 from src.infra.llm_service.models import ModelType, ResolvedCandidate
 from src.infra.llm_service.store import LLMServiceStore
@@ -91,7 +90,7 @@ class RoleResolver:
             if c.supports_tools and (not streaming or c.supports_stream_tools)
         ]
 
-    def invalidate(self, role: Optional[ModelType] = None) -> None:
+    def invalidate(self, role: ModelType | None = None) -> None:
         """使缓存失效. role 省略时清空全部."""
         if role is None:
             self._cache.clear()

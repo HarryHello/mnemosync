@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from src.api.reasoning_control import (
     build_reasoning_stream_frames,
     chunk_has_native_reasoning,

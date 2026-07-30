@@ -5,9 +5,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import aiosqlite
-from datetime import datetime, UTC
-from typing import Optional
 
 from src.infra.crypto import FernetEncryptor
 
@@ -129,7 +129,7 @@ class LLMServiceStore:
             await db.commit()
         return service
 
-    async def get_service(self, service_id: str) -> Optional[LLMServiceProvider]:
+    async def get_service(self, service_id: str) -> LLMServiceProvider | None:
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
                 "SELECT id, base_url, api_key_encrypted, created_at, updated_at FROM llm_services WHERE id = ?",
@@ -204,7 +204,7 @@ class LLMServiceStore:
 
     async def get_model(
         self, service_id: str, model_type: ModelType
-    ) -> Optional[ModelConfiguration]:
+    ) -> ModelConfiguration | None:
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
                 "SELECT id, service_id, model, model_type, created_at, updated_at FROM model_configs WHERE service_id = ? AND model_type = ?",
@@ -235,14 +235,14 @@ class LLMServiceStore:
                 ]
 
     @staticmethod
-    def _parse_dt(v: Optional[str]) -> datetime:
+    def _parse_dt(v: str | None) -> datetime:
         if v is None:
             return datetime.now(UTC)
         return datetime.fromisoformat(v)
 
     # ============ 角色绑定 (role_bindings) ============
 
-    async def list_role_bindings(self, role: Optional[ModelType] = None) -> list[RoleBinding]:
+    async def list_role_bindings(self, role: ModelType | None = None) -> list[RoleBinding]:
         """列出角色绑定. role 为 None 时返回所有角色的绑定, 已按 (role, priority) 排序."""
         async with aiosqlite.connect(self.db_path) as db:
             if role is None:
@@ -280,9 +280,9 @@ class LLMServiceStore:
         role: ModelType,
         service_id: str,
         model: str,
-        priority: Optional[int] = None,
-        context_length: Optional[int] = None,
-        embedding_dim: Optional[int] = None,
+        priority: int | None = None,
+        context_length: int | None = None,
+        embedding_dim: int | None = None,
         send_dimensions: bool = False,
     ) -> RoleBinding:
         """追加一条角色绑定. priority 省略时排到列表末尾.
@@ -370,14 +370,14 @@ class LLMServiceStore:
         role: ModelType,
         priority: int,
         *,
-        service_id: Optional[str] = None,
-        model: Optional[str] = None,
-        context_length: Optional[int] = None,
-        embedding_dim: Optional[int] = None,
-        send_dimensions: Optional[bool] = None,
+        service_id: str | None = None,
+        model: str | None = None,
+        context_length: int | None = None,
+        embedding_dim: int | None = None,
+        send_dimensions: bool | None = None,
         clear_context_length: bool = False,
         clear_embedding_dim: bool = False,
-    ) -> Optional[RoleBinding]:
+    ) -> RoleBinding | None:
         """就地更新一条角色绑定的可编辑字段. role/priority 由主键定位, 不可改.
 
         清空整型字段需显式传对应 clear_* 标志 (None 语义为 "不修改").

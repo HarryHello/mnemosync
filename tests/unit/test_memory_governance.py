@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-
 from src.persistence.memory_store import SqliteMemoryStore
 
 
@@ -21,7 +20,7 @@ async def memory_store(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_delete_by_user_all(memory_store: SqliteMemoryStore):
     """按用户删除全部记忆."""
-    now = datetime.now(UTC)
+    datetime.now(UTC)
     # 写入两条记忆
     from src.core.memory.models import MemoryEntry, MemoryType
 

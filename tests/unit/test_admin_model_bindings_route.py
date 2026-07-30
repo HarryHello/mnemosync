@@ -10,13 +10,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
 from src.api.state import AppState
@@ -243,6 +242,7 @@ def test_add_with_metadata_fields(app: FastAPI) -> None:
 def test_probe_dimension_returns_length(app: FastAPI) -> None:
     """probe-dimension 用真实 Forwarder.embed (mock 掉), 校验维度回传."""
     from unittest.mock import AsyncMock, patch
+
     from src.infra.forwarder.forwarder import Forwarder
 
     client = TestClient(app)

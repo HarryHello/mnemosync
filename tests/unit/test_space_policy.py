@@ -1,8 +1,7 @@
 """空间社交策略存储测试."""
 
 import pytest
-
-from src.persistence.space_policy_store import SqliteSpacePolicyStore, SpacePolicy
+from src.persistence.space_policy_store import SpacePolicy, SqliteSpacePolicyStore
 
 
 @pytest.fixture

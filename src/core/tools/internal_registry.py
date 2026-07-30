@@ -15,9 +15,9 @@ Mnemosync 向主模型注入的内部工具, 与客户端提供的 tools 分离�
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

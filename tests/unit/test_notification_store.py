@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from src.persistence.notification_store import NotificationStore
 
 
@@ -72,8 +71,8 @@ async def test_list_page_orders_desc_and_paginates(store: NotificationStore) -> 
 @pytest.mark.asyncio
 async def test_unread_flow(store: NotificationStore) -> None:
     a = await store.add(level="info", category="c", title="a", message="")
-    b = await store.add(level="info", category="c", title="b", message="")
-    c = await store.add(level="info", category="c", title="c", message="")
+    await store.add(level="info", category="c", title="b", message="")
+    await store.add(level="info", category="c", title="c", message="")
 
     assert await store.count_unread() == 3
 

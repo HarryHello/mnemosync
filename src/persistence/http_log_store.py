@@ -58,7 +58,7 @@ class HttpLogStore:
                     pass
             try:
                 await asyncio.wait_for(self._writer_task, timeout=5)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 self._writer_task.cancel()
             self._writer_task = None
         if self._db is not None:
@@ -125,7 +125,7 @@ class HttpLogStore:
                     batch.append(item)
                 await self._flush(batch)
                 batch.clear()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if self._stopping:
                     return
                 # 没新数据, 空转

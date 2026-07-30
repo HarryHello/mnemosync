@@ -1,14 +1,12 @@
 """内部 tool 注册表 + 身份绑定 tool 测试."""
 
-import asyncio
 import pytest
-
-from src.core.tools.internal_registry import InternalTool, InternalToolRegistry
 from src.core.tools.identity_binding import (
     BindingCodeStore,
-    register_identity_binding_tools,
     get_binding_code_store,
+    register_identity_binding_tools,
 )
+from src.core.tools.internal_registry import InternalTool, InternalToolRegistry
 
 
 def test_registry_register_and_get():

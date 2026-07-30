@@ -6,10 +6,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from src.core.memory.models import (
     MemoryEntry,
     MemoryType,
@@ -164,7 +163,7 @@ async def test_list_for_decay_skips_recent(store):
 
 async def test_list_for_decay_includes_old(store):
     old = MemoryEntry.create(content="old", role="user", source_user="u")
-    old.created_at = datetime.now(timezone.utc) - timedelta(days=2)
+    old.created_at = datetime.now(UTC) - timedelta(days=2)
     await store.save(old)
 
     result = await store.list_for_decay(skip_hours=24, limit=10)

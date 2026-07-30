@@ -18,7 +18,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # 句末语气词
 _FINAL_PARTICLES = ["呢", "吧", "呀", "哈", "嘛", "哦", "哇", "啦", "呗", "哟"]
 # 标点偏好
@@ -145,7 +144,7 @@ def extract_style_from_turns(
     style.short_sentence_ratio = sum(1 for l in lengths if l < 10) / len(lengths)
 
     # 语气词频率: 句末出现语气词的句子占比
-    particle_counts: dict[str, int] = {p: 0 for p in _FINAL_PARTICLES}
+    particle_counts: dict[str, int] = dict.fromkeys(_FINAL_PARTICLES, 0)
     for s in sentences:
         for p in _FINAL_PARTICLES:
             if s.endswith(p):

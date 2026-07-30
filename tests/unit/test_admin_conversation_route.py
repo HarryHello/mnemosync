@@ -11,9 +11,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -80,7 +80,7 @@ def test_conversation_routes_require_auth(app_unauth: FastAPI) -> None:
 
 
 def test_list_returns_descending_with_total(app: FastAPI, store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _seed(store, [
         ("user", "第一句", now - timedelta(minutes=3)),
         ("assistant", "回复 1", now - timedelta(minutes=2)),
@@ -103,7 +103,7 @@ def test_list_returns_descending_with_total(app: FastAPI, store: SqliteConversat
 
 
 def test_list_respects_limit(app: FastAPI, store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _seed(store, [
         ("user", str(i), now - timedelta(seconds=10 - i))
         for i in range(5)
@@ -117,7 +117,7 @@ def test_list_respects_limit(app: FastAPI, store: SqliteConversationStore) -> No
 
 
 def test_list_page_two_offsets_correctly(app: FastAPI, store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _seed(store, [
         ("user", str(i), now - timedelta(seconds=10 - i))
         for i in range(5)
@@ -131,7 +131,7 @@ def test_list_page_two_offsets_correctly(app: FastAPI, store: SqliteConversation
 
 
 def test_list_role_filter(app: FastAPI, store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _seed(store, [
         ("user", "u1", now - timedelta(minutes=3)),
         ("assistant", "a1", now - timedelta(minutes=2)),
@@ -147,7 +147,7 @@ def test_list_source_filter_and_sources_endpoint(
     app: FastAPI, store: SqliteConversationStore
 ) -> None:
     """来源过滤 + /sources 列出去重列表."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async def _seed_with_source() -> None:
         await store.append("user", "a", 1, source_frontend="astrbot",
                            ts=now - timedelta(minutes=3))
@@ -174,7 +174,7 @@ def test_list_source_filter_and_sources_endpoint(
 
 
 def test_delete_single_turn_by_id(app: FastAPI, store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _seed(store, [
         ("user", "keep", now - timedelta(minutes=2)),
         ("assistant", "remove", now - timedelta(minutes=1)),
@@ -194,7 +194,7 @@ def test_delete_single_turn_not_found(app: FastAPI) -> None:
 
 
 def test_delete_without_since_wipes_all(app: FastAPI, store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _seed(store, [
         ("user", "a", now - timedelta(days=10)),
         ("assistant", "b", now - timedelta(hours=1)),
@@ -206,7 +206,7 @@ def test_delete_without_since_wipes_all(app: FastAPI, store: SqliteConversationS
 
 
 def test_delete_with_since_only_wipes_older(app: FastAPI, store: SqliteConversationStore) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _seed(store, [
         ("user", "old", now - timedelta(days=10)),
         ("assistant", "recent", now - timedelta(hours=1)),

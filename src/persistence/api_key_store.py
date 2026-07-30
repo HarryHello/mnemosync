@@ -6,16 +6,16 @@ API Key 采用 Fernet 对称加密后落库, 密钥自动生成并存于同库 c
 
 from __future__ import annotations
 
-import aiosqlite
 import hashlib
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Protocol
+
+import aiosqlite
 
 from src.infra.crypto import FernetEncryptor
 from src.persistence.base import SqliteStore
-
 
 API_KEY_SOURCE_USER = "user"
 API_KEY_SOURCE_PANEL_DEBUG = "panel-debug"
@@ -35,7 +35,7 @@ class ApiKey:
     strategy_id: str | None = None  # 绑定的身份识别策略 ID (v0.3.0)
 
     @staticmethod
-    def generate(note: str, source: str = API_KEY_SOURCE_USER, strategy_id: str | None = None) -> "ApiKey":
+    def generate(note: str, source: str = API_KEY_SOURCE_USER, strategy_id: str | None = None) -> ApiKey:
         raw = f"sk-{secrets.token_urlsafe(32)}"
         return ApiKey(
             id=secrets.token_hex(16),

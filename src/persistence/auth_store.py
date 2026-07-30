@@ -13,17 +13,16 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import secrets
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Protocol
 
 import aiosqlite
 import bcrypt
-import secrets
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, UTC
-from typing import Protocol
 
 from src.persistence.base import SqliteStore
-
 
 # 会话签名密钥路径 (data/.session_key); 启动时若不存在则自动生成
 _SESSION_KEY_PATH = Path("data/.session_key")
@@ -98,7 +97,7 @@ class User:
     is_active: bool = True
 
     @staticmethod
-    def create(username: str, password_hash: str, must_change_password: bool = True) -> "User":
+    def create(username: str, password_hash: str, must_change_password: bool = True) -> User:
         now = datetime.now(UTC)
         return User(
             id=secrets.token_hex(16),
@@ -121,7 +120,7 @@ class SessionToken:
     is_valid: bool = True
 
     @staticmethod
-    def generate(user_id: str, expires_hours: int = 24) -> "SessionToken":
+    def generate(user_id: str, expires_hours: int = 24) -> SessionToken:
         raw = secrets.token_urlsafe(32)
         token_hash = _hash_token(raw)
         return SessionToken(

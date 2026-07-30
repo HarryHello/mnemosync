@@ -18,8 +18,9 @@ import logging
 import time
 import uuid
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ class DebugEventBus:
         self._by_id: dict[str, _StoredEvent] = {}
         self._subscribers: dict[str, asyncio.Queue] = {}
         self._grace_task: asyncio.Task | None = None
-        self._on_grace_expired: Optional[Callable[[], Awaitable[None]]] = None
+        self._on_grace_expired: Callable[[], Awaitable[None]] | None = None
         self._lock = asyncio.Lock()
 
     def set_grace_callback(

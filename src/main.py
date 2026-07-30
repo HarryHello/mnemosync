@@ -46,6 +46,7 @@ def main() -> int:
             return 0
         elif cmd == "cli-internal":
             import asyncio
+
             from src.cli.cli_interactive import main as cli_main
             asyncio.run(cli_main())
             return 0

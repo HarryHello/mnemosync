@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends
 from .routes.admin import router as admin_router
 from .routes.admin_debug import router as admin_debug_router
 from .routes.api_key import router as api_key_router
-from .routes.auth import require_password_settled, router as auth_router
+from .routes.auth import require_password_settled
+from .routes.auth import router as auth_router
 from .routes.forward import router as forward_router
 
 # 面板/内部管理路由 (Mnemosync 自身管理用, 不对外)

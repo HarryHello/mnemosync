@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 
 
-class ModelType(str, Enum):
+class ModelType(StrEnum):
     """模型角色."""
 
     MAIN = "main"            # 主模型：主对话 Agent
@@ -37,7 +37,7 @@ class LLMServiceProvider:
         return f"{self.api_key[:6]}****{self.api_key[-4:]}"
 
     @classmethod
-    def create(cls, service_id: str, base_url: str, api_key: str) -> "LLMServiceProvider":
+    def create(cls, service_id: str, base_url: str, api_key: str) -> LLMServiceProvider:
         now = datetime.now(UTC)
         return cls(id=service_id, base_url=base_url, api_key=api_key,
                    created_at=now, updated_at=now)
@@ -55,7 +55,7 @@ class ModelConfiguration:
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @classmethod
-    def create(cls, service_id: str, model: str, model_type: ModelType) -> "ModelConfiguration":
+    def create(cls, service_id: str, model: str, model_type: ModelType) -> ModelConfiguration:
         now = datetime.now(UTC)
         return cls(id=secrets.token_hex(16), service_id=service_id, model=model,
                    model_type=model_type, created_at=now, updated_at=now)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.api.tool_transactions import (
     ToolTransactionError,
     append_tool_transaction_context,

@@ -6,10 +6,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from src.core.memory.models import (
     DECAY_RATE_TO_HALF_LIFE,
     DecayState,
@@ -18,7 +17,6 @@ from src.core.memory.models import (
     Relationship,
     decay_rate_to_half_life,
 )
-
 
 # ─── DecayState.from_priority 分档 ───────────────────────
 
@@ -77,7 +75,7 @@ def test_fresh_normal_priority_close_to_importance():
 def test_old_normal_decays_below_importance():
     entry = MemoryEntry.create(content="n", role="user", importance=0.6, decay_rate=0.7)
     # 半衰期 17 天, 让它过去 34 天 → 剩 1/4
-    entry.created_at = datetime.now(timezone.utc) - timedelta(days=34)
+    entry.created_at = datetime.now(UTC) - timedelta(days=34)
     p = entry.compute_theoretical_priority()
     assert p < 0.6 * 0.5  # 至少一个半衰期以下
     assert p >= 0.0
@@ -85,7 +83,7 @@ def test_old_normal_decays_below_importance():
 
 def test_expired_normal_gets_penalty():
     entry = MemoryEntry.create(content="n", role="user", importance=1.0, decay_rate=0.1)
-    entry.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    entry.expires_at = datetime.now(UTC) - timedelta(days=1)
     p = entry.compute_theoretical_priority()
     assert p < 0.05  # 过期惩罚 0.01 × importance
 

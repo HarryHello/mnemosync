@@ -6,9 +6,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -78,7 +78,7 @@ def test_relationship_returns_stored_row_when_present(app: FastAPI) -> None:
     rel.intimacy_score = 0.42
     rel.trust_level = 0.31
     rel.type = "acquaintance"
-    rel.last_active = datetime(2026, 7, 18, 10, 0, 0, tzinfo=timezone.utc)
+    rel.last_active = datetime(2026, 7, 18, 10, 0, 0, tzinfo=UTC)
     try:
         loop.run_until_complete(memory_store.save_relationship(rel))
     finally:
@@ -312,7 +312,7 @@ def test_list_relationships_returns_all(app: FastAPI) -> None:
     loop = asyncio.new_event_loop()
     store: SqliteMemoryStore = app.state.memory_store
     try:
-        for i, (uid, intimacy) in enumerate([("alice", 0.42), ("bob", 0.91), ("carol", 0.15)]):
+        for _i, (uid, intimacy) in enumerate([("alice", 0.42), ("bob", 0.91), ("carol", 0.15)]):
             rel = Relationship.create("default", uid)
             rel.intimacy_score = intimacy
             loop.run_until_complete(store.save_relationship(rel))
