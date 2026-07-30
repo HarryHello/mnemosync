@@ -27,7 +27,7 @@
 | **前端 (UI)** | Vue 3 + Element Plus + Pinia + TypeScript | 管理面板 |
 | **构建** | hatchling (Python), Vite (UI) | |
 | **包管理** | uv (Astral) | 锁文件: uv.lock |
-| **容器** | Docker (multi-stage: Node 22 build → Python 3.12-slim) | |
+| **容器** | Docker (multi-stage: Node 24 build → Python 3.12-slim) | |
 | **CI** | GitHub Actions | ruff → mypy → pytest → pip-audit (backend); type-check → lint → test:unit → build → npm audit (frontend) |
 
 ---
@@ -158,7 +158,7 @@ mnemosync/
 │   └── api/                    # API 集成测试
 │
 ├── ui/                         # 前端 Vue 3 子项目
-│   ├── package.json            # Node 22+, Vite 8, Vue 3.5, Element Plus
+│   ├── package.json            # Node 24+, Vite 8, Vue 3.5, Element Plus
 │   ├── src/
 │   │   ├── views/              # 页面组件
 │   │   ├── components/         # 通用组件
@@ -383,7 +383,7 @@ parse_request → [proxy_thinking?] → main_dialogue
 
 ## Deployment
 
-- **Docker**: `docker compose up -d` (多阶段: Node 22 build → Python 3.12-slim)
+- **Docker**: `docker compose up -d` (多阶段: Node 24 build → Python 3.12-slim)
 - **源码**: `uv sync && uv run mnemosync init && uv run mnemosync serve`
 - **install.sh**: 一键脚本 (`~/.mnemosync` 安装)
 - **默认端口**: 16125

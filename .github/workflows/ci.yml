@@ -21,8 +21,8 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install dependencies
-        run: uv sync --frozen
+      - name: Install dependencies (including dev)
+        run: uv sync --frozen --dev
 
       - name: Lint (ruff)
         run: uv run ruff check src tests
@@ -39,7 +39,7 @@ jobs:
           uv run pip-audit --descending --vulnerability-severity-threshold=high
 
   frontend:
-    name: Frontend (Node 22)
+    name: Frontend (Node 24)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -50,7 +50,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
 
