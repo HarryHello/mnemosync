@@ -11,7 +11,6 @@ import type {
   PersonaProfileUpdateBody,
   PersonaResetBody,
   PersonaResetResponse,
-  PersonaVersionItem,
   PersonaVersionListResponse,
 } from '@/types/api'
 import { apiDelete, apiGet, apiPost, apiPut } from './http'

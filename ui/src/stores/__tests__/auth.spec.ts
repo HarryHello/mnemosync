@@ -5,10 +5,10 @@ import { useAuthStore } from '../auth'
 
 // vi.mock 被提升到文件顶部, 用 vi.hoisted 定义被 mock 引用的变量
 const mocks = vi.hoisted(() => ({
-  login: vi.fn(),
-  logout: vi.fn(),
-  getCurrentUser: vi.fn(),
-  setToken: vi.fn(),
+  login: vi.fn<() => Promise<unknown>>(),
+  logout: vi.fn<() => Promise<unknown>>(),
+  getCurrentUser: vi.fn<() => Promise<unknown>>(),
+  setToken: vi.fn<(token: string) => void>(),
   getToken: vi.fn<() => string | null>(),
 }))
 
