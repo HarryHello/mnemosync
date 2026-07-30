@@ -3,7 +3,6 @@ import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listMemories, listMemorySources, deleteMemory, deleteMemoriesBatch } from '@/api/client'
 import type { Memory } from '@/types/api'
-import PageHeader from '@/components/common/PageHeader.vue'
 import MemoryTable from './MemoryTable.vue'
 import MemoryDetailDrawer from './MemoryDetailDrawer.vue'
 
@@ -158,11 +157,12 @@ watch(() => props.active, (active) => {
 
 <template>
   <div class="memories-tab">
-    <PageHeader
-      title="长期记忆"
-      subtitle="按重要度/衰减规则汰换，列头可点击排序 / 过滤。"
-    >
-      <template #actions>
+    <div class="tab-head">
+      <div>
+        <h3 class="tab-title">长期记忆</h3>
+        <p class="tab-subtitle">按重要度/衰减规则汰换，列头可点击排序 / 过滤。</p>
+      </div>
+      <div class="head-actions">
         <el-button type="danger" plain :disabled="total === 0" :loading="loading" @click="onBatchDelete">
           <el-icon><Delete /></el-icon>
           <span>批量删除</span>
@@ -171,8 +171,8 @@ watch(() => props.active, (active) => {
           <el-icon><Refresh /></el-icon>
           <span>刷新</span>
         </el-button>
-      </template>
-    </PageHeader>
+      </div>
+    </div>
 
     <el-card class="memories-card">
       <template #header>
@@ -263,5 +263,32 @@ watch(() => props.active, (active) => {
   display: flex;
   justify-content: flex-end;
   padding-top: $space-3;
+}
+
+.tab-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $space-4;
+  margin-bottom: $space-4;
+  flex-wrap: wrap;
+}
+
+.tab-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 $space-1;
+}
+
+.tab-subtitle {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin: 0;
+}
+
+.head-actions {
+  display: flex;
+  gap: $space-2;
+  align-items: center;
 }
 </style>
