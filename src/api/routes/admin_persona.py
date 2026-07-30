@@ -43,27 +43,26 @@ from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 
 class PersonaIdentityBody(BaseModel):
-    """结构化人格身份."""
+    """结构化人格身份 (v0.4.0: 移除了 per-user 的 user_addressing/context)."""
 
     personality: str = ""
     speaking_style: str = ""
     values: list[str] = []
     persona_addressing: str = "人格"
-    user_addressing: str = "用户"
-    context: str = ""
 
 
 class PersonaOverrideBody(BaseModel):
-    """单空间覆盖."""
+    """单空间覆盖 (v0.4.0: 移除了 per-user 的 context)."""
 
     speaking_style: str | None = None
     personality: str | None = None
-    context: str | None = None
+    scenario: str | None = None
 
 
 class PersonaDefinitionSaveBody(BaseModel):
-    """保存结构化人格."""
+    """保存结构化人格 (v0.4.0: 增加 name 字段支持改名)."""
 
+    name: str
     identity: PersonaIdentityBody
     space_overrides: dict[str, PersonaOverrideBody] = {}
     changelog: str = ""
@@ -95,6 +94,36 @@ class PersonaVersionItem(BaseModel):
 class PersonaVersionListResponse(BaseModel):
     items: list[PersonaVersionItem]
     total: int
+
+
+# ============================================================================
+# Persona Profile models (v0.4.0)
+# ============================================================================
+
+
+class PersonaProfileCreateBody(BaseModel):
+    name: str
+    description: str = ""
+
+
+class PersonaProfileUpdateBody(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class PersonaProfileRead(BaseModel):
+    id: str
+    name: str
+    description: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+
+class PersonaProfileListResponse(BaseModel):
+    items: list[PersonaProfileRead]
+    total: int
+
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +322,7 @@ async def get_persona_definition(request: Request):
         sid: PersonaOverrideBody(
             speaking_style=ov.speaking_style,
             personality=ov.personality,
-            context=ov.context,
+            scenario=ov.scenario,
         )
         for sid, ov in defn.space_overrides.items()
     }
@@ -305,8 +334,6 @@ async def get_persona_definition(request: Request):
             speaking_style=defn.identity.speaking_style,
             values=list(defn.identity.values),
             persona_addressing=defn.identity.persona_addressing,
-            user_addressing=defn.identity.user_addressing,
-            context=defn.identity.context,
         ),
         space_overrides=overrides,
         created_at=defn.created_at.isoformat(),
@@ -319,14 +346,14 @@ async def save_persona_definition(
     body: PersonaDefinitionSaveBody,
     request: Request,
 ):
-    """保存结构化人格 (创建新版本)."""
+    """保存结构化人格 (创建新版本, 支持改名)."""
     store = _get_persona_store(request)
     if store is None:
         raise HTTPException(404, "persona_store not available")
 
     from src.core.persona.definition import PersonaDefinition, PersonaIdentity, PersonaOverride
 
-    # 版本号递增: 获取当前版本号
+    # 版本号递增: 获取当前活跃人格的当前版本号
     current = await store.get_active()
     if current:
         parts = current.version.split(".")
@@ -339,20 +366,18 @@ async def save_persona_definition(
 
     defn = PersonaDefinition(
         version=new_version,
-        name=current.name if current else get_settings().persona.name,
+        name=body.name,
         identity=PersonaIdentity(
             personality=body.identity.personality,
             speaking_style=body.identity.speaking_style,
             values=body.identity.values,
             persona_addressing=body.identity.persona_addressing,
-            user_addressing=body.identity.user_addressing,
-            context=body.identity.context,
         ),
         space_overrides={
             sid: PersonaOverride(
                 speaking_style=ov.speaking_style,
                 personality=ov.personality,
-                context=ov.context,
+                scenario=ov.scenario,
             )
             for sid, ov in body.space_overrides.items()
         },
@@ -363,7 +388,7 @@ async def save_persona_definition(
         sid: PersonaOverrideBody(
             speaking_style=ov.speaking_style,
             personality=ov.personality,
-            context=ov.context,
+            scenario=ov.scenario,
         )
         for sid, ov in defn.space_overrides.items()
     }
@@ -375,8 +400,6 @@ async def save_persona_definition(
             speaking_style=defn.identity.speaking_style,
             values=list(defn.identity.values),
             persona_addressing=defn.identity.persona_addressing,
-            user_addressing=defn.identity.user_addressing,
-            context=defn.identity.context,
         ),
         space_overrides=overrides,
         created_at=defn.created_at.isoformat(),
@@ -388,12 +411,13 @@ async def save_persona_definition(
 async def list_persona_versions(
     request: Request,
     limit: int = 50,
+    persona_id: str | None = None,
 ):
-    """列出人格版本历史."""
+    """列出版本历史. 可选传入 persona_id 筛选."""
     store = _get_persona_store(request)
     if store is None:
         raise HTTPException(404, "persona_store not available")
-    versions = await store.list_versions(limit=limit)
+    versions = await store.list_versions(limit=limit, persona_id=persona_id)
     items = [
         PersonaVersionItem(
             id=v["id"],
@@ -422,6 +446,150 @@ async def rollback_persona_version(
     if not ok:
         raise HTTPException(404, detail="Version not found")
     return {"success": True, "version_id": version_id}
+
+
+# ============================================================================
+# Persona Profile Management (v0.4.0)
+# ============================================================================
+
+
+@router.get("/persona/profiles", response_model=PersonaProfileListResponse)
+async def list_persona_profiles(request: Request):
+    """列出所有人格 profile."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    personas = await store.list_personas()
+    items = [
+        PersonaProfileRead(
+            id=p["id"],
+            name=p["name"],
+            description=p["description"],
+            is_active=p["is_active"],
+            created_at=p["created_at"],
+            updated_at=p["updated_at"],
+        )
+        for p in personas
+    ]
+    return PersonaProfileListResponse(items=items, total=len(items))
+
+
+@router.post("/persona/profiles", response_model=PersonaProfileRead, status_code=201)
+async def create_persona_profile(
+    body: PersonaProfileCreateBody,
+    request: Request,
+):
+    """创建新人格 profile."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    pid = await store.create_persona(name=body.name, description=body.description)
+    profile = await store.get_persona(pid)
+    if profile is None:
+        raise HTTPException(500, "Failed to create persona profile")
+    return PersonaProfileRead(
+        id=profile["id"],
+        name=profile["name"],
+        description=profile["description"],
+        is_active=profile["is_active"],
+        created_at=profile["created_at"],
+        updated_at=profile["updated_at"],
+    )
+
+
+@router.get("/persona/profiles/{persona_id}", response_model=PersonaProfileRead)
+async def get_persona_profile(
+    persona_id: str,
+    request: Request,
+):
+    """获取指定人格 profile."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    profile = await store.get_persona(persona_id)
+    if profile is None:
+        raise HTTPException(404, f"Persona profile not found: {persona_id}")
+    return PersonaProfileRead(
+        id=profile["id"],
+        name=profile["name"],
+        description=profile["description"],
+        is_active=profile["is_active"],
+        created_at=profile["created_at"],
+        updated_at=profile["updated_at"],
+    )
+
+
+@router.put("/persona/profiles/{persona_id}", response_model=PersonaProfileRead)
+async def update_persona_profile(
+    persona_id: str,
+    body: PersonaProfileUpdateBody,
+    request: Request,
+):
+    """更新人格 profile (改名/改描述)."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+
+    if body.name is None and body.description is None:
+        raise HTTPException(400, detail="至少需要传入一个字段")
+
+    ok = await store.update_persona(
+        persona_id, name=body.name, description=body.description,
+    )
+    if not ok:
+        raise HTTPException(404, f"Persona profile not found: {persona_id}")
+
+    profile = await store.get_persona(persona_id)
+    if profile is None:
+        raise HTTPException(404, f"Persona profile not found: {persona_id}")
+    return PersonaProfileRead(
+        id=profile["id"],
+        name=profile["name"],
+        description=profile["description"],
+        is_active=profile["is_active"],
+        created_at=profile["created_at"],
+        updated_at=profile["updated_at"],
+    )
+
+
+@router.post("/persona/profiles/{persona_id}/activate", response_model=PersonaProfileRead)
+async def activate_persona_profile(
+    persona_id: str,
+    request: Request,
+):
+    """切换到指定人格 profile."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    ok = await store.activate_persona(persona_id)
+    if not ok:
+        raise HTTPException(404, f"Persona profile not found: {persona_id}")
+    profile = await store.get_persona(persona_id)
+    if profile is None:
+        raise HTTPException(404, f"Persona profile not found: {persona_id}")
+    return PersonaProfileRead(
+        id=profile["id"],
+        name=profile["name"],
+        description=profile["description"],
+        is_active=profile["is_active"],
+        created_at=profile["created_at"],
+        updated_at=profile["updated_at"],
+    )
+
+
+@router.delete("/persona/profiles/{persona_id}")
+async def delete_persona_profile(
+    persona_id: str,
+    request: Request,
+):
+    """删除人格 profile 及其所有版本."""
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    ok = await store.delete_persona(persona_id)
+    if not ok:
+        raise HTTPException(404, f"Persona profile not found: {persona_id}")
+    return {"success": True, "persona_id": persona_id}
 
 
 # ============================================================================
@@ -603,11 +771,7 @@ async def import_character_card(
             speaking_style=identity_data.get("speaking_style", ""),
             values=identity_data.get("values", []),
             persona_addressing=identity_data.get("persona_addressing", "角色"),
-            user_addressing=identity_data.get("user_addressing", "用户"),
-            context=identity_data.get("context", ""),
         ),
         has_lorebook=card.character_book is not None,
         has_examples=bool(card.mes_example),
     )
-
-

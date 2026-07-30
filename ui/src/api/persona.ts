@@ -3,8 +3,16 @@
 import type {
   PersonaConfigRead,
   PersonaConfigUpdateBody,
+  PersonaDefinitionRead,
+  PersonaDefinitionSaveBody,
+  PersonaProfileCreateBody,
+  PersonaProfileListResponse,
+  PersonaProfileRead,
+  PersonaProfileUpdateBody,
   PersonaResetBody,
   PersonaResetResponse,
+  PersonaVersionItem,
+  PersonaVersionListResponse,
 } from '@/types/api'
 import { apiDelete, apiGet, apiPost, apiPut } from './http'
 
@@ -32,51 +40,6 @@ export async function resetPersonaConfig(): Promise<PersonaConfigRead> {
 // Structured Persona API (v0.3.3, SQLite-based)
 // ============================================================================
 
-export interface PersonaIdentityBody {
-  personality: string
-  speaking_style: string
-  values: string[]
-  persona_addressing: string
-  user_addressing: string
-  context: string
-}
-
-export interface PersonaOverrideBody {
-  speaking_style: string | null
-  personality: string | null
-  context: string | null
-}
-
-export interface PersonaDefinitionRead {
-  version: string
-  name: string
-  identity: PersonaIdentityBody
-  space_overrides: Record<string, PersonaOverrideBody>
-  created_at: string
-  updated_at: string
-}
-
-export interface PersonaDefinitionSaveBody {
-  identity: PersonaIdentityBody
-  space_overrides: Record<string, PersonaOverrideBody>
-  changelog: string
-}
-
-export interface PersonaVersionItem {
-  id: number
-  version: string
-  name: string
-  changelog: string | null
-  author: string | null
-  created_at: string
-  active: boolean
-}
-
-export interface PersonaVersionListResponse {
-  items: PersonaVersionItem[]
-  total: number
-}
-
 export async function getPersonaDefinition(): Promise<PersonaDefinitionRead> {
   return apiGet<PersonaDefinitionRead>('/admin/persona/definition')
 }
@@ -100,5 +63,51 @@ export async function rollbackPersonaVersion(
 ): Promise<{ success: boolean; version_id: number }> {
   return apiPost<{ success: boolean; version_id: number }>(
     `/admin/persona/versions/${versionId}/rollback`,
+  )
+}
+
+// ============================================================================
+// Persona Profile API (v0.4.0 多人格)
+// ============================================================================
+
+export async function listPersonaProfiles(): Promise<PersonaProfileListResponse> {
+  return apiGet<PersonaProfileListResponse>('/admin/persona/profiles')
+}
+
+export async function getPersonaProfile(
+  personaId: string,
+): Promise<PersonaProfileRead> {
+  return apiGet<PersonaProfileRead>(`/admin/persona/profiles/${personaId}`)
+}
+
+export async function createPersonaProfile(
+  body: PersonaProfileCreateBody,
+): Promise<PersonaProfileRead> {
+  return apiPost<PersonaProfileRead>('/admin/persona/profiles', body)
+}
+
+export async function updatePersonaProfile(
+  personaId: string,
+  body: PersonaProfileUpdateBody,
+): Promise<PersonaProfileRead> {
+  return apiPut<PersonaProfileRead>(
+    `/admin/persona/profiles/${personaId}`,
+    body,
+  )
+}
+
+export async function activatePersonaProfile(
+  personaId: string,
+): Promise<PersonaProfileRead> {
+  return apiPost<PersonaProfileRead>(
+    `/admin/persona/profiles/${personaId}/activate`,
+  )
+}
+
+export async function deletePersonaProfile(
+  personaId: string,
+): Promise<{ success: boolean; persona_id: string }> {
+  return apiDelete<{ success: boolean; persona_id: string }>(
+    `/admin/persona/profiles/${personaId}`,
   )
 }

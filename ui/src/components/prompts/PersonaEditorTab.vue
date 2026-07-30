@@ -6,8 +6,12 @@ import {
   savePersonaDefinition,
   listPersonaVersions,
   rollbackPersonaVersion,
+  listPersonaProfiles,
+  createPersonaProfile,
+  activatePersonaProfile,
+  deletePersonaProfile,
 } from '@/api/client'
-import type { PersonaDefinitionRead, PersonaVersionItem } from '@/types/api'
+import type { PersonaDefinitionRead, PersonaProfileRead, PersonaVersionItem } from '@/types/api'
 
 const props = defineProps<{
   active: boolean
@@ -20,40 +24,61 @@ const versions = ref<PersonaVersionItem[]>([])
 const versionsLoading = ref(false)
 const versionDialogVisible = ref(false)
 
+const profiles = ref<PersonaProfileRead[]>([])
+const profilesLoading = ref(false)
+const activeProfileId = ref<string | null>(null)
+
 const form = reactive({
+  name: '',
   personality: '',
   speaking_style: '',
   values: [] as string[],
   persona_addressing: '人格',
-  user_addressing: '用户',
-  context: '',
   changelog: '',
 })
 
 const valuesText = ref('')
 const spaceOverrideDialogVisible = ref(false)
-const spaceOverrides = ref<Record<string, { speaking_style: string; personality: string; context: string }>>({})
+const spaceOverrides = ref<Record<string, { speaking_style: string; personality: string; scenario: string }>>({})
 const editSpaceId = ref('')
 const editOverridePersonality = ref('')
 const editOverrideSpeakingStyle = ref('')
-const editOverrideContext = ref('')
+const editOverrideScenario = ref('')
+
+const newProfileDialogVisible = ref(false)
+const newProfileName = ref('')
+const newProfileDesc = ref('')
 
 function hydrate(d: PersonaDefinitionRead) {
   definition.value = d
+  form.name = d.name
   form.personality = d.identity.personality
   form.speaking_style = d.identity.speaking_style
   form.values = d.identity.values
   valuesText.value = d.identity.values.join('\n')
   form.persona_addressing = d.identity.persona_addressing
-  form.user_addressing = d.identity.user_addressing
-  form.context = d.identity.context
   spaceOverrides.value = {}
   for (const [sid, ov] of Object.entries(d.space_overrides)) {
     spaceOverrides.value[sid] = {
       speaking_style: ov.speaking_style || '',
       personality: ov.personality || '',
-      context: ov.context || '',
+      scenario: ov.scenario || '',
     }
+  }
+}
+
+async function loadProfiles() {
+  profilesLoading.value = true
+  try {
+    const res = await listPersonaProfiles()
+    profiles.value = res.items
+    const active = res.items.find(p => p.is_active)
+    activeProfileId.value = active?.id || null
+  } catch (err) {
+    // 首次使用时 profiles 表可能还不存在, 静默处理
+    profiles.value = []
+  } finally {
+    profilesLoading.value = false
   }
 }
 
@@ -68,8 +93,65 @@ async function load() {
   }
 }
 
+async function loadAll() {
+  await loadProfiles()
+  await load()
+}
+
+async function onSwitchProfile(pid: string) {
+  if (pid === activeProfileId.value) return
+  try {
+    await activatePersonaProfile(pid)
+    ElMessage.success('已切换人格')
+    await loadAll()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function onCreateProfile() {
+  if (!newProfileName.value.trim()) {
+    ElMessage.warning('人格名称不能为空')
+    return
+  }
+  try {
+    await createPersonaProfile({
+      name: newProfileName.value.trim(),
+      description: newProfileDesc.value.trim(),
+    })
+    ElMessage.success('已创建新人格')
+    newProfileDialogVisible.value = false
+    newProfileName.value = ''
+    newProfileDesc.value = ''
+    await loadProfiles()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function onDeleteProfile(pid: string) {
+  const profile = profiles.value.find(p => p.id === pid)
+  if (!profile) return
+  try {
+    await ElMessageBox.confirm(
+      `确认删除人格「${profile.name}」及其所有版本？此操作不可撤销。`,
+      '删除人格',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deletePersonaProfile(pid)
+    ElMessage.success(`已删除「${profile.name}」`)
+    await loadAll()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
 async function onSave() {
-  if (!definition.value?.name) {
+  if (!form.name.trim()) {
     ElMessage.warning('人格名称不能为空')
     return
   }
@@ -80,23 +162,22 @@ async function onSave() {
       .map(s => s.trim())
       .filter(Boolean)
 
-    const overrides: Record<string, { speaking_style: string | null; personality: string | null; context: string | null }> = {}
+    const overrides: Record<string, { speaking_style: string | null; personality: string | null; scenario: string | null }> = {}
     for (const [sid, ov] of Object.entries(spaceOverrides.value)) {
       overrides[sid] = {
         speaking_style: ov.speaking_style || null,
         personality: ov.personality || null,
-        context: ov.context || null,
+        scenario: ov.scenario || null,
       }
     }
 
     hydrate(await savePersonaDefinition({
+      name: form.name.trim(),
       identity: {
         personality: form.personality,
         speaking_style: form.speaking_style,
         values: parsedValues,
         persona_addressing: form.persona_addressing,
-        user_addressing: form.user_addressing,
-        context: form.context,
       },
       space_overrides: overrides,
       changelog: form.changelog,
@@ -134,7 +215,7 @@ async function onRollback(v: PersonaVersionItem) {
   }
   try {
     await ElMessageBox.confirm(
-      `确认回滚到版本 ${v.version}？这将是第 ${versions.value.length} 次版本变更。`,
+      `确认回滚到版本 ${v.version}？`,
       '回滚人格',
       { type: 'warning', confirmButtonText: '回滚', cancelButtonText: '取消' },
     )
@@ -158,7 +239,7 @@ function openAddSpaceOverride() {
   editSpaceId.value = ''
   editOverridePersonality.value = ''
   editOverrideSpeakingStyle.value = ''
-  editOverrideContext.value = ''
+  editOverrideScenario.value = ''
   spaceOverrideDialogVisible.value = true
 }
 
@@ -168,7 +249,7 @@ function editSpaceOverride(sid: string) {
   editSpaceId.value = sid
   editOverridePersonality.value = ov.personality
   editOverrideSpeakingStyle.value = ov.speaking_style
-  editOverrideContext.value = ov.context
+  editOverrideScenario.value = ov.scenario
   spaceOverrideDialogVisible.value = true
 }
 
@@ -180,7 +261,7 @@ function saveSpaceOverride() {
   spaceOverrides.value[editSpaceId.value.trim()] = {
     speaking_style: editOverrideSpeakingStyle.value,
     personality: editOverridePersonality.value,
-    context: editOverrideContext.value,
+    scenario: editOverrideScenario.value,
   }
   spaceOverrideDialogVisible.value = false
 }
@@ -192,7 +273,7 @@ function removeSpaceOverride(sid: string) {
 watch(
   () => props.active,
   (active) => {
-    if (active && !definition.value) load()
+    if (active && !definition.value) loadAll()
   },
   { immediate: true },
 )
@@ -209,14 +290,44 @@ watch(
         </p>
       </div>
       <div class="head-actions">
+        <el-button size="small" @click="newProfileDialogVisible = true">新建人格</el-button>
         <el-button size="small" @click="openVersions">版本历史</el-button>
       </div>
     </div>
 
-    <el-card v-loading="loading">
+    <el-card v-loading="loading || profilesLoading">
+      <!-- 人格选择器 -->
+      <div v-if="profiles.length > 1" class="profile-selector">
+        <span class="profile-label">当前人格：</span>
+        <el-select
+          :model-value="activeProfileId"
+          @update:model-value="onSwitchProfile"
+          style="width: 240px"
+        >
+          <el-option
+            v-for="p in profiles"
+            :key="p.id"
+            :label="p.name"
+            :value="p.id"
+          >
+            <span>{{ p.name }}</span>
+            <el-tag v-if="p.is_active" size="small" type="success" style="margin-left: 8px">当前</el-tag>
+          </el-option>
+        </el-select>
+        <el-button
+          v-if="activeProfileId"
+          size="small"
+          text
+          type="danger"
+          @click="onDeleteProfile(activeProfileId)"
+        >
+          删除当前
+        </el-button>
+      </div>
+
       <el-form label-width="140px" class="persona-form">
         <el-form-item label="人格名称">
-          <el-input :model-value="definition?.name" disabled placeholder="名称来自配置" />
+          <el-input v-model="form.name" placeholder="输入人格名称" />
         </el-form-item>
 
         <el-form-item label="人格设定">
@@ -247,23 +358,8 @@ watch(
           />
         </el-form-item>
 
-        <el-divider content-position="left">关系框架</el-divider>
-
         <el-form-item label="人格自称">
           <el-input v-model="form.persona_addressing" placeholder="我" />
-        </el-form-item>
-
-        <el-form-item label="人格称呼用户">
-          <el-input v-model="form.user_addressing" placeholder="哥哥" />
-        </el-form-item>
-
-        <el-form-item label="关系背景">
-          <el-input
-            v-model="form.context"
-            placeholder="同住的兄妹"
-            type="textarea"
-            :rows="2"
-          />
         </el-form-item>
 
         <el-divider content-position="left">空间覆盖（可选）</el-divider>
@@ -278,7 +374,7 @@ watch(
             <span class="override-summary">
               {{ ov.speaking_style ? '说话风格 ✓' : '' }}
               {{ ov.personality ? '人格设定 ✓' : '' }}
-              {{ ov.context ? '背景 ✓' : '' }}
+              {{ ov.scenario ? '场景 ✓' : '' }}
             </span>
             <el-button size="small" text @click="editSpaceOverride(sid)">编辑</el-button>
             <el-button size="small" text type="danger" @click="removeSpaceOverride(sid)">删除</el-button>
@@ -351,12 +447,32 @@ watch(
         <el-form-item label="覆盖人格设定">
           <el-input v-model="editOverridePersonality" type="textarea" :rows="3" placeholder="在该空间覆盖默认人格" />
         </el-form-item>
-        <el-form-item label="覆盖背景">
-          <el-input v-model="editOverrideContext" placeholder="在该空间覆盖默认背景" />
+        <el-form-item label="覆盖场景">
+          <el-input v-model="editOverrideScenario" placeholder="在该空间覆盖默认场景描述" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="saveSpaceOverride">确定</el-button>
           <el-button @click="spaceOverrideDialogVisible = false">取消</el-button>
+        </el-form-item>
+      </el-form>
+    </el-dialog>
+
+    <!-- 新建人格对话框 -->
+    <el-dialog
+      v-model="newProfileDialogVisible"
+      title="新建人格"
+      width="400px"
+    >
+      <el-form label-width="80px">
+        <el-form-item label="名称">
+          <el-input v-model="newProfileName" placeholder="输入人格名称" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="newProfileDesc" type="textarea" :rows="2" placeholder="可选描述" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="onCreateProfile">创建</el-button>
+          <el-button @click="newProfileDialogVisible = false">取消</el-button>
         </el-form-item>
       </el-form>
     </el-dialog>
@@ -389,6 +505,21 @@ watch(
   display: flex;
   gap: $space-2;
   align-items: center;
+}
+
+.profile-selector {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  margin-bottom: $space-4;
+  padding-bottom: $space-3;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+
+  .profile-label {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
 }
 
 .persona-form {

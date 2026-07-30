@@ -9,25 +9,21 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
 
-from src.api.routes.auth import get_current_user
 from src.api.state import AppState
 from src.core.config import get_settings
 from src.core.constants import DEFAULT_PERSONA_ID
 from src.core.identity.plugin_registry import discover_plugins
 from src.core.memory.reindex import ReindexProgress
-from src.core.memory.models import MemoryEntry
 from src.core.models.resolver import RoleResolver
 from src.core.persona.definition import PersonaDefinition
 from src.core.tools.identity_binding import register_identity_binding_tools
 from src.core.tools.internal_registry import InternalToolRegistry, set_internal_tool_registry
 from src.infra.debug_bus import DebugEventBus
-from src.infra.debug_context import use_agent
 from src.infra.forwarder.debug_hook import set_debug_bus
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.store import LLMServiceStore
 from src.infra.space_lock import SpaceLockManager
-from src.infra.vector_store import VectorStore, VectorStoreLockError
-from src.infra.llm_service.models import ModelType
+from src.infra.vector_store import VectorStore
 from src.persistence.api_key_store import (
     API_KEY_SOURCE_PANEL_DEBUG,
     SqliteApiKeyStore,
@@ -35,8 +31,8 @@ from src.persistence.api_key_store import (
 from src.persistence.auth_store import SqliteAuthStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.http_log_store import HttpLogStore
-from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.idempotency_store import SqliteIdempotencyStore
+from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.lorebook_store import SqliteLorebookStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
@@ -229,8 +225,6 @@ async def app_lifespan(app: FastAPI):
             name=settings.persona.name,
             prompt=settings.persona.prompt,
             persona_addressing=settings.persona.relation.persona_addressing,
-            user_addressing=settings.persona.relation.user_addressing,
-            context=settings.persona.relation.context,
         )
         legacy.version = "1.0.0"
         await instances["persona_store"].save(legacy, changelog="从 config.local.toml 自动迁移", author="system")

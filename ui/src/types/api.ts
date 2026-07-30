@@ -511,14 +511,12 @@ export interface PersonaIdentityBody {
   speaking_style: string
   values: string[]
   persona_addressing: string
-  user_addressing: string
-  context: string
 }
 
 export interface PersonaOverrideBody {
   speaking_style: string | null
   personality: string | null
-  context: string | null
+  scenario: string | null
 }
 
 export interface PersonaDefinitionRead {
@@ -531,6 +529,7 @@ export interface PersonaDefinitionRead {
 }
 
 export interface PersonaDefinitionSaveBody {
+  name: string
   identity: PersonaIdentityBody
   space_overrides: Record<string, PersonaOverrideBody>
   changelog: string
@@ -548,6 +547,34 @@ export interface PersonaVersionItem {
 
 export interface PersonaVersionListResponse {
   items: PersonaVersionItem[]
+  total: number
+}
+
+// ============================================================================
+// Persona Profiles (v0.4.0 多人格)
+// ============================================================================
+
+export interface PersonaProfileRead {
+  id: string
+  name: string
+  description: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaProfileCreateBody {
+  name: string
+  description: string
+}
+
+export interface PersonaProfileUpdateBody {
+  name?: string | null
+  description?: string | null
+}
+
+export interface PersonaProfileListResponse {
+  items: PersonaProfileRead[]
   total: number
 }
 
