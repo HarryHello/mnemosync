@@ -240,6 +240,8 @@ main() {
     echo ""
     echo "首次使用请先编辑配置文件，填入你的 LLM 服务商 API Key。"
     echo ""
+    echo "如需卸载: $INSTALL_DIR/uninstall.sh"
+    echo ""
 }
 
 main "$@"
