@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { healthCheck } from '@/api/client'
 import { useDarkMode } from '@/composables/useDarkMode'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
+import NotificationDrawer from '@/components/notifications/NotificationDrawer.vue'
 
 interface MenuItem {
   path: string
@@ -16,11 +18,14 @@ const route = useRoute()
 const router = useRouter()
 const { isDark, toggle: toggleDark } = useDarkMode()
 const authStore = useAuthStore()
+const notificationsStore = useNotificationsStore()
 
 const version = ref<string | null>(null)
+const notificationsOpen = ref(false)
 
 onMounted(async () => {
   if (!authStore.user) void authStore.fetchUser().catch(() => undefined)
+  notificationsStore.startPolling()
   try {
     const h = await healthCheck()
     version.value = h.version
@@ -29,16 +34,18 @@ onMounted(async () => {
   }
 })
 
+onUnmounted(() => {
+  notificationsStore.stopPolling()
+})
+
 const items: MenuItem[] = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer' },
-  { path: '/prompts', title: '提示词管理', icon: 'EditPen' },
-  { path: '/upstream', title: '上游 API', icon: 'Link' },
-  { path: '/models', title: '模型管理', icon: 'Rank' },
-  { path: '/api-keys', title: 'API Key', icon: 'Key' },
+  { path: '/prompts', title: '提示词', icon: 'EditPen' },
+  { path: '/models', title: '模型配置', icon: 'Link' },
+  { path: '/api-keys', title: 'API Keys', icon: 'Key' },
+  { path: '/identity', title: '关系状态', icon: 'Connection' },
   { path: '/logs', title: '请求日志', icon: 'Document' },
   { path: '/memories', title: '记忆管理', icon: 'Cpu' },
-  { path: '/maintenance', title: '记忆维护', icon: 'Tools' },
-  { path: '/relationships', title: '关系状态', icon: 'Connection' },
   { path: '/debug-chat', title: '调试聊天', icon: 'ChatDotRound' },
   { path: '/settings', title: '设置', icon: 'Setting' },
 ]
@@ -80,6 +87,7 @@ function handleUserCommand(cmd: string) {
   if (cmd === 'logout') void handleLogout()
   else if (cmd === 'change-password') router.push('/settings')
   else if (cmd === 'toggle-theme') toggleDark()
+  else if (cmd === 'notifications') notificationsOpen.value = true
 }
 </script>
 
@@ -109,12 +117,29 @@ function handleUserCommand(cmd: string) {
     <div class="footer">
       <el-dropdown trigger="hover" placement="top-start" popper-class="sidebar-user-popper" @command="handleUserCommand">
         <span class="user-trigger">
-          <el-avatar :size="28" class="avatar">{{ username.slice(0, 1).toUpperCase() }}</el-avatar>
+          <el-badge
+            :value="notificationsStore.unreadCount"
+            :hidden="notificationsStore.unreadCount === 0"
+            :max="99"
+            class="avatar-badge"
+          >
+            <el-avatar :size="28" class="avatar">{{ username.slice(0, 1).toUpperCase() }}</el-avatar>
+          </el-badge>
           <span class="user-name">{{ username }}</span>
           <el-icon><ArrowDown /></el-icon>
         </span>
         <template #dropdown>
           <el-dropdown-menu>
+            <el-dropdown-item command="notifications">
+              <el-icon><Bell /></el-icon>
+              <span>显示通知</span>
+              <el-badge
+                v-if="notificationsStore.unreadCount > 0"
+                :value="notificationsStore.unreadCount"
+                :max="99"
+                class="dropdown-badge"
+              />
+            </el-dropdown-item>
             <el-dropdown-item command="toggle-theme">
               <el-icon>
                 <component :is="isDark ? 'Sunny' : 'Moon'" />
@@ -133,6 +158,8 @@ function handleUserCommand(cmd: string) {
         </template>
       </el-dropdown>
     </div>
+
+    <NotificationDrawer v-model="notificationsOpen" />
   </aside>
 </template>
 
@@ -142,8 +169,8 @@ function handleUserCommand(cmd: string) {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--el-bg-color);
-  border-right: 1px solid var(--el-border-color-lighter);
+  background: var(--el-menu-bg-color);
+  border-right: 1px solid var(--el-border-color-light);
 }
 
 .brand {
@@ -152,27 +179,51 @@ function handleUserCommand(cmd: string) {
   align-items: center;
   gap: $space-2;
   padding: 0 $space-4;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  font-weight: 600;
+  border-bottom: 1px solid var(--el-border-color);
+  font-weight: 700;
   font-size: 15px;
 }
 
 .brand-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: $radius-sm;
+  width: 30px;
+  height: 30px;
   display: block;
   object-fit: contain;
+  background: transparent;
 }
 
 .menu {
   flex: 1;
   border-right: 0;
+  padding: $space-2 0;
+}
+
+.menu :deep(.el-menu-item) {
+  height: 40px;
+  line-height: 40px;
+  color: var(--el-menu-text-color);
+}
+
+.menu :deep(.el-menu-item .el-icon) {
+  color: inherit;
+}
+
+.menu :deep(.el-menu-item:hover) {
+  color: var(--el-text-color-primary);
+}
+
+.menu :deep(.el-menu-item.is-active) {
+  color: var(--el-menu-active-color);
+  background: rgba(66, 133, 244, 0.14);
+}
+
+:root.dark .menu :deep(.el-menu-item.is-active) {
+  background: rgba(0, 101, 253, 0.24);
 }
 
 .footer {
   padding: $space-2 $space-3 $space-3;
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 1px solid var(--el-border-color);
   display: flex;
   flex-direction: column;
   gap: $space-1;
@@ -183,20 +234,35 @@ function handleUserCommand(cmd: string) {
   align-items: center;
   gap: $space-2;
   cursor: pointer;
-  padding: $space-1 $space-2;
-  border-radius: $radius-sm;
+  padding: $space-2 $space-2;
+  border-radius: $radius-md;
   min-width: 0;
+  border: 1px solid transparent;
 
   &:hover {
-    background: var(--el-fill-color-light);
+    background: rgba(66, 133, 244, 0.08);
+    border-color: rgba(66, 133, 244, 0.12);
   }
 }
 
 .avatar {
-  background: linear-gradient(135deg, $brand-primary, $brand-primary-hover);
+  background: $brand-primary;
   color: #fff;
   font-weight: 600;
   flex: 0 0 auto;
+}
+
+.avatar-badge {
+  flex: 0 0 auto;
+  line-height: 0;
+}
+
+.avatar-badge :deep(.el-badge__content) {
+  font-size: 10px;
+  height: 16px;
+  line-height: 16px;
+  padding: 0 4px;
+  min-width: 16px;
 }
 
 .user-name {
@@ -212,10 +278,23 @@ function handleUserCommand(cmd: string) {
   color: var(--el-text-color-secondary);
   text-align: center;
   margin-left: $space-2;
+  background: rgba(66, 133, 244, 0.08);
+  border-radius: 999px;
+  padding: 2px 6px;
 }
 </style>
 
 <style lang="scss">
+.sidebar-user-popper {
+  border-radius: $radius-lg !important;
+  border: 1px solid transparent !important;
+  box-shadow: var(--el-box-shadow) !important;
+}
+
+.sidebar-user-popper .el-dropdown-menu__item {
+  gap: 8px;
+}
+
 .sidebar-user-popper .el-dropdown-menu__item:last-child {
   background: transparent;
 
@@ -224,5 +303,15 @@ function handleUserCommand(cmd: string) {
     color: var(--el-color-danger) !important;
     background: var(--el-color-danger-light-9);
   }
+}
+
+.sidebar-user-popper .dropdown-badge {
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+.sidebar-user-popper .dropdown-badge .el-badge__content {
+  position: static;
+  transform: none;
 }
 </style>

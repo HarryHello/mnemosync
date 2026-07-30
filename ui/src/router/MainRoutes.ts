@@ -28,6 +28,11 @@ const MainRoutes: RouteRecordRaw = {
       component: () => import('@/views/ApiKeysPage.vue'),
     },
     {
+      path: 'identity',
+      name: 'identity',
+      component: () => import('@/views/IdentityRelationsPage.vue'),
+    },
+    {
       path: 'logs',
       name: 'logs',
       component: () => import('@/views/LogsPage.vue'),
@@ -38,19 +43,8 @@ const MainRoutes: RouteRecordRaw = {
       component: () => import('@/views/MemoriesPage.vue'),
     },
     {
-      path: 'maintenance',
-      name: 'maintenance',
-      component: () => import('@/views/MaintenancePage.vue'),
-    },
-    {
-      path: 'relationships',
-      name: 'relationships',
-      component: () => import('@/views/RelationshipsPage.vue'),
-    },
-    {
       path: 'upstream',
-      name: 'upstream',
-      component: () => import('@/views/UpstreamPage.vue'),
+      redirect: '/models',
     },
     {
       path: 'models',

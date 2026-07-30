@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.core.agents.base import (
-    ReActResult,
     run_react_loop,
     run_simple_completion,
 )
@@ -20,7 +19,6 @@ from src.core.agents.prompts import (
     build_prompt_cleaning_user_prompt,
     build_proxy_thinking_prompt,
     build_relationship_analysis_prompt,
-    load_decay_targets_header,
     load_prompt_cleaning_system,
 )
 from src.core.memory.models import CandidateMemory, DecayEvaluation, DecayState, MemoryType
@@ -29,6 +27,28 @@ from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MainDialogueResult:
+    """主对话 Agent 的完整响应.
+
+    v0.3.0 起保留上游完整 message, 不再压缩为 (content, usage).
+    """
+
+    message: dict[str, Any]   # 保留 content, tool_calls, reasoning_content 等
+    finish_reason: str | None
+    usage: dict[str, Any] | None
+
+
+@dataclass
+class ExpressorConfig:
+    """Expressor 表达改写配置."""
+
+    enabled: bool = False
+    temperature: float = 0.4
+    max_input_length: int = 2000
+    min_rewrite_length: int = 10  # 低于此长度不改写
 
 
 @dataclass
@@ -137,20 +157,110 @@ async def run_main_dialogue(
     forwarder: MultiForwarder,
     messages: list[dict[str, Any]],
     temperature: float = 0.7,
-) -> tuple[str, dict[str, Any] | None]:
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    parallel_tool_calls: bool | None = None,
+) -> MainDialogueResult:
     """主对话 Agent: 使用 MAIN 角色候选生成回复.
 
-    Returns:
-        (content, usage) — content 为回复文本, usage 为上游原样返回的 token 计数字典
-        (可能为 None, 例如上游未返回 usage 段).
+    保留完整 assistant message 和 finish_reason, 使客户端工具调用能够
+    通过 Mnemosync 往返. 客户端工具只传给 MAIN, 不传给内部辅助 Agent.
     """
+    kwargs: dict[str, Any] = {}
+    if tools:
+        kwargs["tools"] = tools
+        if parallel_tool_calls is not None:
+            kwargs["parallel_tool_calls"] = parallel_tool_calls
+    if tool_choice is not None:
+        kwargs["tool_choice"] = tool_choice
+
     with use_agent("main_dialogue"):
         resp = await forwarder.chat(
-            ModelType.MAIN, messages=messages, temperature=temperature,
+            ModelType.MAIN,
+            messages=messages,
+            temperature=temperature,
+            **kwargs,
         )
-    content = resp["choices"][0]["message"]["content"] or ""
-    usage = resp.get("usage")
-    return content, usage
+    choice = resp["choices"][0]
+    message = dict(choice.get("message") or {})
+    message.setdefault("role", "assistant")
+    message.setdefault("content", None)
+    return MainDialogueResult(
+        message=message,
+        finish_reason=choice.get("finish_reason"),
+        usage=resp.get("usage"),
+    )
+
+
+async def run_expressor(
+    forwarder: MultiForwarder,
+    original_text: str,
+    current_speaker: str,
+    channel_type: str | None,
+    relationship_summary: str,
+    *,
+    config: ExpressorConfig | None = None,
+    expression_style: str = "",
+) -> str:
+    """Expressor: 将最终文本改写为适合当前聊天场景的表达.
+
+    只处理最终文本, 不处理 tool_calls 消息. 调用方必须确保:
+    - 原文是 MAIN 最终文本 (finish_reason=stop)
+    - 原文不含 tool_calls
+
+    Args:
+        forwarder: 多候选转发器 (使用 ASSIST 角色, 低成本)
+        original_text: 待改写的原始文本
+        current_speaker: 当前发言者标签 (如 "马达 | astrbot 486394990")
+        channel_type: 会话类型 (group / direct)
+        relationship_summary: 关系状态摘要
+        config: Expressor 配置; 为 None 时直接使用默认
+
+    Returns:
+        改写后的文本; 原文过短或启用失败时返回原文
+    """
+    cfg = config or ExpressorConfig()
+    if not cfg.enabled:
+        return original_text
+    if len(original_text) < cfg.min_rewrite_length:
+        return original_text
+    if len(original_text) > cfg.max_input_length:
+        # 超过最大输入长度: 截断后半句不改写, 保持语义完整
+        original_text = original_text[:cfg.max_input_length]
+
+    from src.core.prompts import get_prompt_store
+
+    tmpl = get_prompt_store().load("expressor")
+    style_section = ""
+    if expression_style:
+        style_section = f"\n\n## 当前空间的表达习惯\n{expression_style}\n改写时自然融入这些风格特征，但不要生硬模仿。"
+    prompt = (
+        tmpl.replace("__ORIGINAL_TEXT__", original_text)
+        .replace("__CURRENT_SPEAKER__", current_speaker)
+        .replace("__CHANNEL_TYPE__", "群聊" if channel_type == "group" else "私聊" if channel_type == "direct" else "未标明")
+        .replace("__RELATIONSHIP_SUMMARY__", relationship_summary)
+        .replace("__EXPRESSION_STYLE__", style_section)
+    )
+
+    try:
+        with use_agent("expressor"):
+            content = await run_simple_completion(
+                forwarder=forwarder,
+                role=ModelType.ASSIST,
+                system_prompt="你是一名表达改写助手。将输入文本改写为口语化、适合群聊发送的消息。",
+                user_prompt=prompt,
+                temperature=cfg.temperature,
+            )
+        rewritten = content.strip()
+        if not rewritten or len(rewritten) > len(original_text) * 2:
+            # 空结果或长度异常膨胀: 返回原文
+            logger.debug("Expressor 输出异常, 返回原文: %d → %d", len(original_text), len(rewritten))
+            return original_text
+        return rewritten
+    except Exception as e:
+        logger.warning("Expressor 改写失败, 返回原文: %s", e)
+        return original_text
 
 
 async def run_memory_analysis(
@@ -158,36 +268,33 @@ async def run_memory_analysis(
     source_user: str,
     conversation: str,
     tools: list,
-    decay_targets: list[dict] | None = None,
-    max_iterations: int = 6,
+    max_iterations: int = 4,
     *,
     persona_name: str,
     persona_addressing: str,
     user_addressing: str,
     relation_context: str,
+    emotion_analysis: str = "",
+    current_speaker: str = "未知参与者",
+    channel_type: str | None = None,
 ) -> MemoryAnalysisOutput:
-    """记忆分析 Agent: ReAct 循环, 提取候选 + 衰减评估.
+    """记忆分析 Agent: ReAct 循环, 提取候选记忆.
+
+    衰减评估已从此 Agent 移除 —— 由 MemoryLifecycle.run_deterministic_decay() 用确定性公式处理。
+    emotion_analysis 由 graph 层预计算, 供 Agent 直接使用。
 
     persona_name / persona_addressing / user_addressing / relation_context: v0.2.9 起
     透传给 prompt, 让 Agent 用 "哥哥 X" 而不是 "用户 X" 提取记忆.
     """
-    decay_section = ""
-    if decay_targets:
-        lines = []
-        for t in decay_targets:
-            lines.append(
-                f"- memory_id: {t['memory_id']}, content: {t['content']}, "
-                f"importance: {t.get('importance', 0.5)}, decay_rate: {t.get('decay_rate', 0.3)}, "
-                f"memory_type: {t.get('memory_type', 'normal')}"
-            )
-        decay_section = load_decay_targets_header() + "\n".join(lines) + "\n"
     user_prompt = build_memory_analysis_prompt(
         source_user=source_user, conversation=conversation,
-        decay_targets_section=decay_section,
         persona_name=persona_name,
         persona_addressing=persona_addressing,
         user_addressing=user_addressing,
         relation_context=relation_context,
+        emotion_analysis=emotion_analysis,
+        current_speaker=current_speaker,
+        channel_type=channel_type,
     )
     with use_agent("memory_analysis"):
         result = await run_react_loop(
@@ -224,12 +331,15 @@ async def run_relationship_analysis(
     current_relationship: str,
     conversation: str,
     tools: list,
-    max_iterations: int = 3,
+    max_iterations: int = 2,
     *,
     persona_name: str,
     persona_addressing: str,
     user_addressing: str,
     relation_context: str,
+    emotion_analysis: str = "",
+    current_speaker: str = "未知参与者",
+    channel_type: str | None = None,
 ) -> RelationshipAnalysisOutput:
     """关系分析 Agent: CoT, 调用 emotion_analyzer 后输出亲密度增量.
 
@@ -242,12 +352,15 @@ async def run_relationship_analysis(
         persona_addressing=persona_addressing,
         user_addressing=user_addressing,
         relation_context=relation_context,
+        emotion_analysis=emotion_analysis,
+        current_speaker=current_speaker,
+        channel_type=channel_type,
     )
     try:
         with use_agent("relationship_analysis"):
             result = await run_react_loop(
                 forwarder=forwarder, role=ModelType.ASSIST,
-                system_prompt="你是关系分析 Agent。调用 emotion_analyzer 后输出 JSON。",
+                system_prompt="你是关系分析 Agent。读取情绪数据后分析关系信号并输出 JSON。",
                 user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
                 temperature=0.2,
             )
@@ -272,8 +385,7 @@ async def run_relationship_analysis(
 class PromptCleaningOutput:
     """提示词清洗 Agent 的解析输出."""
 
-    retained: list[str]
-    discarded: list[str]
+    clean_prompt: str
     reasoning: str
     raw_output: str
     steps: list
@@ -282,19 +394,18 @@ class PromptCleaningOutput:
 async def run_prompt_cleaning(
     forwarder: MultiForwarder,
     system_message: str,
-    tools: list,
-    max_iterations: int = 3,
 ) -> PromptCleaningOutput:
-    """提示词清洗 Agent: ReAct 循环, 分离人格描述与功能性指令.
+    """提示词清洗 Agent: 单次调用, 重写系统消息.
+
+    从逐句 ReAct + classify_sentence_type 改为单次 LLM 调用 ——
+    直接重写整个 system 消息, 剥离人格描述, 保留功能性指令.
 
     Args:
         forwarder: 多候选转发器
         system_message: 客户端发来的 system 消息
-        tools: 工具列表 (应包含 classify_sentence_type)
-        max_iterations: ReAct 最大迭代轮数
 
     Returns:
-        PromptCleaningOutput: retained(保留的指令), discarded(丢弃的人格), reasoning, raw_output, steps
+        PromptCleaningOutput: clean_prompt(重写后的系统消息), reasoning, raw_output, steps
     """
     user_prompt = build_prompt_cleaning_user_prompt(system_message)
 
@@ -303,36 +414,26 @@ async def run_prompt_cleaning(
 
     try:
         with use_agent("prompt_cleaning"):
-            result = await run_react_loop(
+            content = await run_simple_completion(
                 forwarder=forwarder,
                 role=ModelType.ASSIST,
                 system_prompt=load_prompt_cleaning_system(),
                 user_prompt=user_prompt,
-                tools=tools,
-                max_iterations=max_iterations,
                 temperature=0.2,
             )
-        if not result.succeeded:
-            logger.warning("提示词清洗 ReAct 失败: %s, 降级为全部丢弃", result.error)
-            return PromptCleaningOutput(
-                retained=[], discarded=[system_message] if system_message else [],
-                reasoning=f"清洗失败: {result.error}", raw_output="", steps=result.steps,
-            )
-        parsed = _extract_json(result.output) or {}
-        retained = parsed.get("retained", []) or []
-        discarded = parsed.get("discarded", []) or []
+        parsed = _extract_json(content) or {}
+        clean_prompt = parsed.get("clean_prompt", "") or ""
         reasoning = parsed.get("reasoning", "")
 
-        logger.debug("  ✅ 清洗完成: 保留 %d 条指令, 丢弃 %d 条人格描述", len(retained), len(discarded))
+        logger.debug("  ✅ 清洗完成: 输出长度 %d", len(clean_prompt))
         return PromptCleaningOutput(
-            retained=retained, discarded=discarded,
-            reasoning=reasoning, raw_output=result.output, steps=result.steps,
+            clean_prompt=clean_prompt, reasoning=reasoning,
+            raw_output=content, steps=[],
         )
     except Exception as e:
         logger.warning("提示词清洗异常: %s, 降级为全部丢弃", e)
         return PromptCleaningOutput(
-            retained=[], discarded=[system_message] if system_message else [],
-            reasoning=str(e), raw_output="", steps=[],
+            clean_prompt="", reasoning=str(e), raw_output="", steps=[],
         )
 
 
@@ -344,6 +445,7 @@ async def run_proxy_thinking(
     user_message: str,
     tools: list | None = None,
     max_iterations: int = 3,
+    channel_type: str | None = None,
 ) -> str:
     """代理思考 Agent: CoT, 输出推理过程供主对话参考."""
     user_prompt = build_proxy_thinking_prompt(
@@ -351,6 +453,7 @@ async def run_proxy_thinking(
         relationship=relationship,
         memories=memories or "（无）",
         user_message=user_message,
+        channel_type=channel_type,
     )
     if tools:
         with use_agent("proxy_thinking"):

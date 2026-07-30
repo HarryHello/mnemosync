@@ -248,6 +248,61 @@ class DebugEventBus:
             except asyncio.QueueFull:
                 pass
 
+    # ============ Pipeline Events ============
+
+    def emit_pipeline(
+        self,
+        *,
+        correlation_id: str,
+        event_kind: str,
+        data: dict[str, Any],
+    ) -> str | None:
+        """发射语义管线事件 (非 HTTP hop).
+
+        与 emit() 不同, 这类事件描述管线决策 (工具策略命中、事务提取、
+        Expressor 改写等), 不是上游 HTTP 请求/响应.
+
+        Args:
+            correlation_id: 关联到入站请求的 cid
+            event_kind: 事件类型 (tool_policy / tool_transaction / trigger_reason
+                        / tool_call_decision / expressor_rewrite / cooldown_blocked)
+            data: 结构化事件数据
+        """
+        if not self.should_emit():
+            return None
+        event_id = uuid.uuid4().hex[:16]
+        body = {"event_kind": event_kind, **data}
+        preview, full_size, truncated = _shape_body(body)
+        summary = DebugEvent(
+            id=event_id,
+            correlation_id=correlation_id,
+            ts=time.time(),
+            direction="pipeline",
+            method=None,
+            url=f"pipeline:{event_kind}",
+            port=None,
+            agent=None,
+            status=None,
+            duration_ms=None,
+            key_note=None,
+            headers=None,
+            body_preview=preview,
+            body_full_size=full_size,
+            is_truncated=truncated,
+        )
+        stored = _StoredEvent(summary=summary, body_full=body)
+        self._buffer.append(stored)
+        self._by_id[event_id] = stored
+        if len(self._by_id) > self._capacity * 2:
+            keep_ids = {e.summary.id for e in self._buffer}
+            self._by_id = {k: v for k, v in self._by_id.items() if k in keep_ids}
+        for q in list(self._subscribers.values()):
+            try:
+                q.put_nowait(summary)
+            except asyncio.QueueFull:
+                pass
+        return event_id
+
     # ============ Read ============
 
     def list_recent(self, limit: int = 100) -> list[DebugEvent]:

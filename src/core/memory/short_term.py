@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.persistence.conversation_store import ConversationTurn
@@ -57,6 +57,7 @@ class BuiltContext:
     dropped_by_budget: int  # 因模型窗预算被丢弃的条数
     budget: int  # 本轮可分配给 history 的 token 预算
     used: int  # 保留 history 实际估计 tokens
+    active_participants: list[str]  # 裁剪后历史中最近出现的参与者（模型可读）
 
 
 def _resolve_context_budget(
@@ -83,8 +84,39 @@ def _resolve_context_budget(
     return max(budget, 0)
 
 
+def _turn_identity(turn: ConversationTurn) -> str | None:
+    """返回模型可读且可消歧的说话者标签；绝不退化为内部 UUID."""
+    if not (turn.display_name_snapshot or turn.external_key_snapshot):
+        return None
+    identity = turn.display_name_snapshot or "unknown"
+    if turn.external_key_snapshot:
+        identity = f"{identity} | {turn.source_frontend or 'unknown'} {turn.external_key_snapshot}"
+    return identity
+
+
 def _turn_to_message(turn: ConversationTurn) -> dict[str, Any]:
-    return {"role": turn.role, "content": turn.content}
+    content = turn.content
+    identity = _turn_identity(turn)
+    if turn.role == "user" and identity:
+        content = f"[{identity}]: {content}"
+    return {"role": turn.role, "content": content}
+
+
+def _active_participants(turns: list[ConversationTurn], limit: int = 12) -> list[str]:
+    """按最近出现顺序去重参与者，再恢复为自然的时间顺序."""
+    seen: set[str] = set()
+    recent: list[str] = []
+    for turn in reversed(turns):
+        if turn.role != "user":
+            continue
+        identity = _turn_identity(turn)
+        if not identity or identity.casefold() in seen:
+            continue
+        seen.add(identity.casefold())
+        recent.append(identity)
+        if len(recent) >= limit:
+            break
+    return list(reversed(recent))
 
 
 def trim_by_budget(
@@ -122,6 +154,7 @@ async def build_short_term_history(
     system_text: str,
     new_user_text: str,
     max_tokens_hint: int | None,
+    space_id: str | None = None,
 ) -> BuiltContext:
     """跨前端对话流水 → 主对话 history.
 
@@ -133,9 +166,15 @@ async def build_short_term_history(
         system_text: 已拼装好的 system 内容 (用来算已占 tokens)
         new_user_text: 本轮新用户消息
         max_tokens_hint: 客户端 max_tokens (用来定应答保留区)
+        space_id: 会话空间 ID (v0.3.0). 非空时只装填本空间流水 —
+            群聊上下文绝不能混入其他空间 (别的群/私聊) 的对话;
+            为空时退化为全局跨前端流水 (单用户私聊场景).
     """
     since = now - timedelta(days=window_days)
-    candidates = await store.list_since(since, limit=5000)
+    if space_id:
+        candidates = await store.list_for_space(space_id, since=since, limit=5000)
+    else:
+        candidates = await store.list_since(since, limit=5000)
     budget = _resolve_context_budget(context_length, system_text, new_user_text, max_tokens_hint)
     kept, used, dropped = trim_by_budget(candidates, budget)
     return BuiltContext(
@@ -145,4 +184,5 @@ async def build_short_term_history(
         dropped_by_budget=dropped,
         budget=budget,
         used=used,
+        active_participants=_active_participants(kept),
     )

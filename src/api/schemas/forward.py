@@ -1,7 +1,7 @@
 """OpenAI 兼容的 Schema 定义."""
 
 import time
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -26,7 +26,7 @@ class ModelList(BaseModel):
 class ChatMessage(BaseModel):
     """聊天消息."""
     role: Literal["system","developer", "user", "assistant", "tool"] = Field(..., description="消息角色")
-    content: Optional[str] = Field(None, description="消息内容")
+    content: Optional[str | list[dict[str, Any]]] = Field(None, description="消息内容 (支持 OpenAI content parts 数组格式)")
     reasoning_content: Optional[str] = Field(None, description="推理过程 (OpenAI 兼容扩展, DeepSeek/Qwen 等)")
     name: Optional[str] = Field(None, description="消息名称")
     tool_calls: Optional[list[dict]] = Field(None, description="工具调用")
@@ -37,7 +37,7 @@ class ChatCompletionRequest(BaseModel):
     """聊天补全请求."""
     model: str = Field(..., description="使用的模型 ID")
     messages: list[ChatMessage] = Field(..., description="消息列表")
-    
+
     # 可选参数
     frequency_penalty: Optional[float] = Field(0, ge=-2, le=2, description="频率惩罚")
     logit_bias: Optional[dict[str, float]] = Field(None, description="Logit 偏置")
@@ -70,8 +70,12 @@ class ChatCompletionChoice(BaseModel):
     index: int = Field(..., description="选项索引")
     message: ChatMessage = Field(..., description="回复消息")
     logprobs: Optional[dict] = Field(None, description="Logprobs")
-    finish_reason: Optional[Literal["stop", "length", "tool_calls", "content_filter", "function_call"]] = Field(
-        None, description="结束原因"
+    finish_reason: Optional[str] = Field(
+        None,
+        description=(
+            "结束原因。标准值包含 stop / length / tool_calls / "
+            "content_filter / function_call；兼容保留上游扩展值。"
+        ),
     )
 
 

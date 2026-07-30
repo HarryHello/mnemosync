@@ -20,8 +20,13 @@ def serve() -> None:
     app = FastAPI(
         title="Mnemosync API",
         description="智能代理中间件 - LLM 上下文编排与人格记忆管理",
-        version="0.2.0",
+        version="0.3.0",
     )
+
+    @app.get("/health", tags=["Health"])
+    async def health() -> dict:
+        """无需认证的健康检查端点 (供 Docker / 负载均衡使用)."""
+        return {"status": "ok"}
 
     app.include_router(api_router)
     app.include_router(forward_router)

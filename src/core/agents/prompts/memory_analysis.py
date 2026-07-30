@@ -1,7 +1,11 @@
-"""记忆分析 Agent 的 prompt 拼装.
+"""
+记忆分析 Agent 的 prompt 拼装.
 
 模板文件位于 `src/core/agents/prompts/defaults/memory_analysis.md`
 (用户覆盖: `data/prompts/memory_analysis.md`), 由 PromptStore 加载.
+
+v0.2.12: 移除衰减评估 —— 衰减由 MemoryLifecycle.run_deterministic_decay() 确定性公式处理.
+v0.2.12: emotion_analysis 由 graph 层预计算, 取代 Agent 自行调用 emotion_analyzer.
 """
 
 from __future__ import annotations
@@ -12,31 +16,32 @@ from src.core.prompts import get_prompt_store
 def build_memory_analysis_prompt(
     source_user: str,
     conversation: str,
-    decay_targets_section: str = "",
     *,
     persona_name: str,
     persona_addressing: str,
     user_addressing: str,
     relation_context: str,
+    emotion_analysis: str = "",
+    current_speaker: str = "未知参与者",
+    channel_type: str | None = None,
 ) -> str:
     """构建记忆分析 Agent 的完整 prompt.
 
     避免 str.format() 被 JSON 示例中的括号干扰, 统一 __X__ + .replace 约定.
     persona_name / persona_addressing / user_addressing / relation_context 用于让
     Agent 用正确称谓提取记忆 (见 v0.2.9 [relation] 设计).
+    emotion_analysis 由 graph 层预计算, 取代 Agent 自行调用 emotion_analyzer.
     """
     tmpl = get_prompt_store().load("memory_analysis")
+    channel_label = "群聊" if channel_type == "group" else "私聊" if channel_type == "direct" else "未标明"
     return (
         tmpl.replace("__SOURCE_USER__", source_user)
+        .replace("__CURRENT_SPEAKER__", current_speaker)
+        .replace("__CHANNEL_TYPE__", channel_label)
         .replace("__CONVERSATION__", conversation)
-        .replace("__DECAY_TARGETS__", decay_targets_section)
+        .replace("__EMOTION_ANALYSIS__", emotion_analysis)
         .replace("__PERSONA_NAME__", persona_name)
         .replace("__PERSONA_ADDRESSING__", persona_addressing)
         .replace("__USER_ADDRESSING__", user_addressing)
         .replace("__RELATION_CONTEXT__", relation_context)
     )
-
-
-def load_decay_targets_header() -> str:
-    """加载 '待评估记忆' 段头 (无占位符)."""
-    return get_prompt_store().load("memory_analysis_decay_header")

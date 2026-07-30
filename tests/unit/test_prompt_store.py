@@ -9,14 +9,14 @@ import time
 from pathlib import Path
 
 import pytest
-
 from src.core.prompts.registry import PROMPT_REGISTRY
 from src.core.prompts.store import BACKUP_KEEP, PromptStore
 
-# v0.2.9: memory_analysis 新增 4 个占位符, 用一个常量集中管理测试用 body 片段
+# memory_analysis 的全部必需占位符, 用一个常量集中管理测试用 body 片段
 _MA_ALL_PH = (
-    "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__ DECAY=__DECAY_TARGETS__ "
-    "PN=__PERSONA_NAME__ PA=__PERSONA_ADDRESSING__ UA=__USER_ADDRESSING__ RC=__RELATION_CONTEXT__"
+    "SOURCE=__SOURCE_USER__ SPEAKER=__CURRENT_SPEAKER__ CHANNEL=__CHANNEL_TYPE__ "
+    "CONV=__CONVERSATION__ PN=__PERSONA_NAME__ PA=__PERSONA_ADDRESSING__ "
+    "UA=__USER_ADDRESSING__ RC=__RELATION_CONTEXT__ EMOTION=__EMOTION_ANALYSIS__"
 )
 
 
@@ -100,22 +100,23 @@ def test_validate_ok(store: PromptStore) -> None:
 
 
 def test_validate_missing_placeholder(store: PromptStore) -> None:
-    body = "SOURCE=__SOURCE_USER__ CONV=__CONVERSATION__"  # 缺 DECAY_TARGETS
+    body = _MA_ALL_PH.replace("EMOTION=__EMOTION_ANALYSIS__", "")
     r = store.validate("memory_analysis", body)
     assert not r.ok
-    assert "DECAY_TARGETS" in r.missing_placeholders
-    assert r.error and "__DECAY_TARGETS__" in r.error
+    assert "EMOTION_ANALYSIS" in r.missing_placeholders
+    assert r.error and "__EMOTION_ANALYSIS__" in r.error
 
 
 def test_validate_ignores_frontmatter_body_split(store: PromptStore) -> None:
     """frontmatter 里出现占位符不算数, 必须在 body 里."""
     body = (
-        "---\nplaceholders: [SOURCE_USER, CONVERSATION, DECAY_TARGETS]\n---\n"
-        "only __SOURCE_USER__ and __CONVERSATION__"  # 缺 DECAY_TARGETS
+        "---\nplaceholders: [SOURCE_USER, CURRENT_SPEAKER, CHANNEL_TYPE, CONVERSATION, "
+        "PERSONA_NAME, PERSONA_ADDRESSING, USER_ADDRESSING, RELATION_CONTEXT, EMOTION_ANALYSIS]\n---\n"
+        + _MA_ALL_PH.replace("EMOTION=__EMOTION_ANALYSIS__", "")
     )
     r = store.validate("memory_analysis", body)
     assert not r.ok
-    assert "DECAY_TARGETS" in r.missing_placeholders
+    assert "EMOTION_ANALYSIS" in r.missing_placeholders
 
 
 # ─── save 拒绝非法内容 ────────────────────────────────────

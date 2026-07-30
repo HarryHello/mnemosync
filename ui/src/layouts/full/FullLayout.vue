@@ -20,7 +20,9 @@ import AppSidebar from './AppSidebar.vue'
 <style lang="scss" scoped>
 .full-layout {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   background: var(--el-bg-color-page);
 }
 
@@ -33,6 +35,9 @@ import AppSidebar from './AppSidebar.vue'
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background:
+    radial-gradient(circle at top right, rgba(66, 133, 244, 0.06), transparent 28%),
+    var(--el-bg-color-page);
 }
 
 .main {

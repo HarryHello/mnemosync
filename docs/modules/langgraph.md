@@ -1,9 +1,9 @@
 # LangGraph 编排模块 | LangGraph Orchestration
 
-> **模块版本**: v0.2.11
+> **模块版本**: v0.3.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-12
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **作者**: HarryHelloo
 
 ---
@@ -22,14 +22,18 @@ LangGraph 是 Mnemosync 的编排骨架。它决定节点执行顺序、在 Agen
 
 ```python
 class AgentState(TypedDict, total=False):
-    # parse_request 写入
+    # parse_request / API 层写入
     messages: list[dict]
     extracted_new: list[dict]
-    source_user: str
+    source_user: str                        # 有效用户 ID (effective_user_id), 非归属模式为空
+    actor_id: str | None                    # 当前 Actor ID (v0.3.0)
     persona: str
     persona_name: str
+    persona_id: str                         # 人格标识 (v0.3.0, 不再硬编码)
     thread_id: str
     proxy_thinking_enabled: bool
+    space_id: str | None                    # 会话空间 ID (v0.3.0)
+    channel_type: str | None                # "direct" | "group" (v0.3.0)
 
     # proxy_thinking 写入
     proxy_thinking_result: str | None
@@ -37,10 +41,11 @@ class AgentState(TypedDict, total=False):
     # main_dialogue 写入
     response: str
     response_chunks: list[bytes]
+    emotion_analysis: dict                  # 预计算的情绪分析 (v0.3.0, 供后续节点共享)
 
     # memory_analysis 写入
     new_memories: list[dict]
-    decay_evaluations: list[dict]
+    decay_evaluations: list[dict]           # v0.3.0: 节点始终返回 [], 衰减由确定性公式处理
     decay_targets: list[dict]
 
     # relationship_analysis 写入
@@ -53,9 +58,12 @@ class AgentState(TypedDict, total=False):
 
 **不在 state 中的东西**:
 - `retrieved_memories` / `permanent_memories` 由 `main_dialogue_node` 内部处理, 不上共享状态
+- `main_model` / `source_frontend` / `api_key_id` / `external_event_id` 是请求级附加键, 由 [forward.py](../../src/api/routes/forward.py) 注入, 不在 TypedDict 定义中
 - 上游 API Key 与请求体不进 state, API 层预处理完毕
 
 ### 2.1 状态流转
+
+`actor_id` / `space_id` / `channel_type` / `persona_id` 由 API 层 ([forward.py](../../src/api/routes/forward.py)) 在进入图之前写入 state, 节点不自行解析身份。详见 [身份子系统](identity.md)。
 
 ```
 parse_request       写: extracted_new, source_user
@@ -66,13 +74,14 @@ proxy_thinking      读: extracted_new, source_user
        │
        ▼
 main_dialogue       读: extracted_new, persona, proxy_thinking_result
-                    写: response, response_chunks
+                    写: response, response_chunks, emotion_analysis
        │
        ├───────────────────────────┐  (并行分支, 无先后)
        ▼                           ▼
 relationship_analysis        memory_analysis
-读: extracted_new            读: extracted_new, decay_targets
-写: relationship_delta       写: new_memories, decay_evaluations
+读: extracted_new,           读: extracted_new, emotion_analysis
+    emotion_analysis         写: new_memories, decay_evaluations
+写: relationship_delta              (decay_evaluations 始终 [])
        │                           │
        └───────────────┬───────────┘
                        ▼
@@ -89,9 +98,9 @@ relationship_analysis        memory_analysis
 |------|------|------|-------------|
 | `parse_request` | 预处理 | 消息提取 + user 标识 | 是 |
 | `proxy_thinking` | Agent (CoT) | 可选; 为主对话生成 CoT 推理 | 是 (若启用) |
-| `main_dialogue` | Agent | 拼上下文 + 生成回复 | 是 |
-| `memory_analysis` | Agent (ReAct) | 提取候选记忆 + 衰减评估 + 向量入库 | 否 (流式模式下后台跑) |
-| `relationship_analysis` | Agent (ReAct) | 亲密度/信任度分析 | 否 (流式模式下后台跑) |
+| `main_dialogue` | Agent | 拼上下文 + 预计算情绪 + 生成回复 | 是 |
+| `memory_analysis` | Agent (ReAct) | 提取候选记忆 + 受众过滤查重 + 向量入库; 非归属模式跳过 | 否 (流式模式下后台跑) |
+| `relationship_analysis` | Agent (ReAct) | 亲密度/信任度分析; 非归属模式跳过 | 否 (流式模式下后台跑) |
 
 **没有独立的 `vector_index` 节点**——嵌入向量的写入 (Chroma) 在 `memory_analysis_node` 内由 `MemoryLifecycle.store_candidate()` 顺手完成。
 
@@ -102,27 +111,55 @@ relationship_analysis        memory_analysis
 ```python
 async def memory_analysis_node(state: AgentState) -> dict:
     settings = get_settings()
-    forwarder = _make_forwarder()
+    source_user = state["source_user"]
+    # 非归属模式: 无有效用户, 不写入任何私有记忆
+    if not source_user:
+        return {"new_memories": [], "decay_evaluations": []}
+
+    forwarder, resolver = _make_multi_forwarder_with_resolver()
+    memory_store = SqliteMemoryStore(...)
     try:
+        vector_store = VectorStore(...)
+        retriever = MemoryRetriever(forwarder, vector_store, memory_store)
+
+        # 受众上下文: 检索按当前会话受众过滤
+        rel = await memory_store.get_relationship(
+            state.get("persona_id", "default"), source_user)
         tools = [
-            make_vector_search_tool(retriever),
-            make_emotion_analyzer_tool(forwarder),
-            make_time_decay_calculator_tool(memory_store),
+            make_vector_search_tool(retriever, _retrieval_context(state, rel)),
         ]
+
+        # 从 state 获取预计算的情绪分析 (由 main_dialogue 计算)
+        emotion_analysis = state.get("emotion_analysis", {})
+
         out = await run_memory_analysis(
-            forwarder=forwarder,
-            source_user=state["source_user"],
+            forwarder=forwarder, source_user=source_user,
             conversation=..., tools=tools,
-            decay_targets=decay_targets, max_iterations=6,
+            persona_name=..., persona_addressing=...,
+            user_addressing=..., relation_context=...,
+            emotion_analysis=emotion_text,
+            max_iterations=4,
         )
-        # 写入 SQLite + Chroma
-        lifecycle = MemoryLifecycle(memory_store, vector_store, forwarder)
+        # 写入 SQLite + Chroma (带 space_id)
+        lifecycle = MemoryLifecycle(memory_store, vector_store, forwarder, resolver=resolver)
         for cand in out.new_memories:
-            await lifecycle.store_candidate(cand, source_user=state["source_user"])
-        return {"new_memories": [...], "decay_evaluations": [...]}
+            await lifecycle.store_candidate(
+                cand, source_user=source_user, space_id=state.get("space_id"),
+            )
+        # 确定性衰减: 公式批量更新, 不再由 LLM 评估
+        await lifecycle.run_deterministic_decay()
+        return {"new_memories": [...], "decay_evaluations": []}
     finally:
         await forwarder.close()
 ```
+
+**关键变化 (v0.3.0)**:
+- `actor_id` / `space_id` / `channel_type` / `persona_id` 由 API 层在进入图之前写入 state
+- `get_relationship` 使用 `state.get("persona_id", "default")`, 不再硬编码 `"default"`
+- `_retrieval_context(state, rel)` 构建受众上下文, 传给 `make_vector_search_tool` 做受众过滤
+- `store_candidate` 传入 `space_id` 标记记忆归属空间
+- 情绪分析由 `main_dialogue_node` 预计算 (`_compute_emotion`), 通过 `emotion_analysis` 字段共享给记忆分析和关系分析节点
+- 衰减由 `run_deterministic_decay()` 用确定性公式批量处理, 不再由 LLM 驱动
 
 完整实现见 [nodes.py](../../src/core/graph/nodes.py)。
 
@@ -276,6 +313,7 @@ Agent 执行函数在 [src/core/agents/](../../src/core/agents/) (`factory.py` /
 |------|------|
 | [架构总览](../architecture.md) | 顶层视图 |
 | [多 Agent 设计](agents.md) | 每个 Agent 节点的详细规格 |
+| [身份子系统](identity.md) | `actor_id` / `space_id` / `channel_type` / `persona_id` 由 API 层写入 state, 节点不自行解析身份 |
 | [Forwarder](forward.md) | 节点通过它调模型 |
 | [LLM 服务管理](llm-service.md) | 节点读取的模型配置来源 |
 | [记忆系统](memory-system.md) | checkpoint (短) + Chroma+SQLite (长) |
@@ -290,3 +328,4 @@ Agent 执行函数在 [src/core/agents/](../../src/core/agents/) (`factory.py` /
 | v0.2.0 | 2026-07-12 | 初始 StateGraph 编排、条件路由、并行节点 |
 | v0.2.1 | 2026-07-15 | 与代码对齐: 5 节点 (无 vector_index)、AgentState 字段修正、模块路径修正为 `src/core/graph/` |
 | v0.2.6 | 2026-07-18 | §6 checkpoint 不再承担跨请求短期记忆, 迁到 `conversation_turns`; 保留 checkpoint 仅作单请求内 state 共享 |
+| v0.3.0 | 2026-07-26 | 身份字段: AgentState 新增 `actor_id` / `persona_id` / `space_id` / `channel_type` / `emotion_analysis`; `source_user` 语义改为 `effective_user_id` (可为空, 非归属模式); 节点加非归属 guard; 情绪预计算 (`_compute_emotion`) 共享; 衰减由确定性公式 (`run_deterministic_decay`) 处理; 受众过滤 (`_retrieval_context` + `AudienceFilter`) 贯穿检索; 交叉链接 [身份子系统](identity.md) |

@@ -42,13 +42,15 @@ assist_model = "qwen-turbo"
 # 人格请覆盖 [persona] 段而不是改资源文件. 整段缺省时全部走资源 TOML 默认值,
 # [persona.relation] 支持部分覆盖 (例如只写 user_addressing, 其余继承默认).
 #
-# 关系框架 (v0.2.9+, 对齐 SillyTavern `scenario` + User Persona):
+# 关系框架 (v0.3.3):
 #   - persona_addressing  人格自称
 #   - user_addressing     人格如何称呼用户
 #   - context             关系框架简述, 一句话
-# 这三项是**安装态基线**. v0.2.10 起, `relationships` 表的同名列 (若非 NULL)
+# 这三项是**安装态基线**. `relationships` 表的同名列 (若非 NULL)
 # 优先于本段, 允许关系分析 Agent 通过 `update_addressing` tool 或面板 PUT
 # 在运行期演化称呼与关系背景; 表清空 / 未覆盖时自然回退到本段.
+# v0.4.0+: `PersonaIdentity` 已移除 `user_addressing` / `context`,
+# 这两个字段完全由 `Relationship` 模型维护.
 # ----------------------------------------------------------------------------
 [persona]
 name = "绫音"

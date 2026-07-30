@@ -25,10 +25,16 @@ def make_update_addressing_tool(
     memory_store: SqliteMemoryStore,
     persona_id: str,
     user_id: str,
+    actor_id: str | None = None,
 ):
     """构建绑定 (persona_id, user_id) 的 update_addressing tool.
 
     persona_id / user_id 在闭包中固化, Agent 无法跨用户 / 跨人格写。
+    user_id 是 effective_user_id — 群成员的多个 Actor 共享同一份关系
+    (称呼属于"这个人", 不属于某个平台账号)。
+
+    actor_id (v0.3.0): 触发本次更新的 Actor, 仅用于溯源 (返回给调用方 +
+    日志), 不影响写入目标。
     """
 
     @tool
@@ -90,6 +96,7 @@ def make_update_addressing_tool(
             "prev": prev,
             "current": current,
             "audit_ids": [e.id for e in entries],
+            "actor_id": actor_id,  # v0.3.0: 溯源用, 哪个 Actor 触发的更新
         }
 
     return update_addressing

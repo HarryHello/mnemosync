@@ -17,12 +17,10 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(username: string, password: string) {
     const result = await apiLogin({ username, password })
-    user.value = {
-      id: '',
-      username: result.username,
-      must_change_password: result.must_change_password,
-      created_at: '',
-      last_login_at: null,
+    // 登录成功后拉取真实用户信息 (避免构造虚假的空 id/时间戳)
+    await fetchUser()
+    if (user.value) {
+      user.value.must_change_password = result.must_change_password
     }
     return result
   }

@@ -31,6 +31,11 @@ class StorageConfig:
     memory_db_path: str = "data/memory.db"
     llm_db_path: str = "data/llm_service.db"
     auth_db_path: str = "data/auth.db"
+    api_key_db_path: str = "data/api_keys.db"
+    http_log_db_path: str = "data/http_logs.db"
+    notification_db_path: str = "data/notifications.db"
+    identity_db_path: str = "data/identity.db"
+    idempotency_db_path: str = "data/idempotency.db"
     chroma_dir: str = "data/chroma"
     prompts_override_dir: str = "data/prompts"
     conversation_db_path: str = "data/conversation.db"
@@ -47,6 +52,26 @@ class StorageConfig:
     @property
     def auth_db_abs(self) -> Path:
         return PROJECT_ROOT / self.auth_db_path
+
+    @property
+    def api_key_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.api_key_db_path
+
+    @property
+    def http_log_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.http_log_db_path
+
+    @property
+    def notification_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.notification_db_path
+
+    @property
+    def identity_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.identity_db_path
+
+    @property
+    def idempotency_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.idempotency_db_path
 
     @property
     def chroma_dir_abs(self) -> Path:
@@ -129,7 +154,10 @@ def _load_default_persona() -> dict[str, Any]:
     """从打包资源 TOML 读默认人格.
 
     Returns:
-        dict, 键 name / prompt / relation. relation 是嵌套 dict, 字段与 RelationConfig 对齐.
+        dict, 键 name / prompt / relation / identity (可选).
+        relation 是嵌套 dict, 字段与 RelationConfig 对齐.
+        identity 是嵌套 dict (personality / speaking_style / values / persona_addressing),
+        当 TOML 包含 ``[identity]`` 段时存在.
 
     兜底: 文件缺失、字段缺失、或 TOML 解析失败时用 _FALLBACK_PERSONA 补齐.
     """
@@ -152,7 +180,22 @@ def _load_default_persona() -> dict[str, Any]:
         "user_addressing": str(raw_rel.get("user_addressing") or fallback_rel["user_addressing"]),
         "context": str(raw_rel.get("context") or fallback_rel["context"]),
     }
-    return {"name": name, "prompt": prompt, "relation": relation}
+    result: dict[str, Any] = {"name": name, "prompt": prompt, "relation": relation}
+    # v0.3.3+: 资源 TOML 可选携带 [identity] 段, 供结构化定义初始化
+    raw_identity = data.get("identity")
+    if isinstance(raw_identity, dict):
+        identity: dict[str, Any] = {}
+        if "personality" in raw_identity:
+            identity["personality"] = raw_identity["personality"]
+        if "speaking_style" in raw_identity:
+            identity["speaking_style"] = raw_identity["speaking_style"]
+        if "values" in raw_identity:
+            identity["values"] = list(raw_identity["values"])
+        if "persona_addressing" in raw_identity:
+            identity["persona_addressing"] = str(raw_identity["persona_addressing"])
+        if identity:
+            result["identity"] = identity
+    return result
 
 
 @dataclass
@@ -173,6 +216,9 @@ class RuntimeConfig:
     host: str = "0.0.0.0"
     port: int = 16125
     log_level: str = "info"
+    # 身份绑定指令 (用户发消息触发绑定流程的关键词)
+    identity_bind_command: str = "绑定"
+    identity_bind_confirm_prefix: str = "绑定"  # "绑定 123456" 的前缀
 
 
 @dataclass
@@ -211,21 +257,9 @@ def _write_persona_override(data: dict[str, Any]) -> None:
     data 需包含 name / prompt / relation (嵌套 dict, 含 persona_addressing /
     user_addressing / context). 全量写入, 调用方应保证包含所有字段.
 
-    转义策略:
-    - name / relation 三字段用 basic string (双引号), 反斜杠与双引号需转义
-    - prompt 用三引号多行字符串, 内容中包含 ``\"\"\"`` 时替换为 ``\\\"\\\"\\\"``
+    使用 ``_toml_write`` 标准序列化器处理 basic / multiline basic 字符串转义.
     """
-    def _escape_basic(s: str) -> str:
-        # TOML basic string: 反斜杠 + 双引号需转义, 其他 unicode 直接落盘
-        return s.replace("\\", "\\\\").replace('"', '\\"')
-
-    def _escape_triple(s: str) -> str:
-        # 对于 TOML multi-line basic string ("""):
-        # 1. 反斜杠需要转义为 \\ (因为它是转义字符)
-        # 2. 连续三个双引号需要用 \""" 避免结束字符串
-        s = s.replace("\\", "\\\\")
-        s = s.replace('"""', '\\"""')
-        return s
+    from src.core._toml_write import _escape_basic_string, _escape_multiline_basic
 
     PERSONA_OVERRIDE_PATH.parent.mkdir(parents=True, exist_ok=True)
     name = str(data.get("name", ""))
@@ -240,16 +274,16 @@ def _write_persona_override(data: dict[str, Any]) -> None:
         "# 优先级: 本文件 > config.local.toml [persona] > 资源默认值",
         "# 面板 '重置为默认' 操作会删除本文件, 回退到上一级",
         "",
-        f'name = "{_escape_basic(name)}"',
+        f'name = "{_escape_basic_string(name)}"',
         "",
         'prompt = """',
-        _escape_triple(prompt),
+        _escape_multiline_basic(prompt),
         '"""',
         "",
         "[relation]",
-        f'persona_addressing = "{_escape_basic(persona_addr)}"',
-        f'user_addressing = "{_escape_basic(user_addr)}"',
-        f'context = "{_escape_basic(ctx)}"',
+        f'persona_addressing = "{_escape_basic_string(persona_addr)}"',
+        f'user_addressing = "{_escape_basic_string(user_addr)}"',
+        f'context = "{_escape_basic_string(ctx)}"',
         "",
     ]
     PERSONA_OVERRIDE_PATH.write_text("\n".join(lines), encoding="utf-8")

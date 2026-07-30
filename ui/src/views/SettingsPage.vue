@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { changePassword, setToken } from '@/api/client'
@@ -17,8 +17,6 @@ const form = reactive({
   new_password: '',
   confirm: '',
 })
-
-const mustChange = computed(() => authStore.user?.must_change_password ?? false)
 
 const rules: FormRules = {
   old_password: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
@@ -65,11 +63,31 @@ async function onSubmit() {
     <h2 class="page-title">设置</h2>
     <p class="page-subtitle">账户与偏好设置。更多配置项将陆续开放。</p>
 
-    <el-card shadow="never" class="section">
+    <el-card class="section">
+      <template #header>
+        <div class="card-header">
+          <span>账号信息</span>
+        </div>
+      </template>
+
+      <el-form label-width="120px" style="max-width: 480px">
+        <el-form-item label="当前用户名">
+          <el-input :model-value="authStore.user?.username ?? ''" disabled />
+        </el-form-item>
+      </el-form>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="如需修改用户名"
+        description="面板不支持修改用户名, 请在服务器本机运行 `mnemosync login` 进入交互式 CLI 修改。"
+      />
+    </el-card>
+
+    <el-card class="section">
       <template #header>
         <div class="card-header">
           <span>修改密码</span>
-          <el-tag v-if="mustChange" type="warning" size="small">首次登录必须修改</el-tag>
         </div>
       </template>
 

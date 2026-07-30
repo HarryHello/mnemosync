@@ -1,6 +1,6 @@
 #!/bin/bash
 # Mnemosync 安装脚本
-# 用法: curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
+# 用法: curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/dev/install.sh | sh
 #
 # 需要: git
 # 可选: uv (脚本会自动安装), node + npm (若需要本地 build UI 而非从 Release 下载)
@@ -239,6 +239,8 @@ main() {
     echo "数据目录: $INSTALL_DIR/data/"
     echo ""
     echo "首次使用请先编辑配置文件，填入你的 LLM 服务商 API Key。"
+    echo ""
+    echo "如需卸载: $INSTALL_DIR/uninstall.sh"
     echo ""
 }
 

@@ -34,12 +34,24 @@ export interface ChangePasswordRequest {
   new_password: string
 }
 
+export interface SetupCredentialsRequest {
+  old_password: string
+  new_username: string
+  new_password: string
+}
+
+export interface SetupCredentialsResponse {
+  success: boolean
+  message: string
+}
+
 // ============================================================================
 // API Keys
 // ============================================================================
 
 export interface ApiKeyCreateRequest {
   note: string
+  strategy_id?: string | null
 }
 
 export interface ApiKeyCreateResponse {
@@ -58,6 +70,7 @@ export interface ApiKeyInfo {
   created_at: string
   last_used_at: string | null
   is_active: boolean
+  strategy_id: string | null
 }
 
 export interface ApiKeyListResponse {
@@ -120,9 +133,25 @@ export interface ConversationTurn {
   id: number
   role: string  // 'user' | 'assistant'
   content: string
-  ts: string  // ISO datetime
+  ts: string  // 平台事件时间
   token_count: number
   source_frontend: string | null
+  actor_id: string | null
+  effective_user_id: string | null
+  display_name: string | null
+  external_key: string | null
+  space_id: string | null
+  external_event_id: string | null
+  origin: 'current' | 'history_snapshot' | 'assistant' | 'legacy'
+  event_fingerprint: string | null
+  observed_at: string
+  request_id: string | null
+  committed_sequence: number | null
+  late_arrival: boolean
+  interaction_id: string | null
+  event_type: string  // message | tool_call | tool_result
+  tool_call_id: string | null
+  tool_name: string | null
 }
 
 export interface ConversationTurnListResponse {
@@ -132,13 +161,40 @@ export interface ConversationTurnListResponse {
   page_size: number
 }
 
+export interface InteractionSummary {
+  interaction_id: string
+  event_count: number
+  first_ts: string
+  last_ts: string
+  has_tool_calls: boolean
+}
+
+export interface InteractionListResponse {
+  items: InteractionSummary[]
+  total: number
+}
+
 // ============================================================================
 // Relationship
 // ============================================================================
 
+export interface RelationshipIdentityAccount {
+  actor_id: string
+  frontend: string
+  external_key: string
+  display_name: string | null
+}
+
+export interface RelationshipIdentity {
+  kind: 'actor' | 'group'
+  name: string | null
+  accounts: RelationshipIdentityAccount[]
+}
+
 export interface Relationship {
   persona_id: string
   user_id: string
+  identity: RelationshipIdentity | null
   intimacy: number
   trust: number
   relationship_type: string | null
@@ -171,6 +227,14 @@ export interface RelationshipUpdateBody {
   context?: string | null
   reason: string
   user_id?: string
+}
+
+/** v0.3.0: 多用户关系列表 (分页 + 排序). */
+export interface RelationshipListResponse {
+  items: Relationship[]
+  total: number
+  page: number
+  page_size: number
 }
 
 // ============================================================================
@@ -275,6 +339,19 @@ export interface RoleBindingAddBody {
   service_id: string
   model: string
   priority?: number | null
+  context_length?: number | null
+  embedding_dim?: number | null
+  send_dimensions?: boolean
+}
+
+/**
+ * v0.2.13: PATCH /model-bindings/{role}/{priority}.
+ * 语义: 键缺失 = 不改; 值为 null (仅 context_length / embedding_dim) = 清空;
+ * service_id / model 若下发则必须非空。
+ */
+export interface RoleBindingUpdateBody {
+  service_id?: string
+  model?: string
   context_length?: number | null
   embedding_dim?: number | null
   send_dimensions?: boolean
@@ -424,6 +501,113 @@ export interface PersonaConfigUpdateBody {
   prompt?: string | null
   relation?: PersonaConfigRelation | null
 }
+
+// ============================================================================
+// Structured Persona (v0.3.3, SQLite-based)
+// ============================================================================
+
+export interface PersonaIdentityBody {
+  personality: string
+  speaking_style: string
+  values: string[]
+  persona_addressing: string
+}
+
+export interface PersonaOverrideBody {
+  speaking_style: string | null
+  personality: string | null
+  scenario: string | null
+}
+
+export interface PersonaDefinitionRead {
+  version: string
+  name: string
+  identity: PersonaIdentityBody
+  space_overrides: Record<string, PersonaOverrideBody>
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaDefinitionSaveBody {
+  name: string
+  identity: PersonaIdentityBody
+  space_overrides: Record<string, PersonaOverrideBody>
+  changelog: string
+}
+
+export interface PersonaVersionItem {
+  id: number
+  version: string
+  name: string
+  changelog: string | null
+  author: string | null
+  created_at: string
+  active: boolean
+}
+
+export interface PersonaVersionListResponse {
+  items: PersonaVersionItem[]
+  total: number
+}
+
+// ============================================================================
+// Persona Profiles (v0.4.0 多人格)
+// ============================================================================
+
+export interface PersonaProfileRead {
+  id: string
+  name: string
+  description: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaProfileCreateBody {
+  name: string
+  description: string
+}
+
+export interface PersonaProfileUpdateBody {
+  name?: string | null
+  description?: string | null
+}
+
+export interface PersonaProfileListResponse {
+  items: PersonaProfileRead[]
+  total: number
+}
+
+// ============================================================================
+// Notifications (v0.2.13 通知中心)
+// ============================================================================
+
+export interface Notification {
+  id: number
+  created_at: string
+  level: 'info' | 'warning' | 'error' | string
+  category: string
+  title: string
+  message: string
+  meta: Record<string, unknown> | null
+  read_at: string | null
+}
+
+export interface NotificationListResponse {
+  items: Notification[]
+  total: number
+  page: number
+  page_size: number
+  unread_count: number
+}
+
+export interface UnreadCountResponse {
+  unread_count: number
+}
+
+export interface MarkReadResponse {
+  marked: number
+}
 // ============================================================================
 
 export interface ChatMessage {
@@ -456,4 +640,72 @@ export interface ChatCompletionResponse {
     completion_tokens: number
     total_tokens: number
   }
+}
+
+// ============================================================================
+// Identity (v0.3.0 多用户身份)
+// ============================================================================
+
+/** 前台应用上的一个可识别账号, 由 (frontend, external_key) 唯一确定. */
+export interface Actor {
+  id: string
+  external_key: string
+  frontend: string
+  display_name: string | null
+  metadata: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ActorListResponse {
+  items: Actor[]
+  total: number
+}
+
+/** 一个真实人; 多个 Actor 绑定到同一 UserGroup = 跨平台身份. */
+export interface UserGroup {
+  id: string
+  name: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface UserGroupListResponse {
+  items: UserGroup[]
+  total: number
+}
+
+export interface UserGroupCreateBody {
+  name?: string | null
+}
+
+export type IdentityStrategyType = 'direct' | 'api_key_bound' | 'regex' | 'llm' | 'plugin'
+
+/** 身份识别策略, 绑定到 API Key, 定义如何从请求中提取身份. */
+export interface IdentityStrategy {
+  id: string
+  name: string
+  strategy_type: IdentityStrategyType
+  /** JSON 配置字符串 (各策略类型的字段见后端文档). */
+  config: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface IdentityStrategyListResponse {
+  items: IdentityStrategy[]
+  total: number
+}
+
+export interface IdentityStrategyCreateBody {
+  name: string
+  strategy_type: IdentityStrategyType
+  config?: string
+}
+
+export interface IdentityStrategyUpdateBody {
+  name?: string
+  config?: string
+  is_active?: boolean
 }

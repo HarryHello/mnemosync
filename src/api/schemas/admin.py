@@ -120,6 +120,24 @@ class RoleBindingReorderBody(BaseModel):
     order: list[tuple[str, str]] = Field(..., description="[[service_id, model], ...]")
 
 
+class RoleBindingUpdateBody(BaseModel):
+    """就地更新一条绑定的可编辑字段. role / priority 由 URL 定位, 不在此改.
+
+    整型字段的三态语义:
+    - 键缺失 (不下发): 保持原值
+    - 键为 null: 清空为 NULL
+    - 键为整数: 覆盖
+    """
+
+    service_id: str | None = None
+    model: str | None = None
+    context_length: int | None = Field(default=None, ge=1)
+    embedding_dim: int | None = Field(default=None, ge=1)
+    send_dimensions: bool | None = None
+
+    model_config = {"protected_namespaces": ()}
+
+
 class ProbeDimensionBody(BaseModel):
     """探测嵌入模型的真实输出维度 (不落库)."""
 
@@ -218,14 +236,98 @@ class DebugStatusResponse(BaseModel):
 
 
 class ConversationTurnItem(BaseModel):
-    """跨前端对话流水的一条记录."""
+    """跨前端对话流水的一条结构化事件."""
 
     id: int
     role: str  # user | assistant
     content: str
-    ts: str  # ISO datetime
+    ts: str  # 平台事件时间
     token_count: int
     source_frontend: str | None = None
+    actor_id: str | None = None
+    effective_user_id: str | None = None
+    display_name: str | None = None
+    external_key: str | None = None
+    space_id: str | None = None
+    external_event_id: str | None = None
+    origin: str
+    event_fingerprint: str | None = None
+    observed_at: str
+    request_id: str | None = None
+    committed_sequence: int | None = None
+    late_arrival: bool = False
+    interaction_id: str | None = None
+    event_type: str = "message"
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+
+
+class InteractionSummary(BaseModel):
+    """逻辑交互摘要."""
+
+    interaction_id: str
+    event_count: int
+    first_ts: str
+    last_ts: str
+    has_tool_calls: bool
+
+
+class InteractionListResponse(BaseModel):
+    items: list[InteractionSummary]
+    total: int
+
+
+class LorebookEntryItem(BaseModel):
+    """Lorebook 条目."""
+
+    id: str
+    content: str
+    keywords: list[str]
+    priority: int
+    space_id: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class LorebookEntryListResponse(BaseModel):
+    items: list[LorebookEntryItem]
+    total: int
+
+
+class LorebookEntryCreateBody(BaseModel):
+    content: str = Field(..., min_length=1)
+    keywords: list[str] = Field(default_factory=list)
+    priority: int = 0
+    space_id: str | None = None
+    persona_version_id: int | None = None
+
+
+class LorebookEntryUpdateBody(BaseModel):
+    content: str | None = None
+    keywords: list[str] | None = None
+    priority: int | None = None
+    space_id: str | None = None
+
+
+class EvaluationStats(BaseModel):
+    """群聊回复评估维度统计."""
+
+    # 回复长度
+    avg_reply_length: float = 0.0
+    reply_count: int = 0
+    # 工具调用
+    tool_call_count: int = 0
+    tool_calls_by_name: dict[str, int] = {}
+    # 工具调用被拦截次数 (隐私 + 策略 + 冷却)
+    blocked_calls: int = 0
+    # Expressor 改写
+    expressor_rewrite_count: int = 0
+    expressor_avg_length_change: float = 0.0
+    # 触发原因分布
+    trigger_reasons: dict[str, int] = {}
+    # 交互事务
+    interaction_count: int = 0
+    interactions_with_tools: int = 0
 
 
 class ConversationTurnListResponse(BaseModel):
@@ -281,6 +383,119 @@ class PersonaConfigUpdateBody(BaseModel):
     relation: PersonaConfigRelation | None = None
 
 
+# ---- 通知中心 (v0.2.13) ---------------------------------------------------
+
+
+class NotificationItem(BaseModel):
+    """一条通知. level / category 都是自由字符串, UI 按 category 展开细节."""
+
+    id: int
+    created_at: str
+    level: str = Field(..., description="info | warning | error")
+    category: str
+    title: str
+    message: str
+    meta: dict | None = None
+    read_at: str | None = None
+
+
+class NotificationListResponse(BaseModel):
+    items: list[NotificationItem]
+    total: int
+    page: int
+    page_size: int
+    unread_count: int
+
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int
+
+
+class MarkReadResponse(BaseModel):
+    marked: int
+
+
+# ---- 身份管理 (v0.3.0) ---------------------------------------------------
+
+
+class ActorResponse(BaseModel):
+    """Actor 视图."""
+    id: str
+    external_key: str
+    frontend: str
+    display_name: str | None = None
+    metadata: str = "{}"
+    created_at: str
+    updated_at: str
+
+
+class ActorListResponse(BaseModel):
+    items: list[ActorResponse]
+    total: int
+
+
+class UserGroupResponse(BaseModel):
+    """UserGroup 视图."""
+    id: str
+    name: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class UserGroupListResponse(BaseModel):
+    items: list[UserGroupResponse]
+    total: int
+
+
+class UserGroupCreateBody(BaseModel):
+    name: str | None = None
+
+
+class BindActorBody(BaseModel):
+    actor_id: str
+    group_id: str
+
+
+class IdentityStrategyResponse(BaseModel):
+    """身份识别策略视图."""
+    id: str
+    name: str
+    strategy_type: str
+    config: str = "{}"
+    is_active: bool = True
+    created_at: str
+    updated_at: str
+
+
+class IdentityStrategyListResponse(BaseModel):
+    items: list[IdentityStrategyResponse]
+    total: int
+
+
+class IdentityStrategyCreateBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    strategy_type: str = Field(..., description="direct | api_key_bound | regex | llm")
+    config: str = Field(default="{}", description="JSON 配置字符串")
+
+
+class IdentityStrategyUpdateBody(BaseModel):
+    name: str | None = None
+    config: str | None = None
+    is_active: bool | None = None
+
+
+class GenerateConfigBody(BaseModel):
+    """AI 辅助生成身份策略配置 (v0.3.1)."""
+
+    strategy_type: str = Field(..., description="regex | llm")
+    description: str = Field(..., min_length=10, max_length=2000, description="用自然语言描述身份信息在消息中的格式")
+    sample_message: str | None = Field(None, max_length=5000, description="可选: 一条真实消息示例")
+
+
+class GenerateConfigResponse(BaseModel):
+    config: str = Field(..., description="生成的 JSON 配置字符串")
+
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
@@ -292,6 +507,7 @@ __all__ = [
     "RoleBindingListResponse",
     "RoleBindingAddBody",
     "RoleBindingReorderBody",
+    "RoleBindingUpdateBody",
     "ProbeDimensionBody",
     "ProbeDimensionResponse",
     "ReindexStartBody",
@@ -312,4 +528,18 @@ __all__ = [
     "PersonaConfigRelation",
     "PersonaConfigRead",
     "PersonaConfigUpdateBody",
+    "NotificationItem",
+    "NotificationListResponse",
+    "UnreadCountResponse",
+    "MarkReadResponse",
+    "ActorResponse",
+    "ActorListResponse",
+    "UserGroupResponse",
+    "UserGroupListResponse",
+    "UserGroupCreateBody",
+    "BindActorBody",
+    "IdentityStrategyResponse",
+    "IdentityStrategyListResponse",
+    "IdentityStrategyCreateBody",
+    "IdentityStrategyUpdateBody",
 ]

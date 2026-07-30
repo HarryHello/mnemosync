@@ -13,8 +13,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-from src.persistence.conversation_store import SqliteConversationStore
+from src.persistence.conversation_store import (
+    ConversationEvent,
+    SqliteConversationStore,
+    build_event_fingerprint,
+)
 
 
 @pytest.fixture
@@ -101,3 +104,252 @@ async def test_multi_frontend_appended_to_same_bucket(store: SqliteConversationS
     assert len(turns) == 3
     # 保序 & source_frontend 只是元数据
     assert [t.source_frontend for t in turns] == ["astrbot", "airi", "panel-debug"]
+
+
+# ─── v0.3.0 空间事件流 ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_committed_sequence_assigned_per_space(store: SqliteConversationStore) -> None:
+    """同空间内序号从 0 单调递增; 空间之间互不干扰."""
+    now = datetime.now(timezone.utc)
+    await store.append("user", "群A-1", token_count=1, space_id="group-a", ts=now)
+    await store.append("assistant", "群A-2", token_count=1, space_id="group-a",
+                       ts=now + timedelta(seconds=1))
+    await store.append("user", "群B-1", token_count=1, space_id="group-b",
+                       ts=now + timedelta(seconds=2))
+    await store.append("user", "群A-3", token_count=1, space_id="group-a",
+                       ts=now + timedelta(seconds=3))
+
+    a = await store.list_for_space("group-a")
+    assert [t.content for t in a] == ["群A-1", "群A-2", "群A-3"]
+    assert [t.committed_sequence for t in a] == [0, 1, 2]
+
+    b = await store.list_for_space("group-b")
+    assert [t.content for t in b] == ["群B-1"]
+    assert [t.committed_sequence for t in b] == [0]  # B 的序号独立从 0 开始
+
+
+@pytest.mark.asyncio
+async def test_no_sequence_without_space(store: SqliteConversationStore) -> None:
+    """私聊/非归属 (space_id=None) 的轮次不分配序号, 仍按 ts 定序."""
+    now = datetime.now(timezone.utc)
+    await store.append("user", "私聊", token_count=1, ts=now)
+    turns = await store.list_since(now - timedelta(days=1))
+    assert len(turns) == 1
+    assert turns[0].committed_sequence is None
+    assert turns[0].space_id is None
+
+
+@pytest.mark.asyncio
+async def test_list_for_space_isolates_spaces(store: SqliteConversationStore) -> None:
+    """群聊装填只读本空间 — 其他群/私聊的对话不能泄入."""
+    now = datetime.now(timezone.utc)
+    await store.append("user", "群A的话", token_count=1, space_id="group-a", ts=now)
+    await store.append("user", "群B的话", token_count=1, space_id="group-b",
+                       ts=now + timedelta(seconds=1))
+    await store.append("user", "私聊的话", token_count=1, ts=now + timedelta(seconds=2))
+
+    a = await store.list_for_space("group-a")
+    assert [t.content for t in a] == ["群A的话"]
+    # 未知空间返回空, 不报错
+    assert await store.list_for_space("group-unknown") == []
+
+
+@pytest.mark.asyncio
+async def test_list_for_space_time_window(store: SqliteConversationStore) -> None:
+    """list_for_space 的 since 过滤与全局 list_since 口径一致."""
+    now = datetime.now(timezone.utc)
+    await store.append("user", "太老了", token_count=1, space_id="g",
+                       ts=now - timedelta(days=10))
+    await store.append("user", "窗内", token_count=1, space_id="g",
+                       ts=now - timedelta(hours=1))
+    turns = await store.list_for_space("g", since=now - timedelta(days=7))
+    assert [t.content for t in turns] == ["窗内"]
+
+
+@pytest.mark.asyncio
+async def test_late_arrival_flag(store: SqliteConversationStore) -> None:
+    """事件时间早于空间内最新已提交时间 → late_arrival=True (乱序到达)."""
+    now = datetime.now(timezone.utc)
+    await store.append("user", "正常-1", token_count=1, space_id="g", ts=now)
+    await store.append("user", "正常-2", token_count=1, space_id="g",
+                       ts=now + timedelta(seconds=10))
+    # 平台重发/乱序: 事件时间早于已提交的 "正常-2"
+    await store.append("user", "迟到的", token_count=1, space_id="g",
+                       ts=now + timedelta(seconds=5))
+
+    turns = await store.list_for_space("g")
+    flags = {t.content: t.late_arrival for t in turns}
+    assert flags["正常-1"] is False
+    assert flags["正常-2"] is False
+    assert flags["迟到的"] is True
+    # 上下文读取按平台事件时间排序；提交序号仍保留真实到达顺序供调试。
+    assert [t.content for t in turns] == ["正常-1", "迟到的", "正常-2"]
+    assert [t.committed_sequence for t in turns] == [0, 2, 1]
+
+
+@pytest.mark.asyncio
+async def test_external_event_id_roundtrip(store: SqliteConversationStore) -> None:
+    now = datetime.now(timezone.utc)
+    await store.append("user", "带事件ID", token_count=1, space_id="g",
+                       external_event_id="qq-msg-12345", ts=now)
+    turns = await store.list_for_space("g")
+    assert turns[0].external_event_id == "qq-msg-12345"
+
+
+@pytest.mark.asyncio
+async def test_append_events_deduplicates_snapshot_in_one_transaction(
+    store: SqliteConversationStore,
+) -> None:
+    now = datetime.now(timezone.utc)
+    event = ConversationEvent(
+        role="user",
+        content="重复历史",
+        token_count=4,
+        source_frontend="astrbot",
+        ts=now,
+        actor_id="actor_1",
+        effective_user_id="actor_1",
+        display_name_snapshot="小明",
+        external_key_snapshot="12345",
+        space_id="测试群",
+        origin="history_snapshot",
+        request_id="request-1",
+    )
+    event.event_fingerprint = build_event_fingerprint(event)
+
+    first = await store.append_events([event])
+    event.request_id = "request-2"
+    second = await store.append_events([event])
+
+    assert first.inserted == 1
+    assert first.duplicates == 0
+    assert second.inserted == 0
+    assert second.duplicates == 1
+    assert await store.count() == 1
+    stored = (await store.list_for_space("测试群"))[0]
+    assert stored.display_name_snapshot == "小明"
+    assert stored.external_key_snapshot == "12345"
+    assert stored.origin == "history_snapshot"
+    assert stored.request_id == "request-1"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_does_not_consume_committed_sequence(
+    store: SqliteConversationStore,
+) -> None:
+    now = datetime.now(timezone.utc)
+    duplicate = ConversationEvent(
+        role="user", content="A", token_count=1, ts=now,
+        space_id="g", origin="history_snapshot", event_fingerprint="same",
+    )
+    current = ConversationEvent(
+        role="user", content="B", token_count=1, ts=now + timedelta(seconds=1),
+        space_id="g", origin="current", event_fingerprint="new",
+    )
+    await store.append_events([duplicate])
+    result = await store.append_events([duplicate, current])
+
+    assert result.inserted == 1
+    assert result.duplicates == 1
+    turns = await store.list_for_space("g")
+    assert [turn.committed_sequence for turn in turns] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_migration_from_v02x_schema(tmp_path: Path) -> None:
+    """v0.2.x 老库 (无新列) 升级后能正常打开.
+
+    回归: 索引 idx_conv_space_seq 引用新列, 必须在 ALTER 迁移之后创建,
+    否则老库启动即崩 (no such column: committed_sequence)。
+    """
+    import sqlite3
+
+    db_path = tmp_path / "old.db"
+    con = sqlite3.connect(db_path)
+    con.execute("""
+        CREATE TABLE conversation_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            ts TIMESTAMP NOT NULL,
+            token_count INTEGER NOT NULL DEFAULT 0,
+            source_frontend TEXT
+        )
+    """)
+    con.execute(
+        "INSERT INTO conversation_turns (role, content, ts, token_count) "
+        "VALUES ('user', '老数据', '2026-01-01T00:00:00+00:00', 4)"
+    )
+    con.commit()
+    con.close()
+
+    s = SqliteConversationStore(str(db_path))
+    await s.connect()  # 老库 → 触发迁移, 不应抛 OperationalError
+    try:
+        turns = await s.list_recent()
+        assert len(turns) == 1
+        assert turns[0].content == "老数据"
+        assert turns[0].actor_id is None
+        assert turns[0].origin == "legacy"
+        assert turns[0].observed_at == turns[0].ts
+        assert turns[0].committed_sequence is None
+        assert turns[0].late_arrival is False
+        # 迁移后新写入正常
+        await s.append("user", "新数据", token_count=1, space_id="g")
+        assert (await s.list_for_space("g"))[0].committed_sequence == 0
+    finally:
+        await s.close()
+
+
+@pytest.mark.asyncio
+async def test_migration_normalizes_mixed_timezone_text_for_sorting(tmp_path: Path) -> None:
+    """等价时刻的 +08:00 / +00:00 文本必须统一 UTC，避免助手消息被字符串排序分组."""
+    import sqlite3
+
+    db_path = tmp_path / "mixed-timezone.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute("""
+        CREATE TABLE conversation_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            ts TIMESTAMP NOT NULL,
+            token_count INTEGER NOT NULL DEFAULT 0,
+            source_frontend TEXT,
+            actor_id TEXT,
+            space_id TEXT,
+            external_event_id TEXT,
+            committed_sequence INTEGER,
+            late_arrival INTEGER NOT NULL DEFAULT 0,
+            effective_user_id TEXT,
+            display_name_snapshot TEXT,
+            external_key_snapshot TEXT,
+            origin TEXT NOT NULL DEFAULT 'legacy',
+            event_fingerprint TEXT,
+            observed_at TIMESTAMP,
+            request_id TEXT
+        )
+    """)
+    connection.execute(
+        "INSERT INTO conversation_turns (role, content, ts, token_count, space_id, observed_at) "
+        "VALUES ('user', '用户', '2026-07-27T00:56:00+08:00', 1, 'g', "
+        "'2026-07-27T00:56:00+08:00')"
+    )
+    connection.execute(
+        "INSERT INTO conversation_turns (role, content, ts, token_count, space_id, observed_at) "
+        "VALUES ('assistant', '助手', '2026-07-26T16:56:01+00:00', 1, 'g', "
+        "'2026-07-26T16:56:01+00:00')"
+    )
+    connection.commit()
+    connection.close()
+
+    store = SqliteConversationStore(str(db_path))
+    await store.connect()
+    try:
+        turns = await store.list_for_space("g")
+        assert [turn.content for turn in turns] == ["用户", "助手"]
+        assert all(turn.ts.utcoffset() == timedelta(0) for turn in turns)
+    finally:
+        await store.close()

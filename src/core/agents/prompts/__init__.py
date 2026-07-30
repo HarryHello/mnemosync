@@ -1,9 +1,6 @@
 """Agent prompt 模板 (薄封装, 内容来自 PromptStore)."""
 
-from .memory_analysis import (
-    build_memory_analysis_prompt,
-    load_decay_targets_header,
-)
+from .memory_analysis import build_memory_analysis_prompt
 from .prompt_cleaning import (
     build_prompt_cleaning_user_prompt,
     load_prompt_cleaning_system,

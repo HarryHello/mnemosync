@@ -7,11 +7,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from langchain_core.tools import tool
 
+from src.infra.debug_context import use_agent
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
 
@@ -56,11 +57,12 @@ async def analyze_emotion(
         {"role": "system", "content": "你是情绪分析助手。只返回 JSON。"},
         {"role": "user", "content": EMOTION_PROMPT.format(text=text)},
     ]
-    resp = await forwarder.chat(
-        ModelType.ASSIST, messages=messages, temperature=0.1,
-        response_format={"type": "json_object"},
-        extra_body={"enable_thinking": False},
-    )
+    with use_agent("emotion_analysis"):
+        resp = await forwarder.chat(
+            ModelType.ASSIST, messages=messages, temperature=0.1,
+            response_format={"type": "json_object"},
+            extra_body={"enable_thinking": False},
+        )
     content = resp["choices"][0]["message"]["content"].strip()
     if "<think>" in content:
         content = content.split("</think>")[-1].strip()

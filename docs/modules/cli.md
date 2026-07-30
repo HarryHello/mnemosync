@@ -1,9 +1,9 @@
 # 命令行环境 | CLI
 
-> **系统版本**: v0.2.11
+> **系统版本**: v0.3.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **作者**: HarryHelloo
 
 ---
@@ -16,6 +16,7 @@ CLI 是 Mnemosync 的日常管理入口: 初始化数据库、启停服务、生
 - 交互式 shell: [src/cli/cli_interactive.py](../../src/cli/cli_interactive.py)
 - 调试命令 `ask` 实现: [src/cli/ask.py](../../src/cli/ask.py)
 - 提示词覆盖管理 `prompt` 实现: [src/cli/prompt_cmd.py](../../src/cli/prompt_cmd.py)
+- 身份管理 `identity` 实现: [src/cli/identity_cmd.py](../../src/cli/identity_cmd.py)
 
 ---
 
@@ -33,6 +34,7 @@ mnemosync <command> [options]
 | `login [--docker]` | 用户名/密码登录, 进入交互式 shell |
 | `ask [flags] "<question>"` | 命令行直连主对话 (调试用), 详见 [§5](#5-调试命令-ask) |
 | `prompt <subcmd> ...` | 管理 Agent 提示词覆盖 (list/show/set/reset/validate), 详见 [§6](#6-提示词覆盖管理-prompt) |
+| `identity <subcmd> ...` | 多用户身份管理: 策略/参与者/用户组/绑定, 详见 [§7](#7-身份管理-identity) |
 | `upgrade [--branch <name>]` | 从 Git 拉取新版本 |
 | `help` | 显示顶层帮助 |
 
@@ -177,7 +179,7 @@ mnemosync ask --via-http --api-key sk-xxx "..."
 | flag | 作用 |
 |------|------|
 | `question` | 位置参数; 命令行模式省略时从 stdin 读入 |
-| `--user` | `source_user` 标识, 默认 `cli` |
+| `--user` | `source_user` 标识, **必填** (v0.3.0 起不再有默认值) |
 | `--persona-file` | 从文件读入人格 prompt, 文件名 (无扩展) 作为 `persona_name` |
 | `--stream` | 走流式路径 (先加载记忆再流式转发, 结束后异步跑记忆图) |
 | `--debug` | 让 Forwarder 打印所有上游 HTTP JSON, 底层设 `MNEMOSYNC_DEBUG=1` |
@@ -253,7 +255,57 @@ mnemosync prompt reset memory_analysis
 
 ---
 
-## 7. 与其他模块
+## 7. 身份管理 `identity`
+
+`identity` 子命令直连本地 `data/identity.db` (不走 HTTP), 管理 v0.3.0 多用户身份体系。详细设计见 [identity.md](identity.md)。
+
+### 7.1 `identity strategy` — 身份识别策略
+
+| 子命令 | 说明 |
+|--------|------|
+| `identity strategy list` | 列出所有策略 (id / name / type / active) |
+| `identity strategy create --name X --type {direct,api_key_bound,regex,llm} [flags]` | 创建策略; 便捷参数按类型生效, 也支持 `--config '<json>'` 或 `--config-file` (优先) |
+| `identity strategy show <id>` | 查看策略详情 (含 config JSON) |
+| `identity strategy update <id> [--name X] [--config JSON] [--active/--inactive]` | 更新策略 |
+| `identity strategy delete <id>` | 删除策略 (引用该策略的 API Key 将进入非归属模式) |
+
+**create 便捷参数** (与 `--config` 二选一):
+
+- `--frontend` — 前台应用名 (direct/api_key_bound/regex)
+- `--external-key` — 固定平台标识 (api_key_bound)
+- `--display-name` — 显示名称 (api_key_bound)
+- `--channel-type {direct,group}` — 渠道类型 (api_key_bound)
+- `--actor-pattern` — 参与者提取正则 (regex, 第 1 个捕获组为 external_key)
+- `--name-pattern` — 昵称提取正则 (regex)
+- `--space-pattern` — 空间/群号提取正则 (regex)
+- `--event-id-pattern` — 事件 ID 提取正则, 幂等用 (regex)
+- `--search-in {system_or_first_user, system, all}` — 正则搜索范围 (regex)
+
+### 7.2 `identity actor` — 参与者 (只读, 请求到达时自动创建)
+
+| 子命令 | 说明 |
+|--------|------|
+| `identity actor list [--frontend X] [--search 关键词]` | 列出参与者 (按前台/关键词过滤) |
+| `identity actor show <actor_id>` | 参与者详情: 显示 effective_user_id + 组归属 |
+
+### 7.3 `identity group` — 用户组 (一个真实人)
+
+| 子命令 | 说明 |
+|--------|------|
+| `identity group list` | 列出所有用户组 (含成员数) |
+| `identity group create [--name X]` | 创建用户组 |
+| `identity group show <group_id>` | 查看组成员 |
+
+### 7.4 `identity bind/unbind` — 跨平台身份归一
+
+```bash
+mnemosync identity bind <actor_id> <group_id>    # 绑定后共享记忆与关系
+mnemosync identity unbind <actor_id> <group_id>  # 解绑回到独立身份
+```
+
+---
+
+## 8. 与其他模块
 
 | 模块 | 关系 |
 |------|------|
@@ -263,10 +315,11 @@ mnemosync prompt reset memory_analysis
 | [Forwarder](forward.md) | `test-model` / `ls-models` 通过 Forwarder 发探活请求 |
 | [消息处理](message-processing.md) | `ask` 直接进入 LangGraph, 与 HTTP 路径共用实现 |
 | [Agent 提示词](agents.md#7-自定义-agent-提示词) | `prompt` 子命令通过 `PromptStore` 读写覆盖层 |
+| [身份子系统](identity.md) | `identity` 子命令直连 `data/identity.db` 管理策略/参与者/用户组 (v0.3.0) |
 
 ---
 
-## 8. 版本历史
+## 9. 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
@@ -279,3 +332,4 @@ mnemosync prompt reset memory_analysis
 | v0.2.4 | 2026-07-17 | `model add` 新增 `--context N` / `--dim N`; 新增 `memory reindex [--prune]` 与 `memory prune [--dry-run]` (走面板 HTTP, 自动换 JWT) |
 | v0.2.7 | 2026-07-18 | 新增 `persona reset [--dry-run] [--yes]`: 走 `POST /panel/admin/persona/reset`, 交互式二次确认, 与 `memory reindex` 互斥 |
 | v0.2.8 | 2026-07-18 | `model add` 新增 `--send-dim`: 拆分向量库维度锁与上游 `dimensions` 参数, 默认不透传 (兼容 bge/bce/jina 等固定维模型) |
+| v0.3.0 | 2026-07-26 | 新增 `identity` 命令组 (strategy / actor / group / bind / unbind), 直连 `data/identity.db`; `ask --user` 改为必填 (不再有 `cli` 默认值) |

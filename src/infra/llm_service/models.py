@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from enum import Enum
 
 
@@ -27,8 +27,8 @@ class LLMServiceProvider:
     id: str
     base_url: str
     api_key: str  # 明文（读取时解密）
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def api_key_masked(self) -> str:
@@ -38,7 +38,7 @@ class LLMServiceProvider:
 
     @classmethod
     def create(cls, service_id: str, base_url: str, api_key: str) -> "LLMServiceProvider":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return cls(id=service_id, base_url=base_url, api_key=api_key,
                    created_at=now, updated_at=now)
 
@@ -51,12 +51,12 @@ class ModelConfiguration:
     service_id: str
     model: str
     model_type: ModelType
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @classmethod
     def create(cls, service_id: str, model: str, model_type: ModelType) -> "ModelConfiguration":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return cls(id=secrets.token_hex(16), service_id=service_id, model=model,
                    model_type=model_type, created_at=now, updated_at=now)
 
@@ -74,7 +74,7 @@ class RoleBinding:
     priority: int
     service_id: str
     model: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     context_length: int | None = None
     embedding_dim: int | None = None
     # v0.2.8: 是否把 embedding_dim 作为 `dimensions` 参数透传给上游.
@@ -97,3 +97,9 @@ class ResolvedCandidate:
     context_length: int | None = None
     embedding_dim: int | None = None
     send_dimensions: bool = False
+
+    # 工具调用能力声明 (v0.3.1)
+    supports_tools: bool = True          # 是否支持 tools 参数
+    supports_stream_tools: bool = True   # 是否支持 stream=True + tools
+    supports_parallel_tool_calls: bool = True
+    supports_tool_choice_required: bool = True  # 是否支持 tool_choice="required"

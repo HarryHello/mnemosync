@@ -1,8 +1,14 @@
-"""提示词注册表 (source of truth).
+"""
+提示词注册表 (source of truth).
 
 Registry 是所有 Agent 提示词的白名单. 只有列在此处的 name 才允许被
 `PromptStore` 加载/保存, 从而防止路径穿越 (HTTP path 参数、CLI arg 直接
 进入文件系统操作前必须经过 registry 校验).
+
+v0.2.12: 移除 memory_analysis_decay_header(衰减已改为确定性公式)和
+sentence_classifier(提示词清洗已改为单次重写).
+memory_analysis placeholders 移除 DECAY_TARGETS, 新增 EMOTION_ANALYSIS.
+relationship_analysis placeholders 新增 EMOTION_ANALYSIS.
 """
 
 from __future__ import annotations
@@ -31,29 +37,29 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         name="memory_analysis",
         placeholders=(
             "SOURCE_USER",
+            "CURRENT_SPEAKER",
+            "CHANNEL_TYPE",
             "CONVERSATION",
-            "DECAY_TARGETS",
             "PERSONA_NAME",
             "PERSONA_ADDRESSING",
             "USER_ADDRESSING",
             "RELATION_CONTEXT",
+            "EMOTION_ANALYSIS",
         ),
         description="记忆分析 Agent",
-    ),
-    "memory_analysis_decay_header": PromptSpec(
-        name="memory_analysis_decay_header",
-        placeholders=(),
-        description="记忆分析: 衰减目标段头",
     ),
     "relationship_analysis": PromptSpec(
         name="relationship_analysis",
         placeholders=(
             "CURRENT_REL",
+            "CURRENT_SPEAKER",
+            "CHANNEL_TYPE",
             "CONVERSATION",
             "PERSONA_NAME",
             "PERSONA_ADDRESSING",
             "USER_ADDRESSING",
             "RELATION_CONTEXT",
+            "EMOTION_ANALYSIS",
         ),
         description="关系分析 Agent",
     ),
@@ -69,26 +75,40 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
     ),
     "proxy_thinking": PromptSpec(
         name="proxy_thinking",
-        placeholders=("USER_NAME", "RELATIONSHIP", "MEMORIES", "USER_MESSAGE"),
+        placeholders=(
+            "CURRENT_SPEAKER", "CHANNEL_TYPE", "RELATIONSHIP", "MEMORIES", "USER_MESSAGE",
+        ),
         description="代理推理 Agent",
-    ),
-    "sentence_classifier": PromptSpec(
-        name="sentence_classifier",
-        placeholders=("TEXT",),
-        description="工具: 单句分类 (提示词清洗内部调用)",
     ),
     "main_dialogue_frame": PromptSpec(
         name="main_dialogue_frame",
         placeholders=(
             "PERSONA_NAME",
-            "PERSONA_PROMPT",
-            "USER_NAME",
+            "PERSONA_SECTION",
+            "CURRENT_SPEAKER",
+            "CHANNEL_TYPE",
+            "SPACE_LABEL",
+            "ACTIVE_PARTICIPANTS",
+            "TRIGGER_REASON",
+            "TOOL_CAPABILITY_HINT",
             "RELATIONSHIP",
             "PERMANENT_MEMORIES",
             "RETRIEVED_MEMORIES",
+            "LOREBOK_ENTRIES",
             "PROXY_THINKING_SECTION",
         ),
         description="主对话框架 (行为准则 / section 标题 / 记忆容器)",
+    ),
+    "expressor": PromptSpec(
+        name="expressor",
+        placeholders=(
+            "ORIGINAL_TEXT",
+            "CURRENT_SPEAKER",
+            "CHANNEL_TYPE",
+            "RELATIONSHIP_SUMMARY",
+            "EXPRESSION_STYLE",
+        ),
+        description="Expressor 表达改写 (仅最终文本, 不改写工具调用)",
     ),
 }
 

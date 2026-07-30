@@ -1,9 +1,9 @@
 # 上游转发模块 (Forward Module)
 
-> **模块版本**: v0.2.11
+> **模块版本**: v0.3.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **作者**: HarryHelloo
 
 ---
@@ -86,7 +86,7 @@ async with Forwarder(config) as fwd:
 | `timeout` | float | 30.0 | 请求超时 (秒) |
 | `connect_timeout` | float | 10.0 | 连接超时 (秒) |
 
-生产使用建议根据调用类型给不同超时: 主对话流式 `90s`, 记忆图内部 `30s` (见 [forward.py:244/286](../../src/api/routes/forward.py))。
+生产使用建议根据调用类型给不同超时: 主对话流式 `90s`, 记忆图内部 `30s` (见 [forward.py](../../src/api/routes/forward.py))。
 
 ### 3.2 Forwarder.chat
 
@@ -177,11 +177,33 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 
 ## 6. 与 API 层的关系
 
-- **鉴权与请求组装**: [src/api/routes/forward.py](../../src/api/routes/forward.py) 完成 API Key 验证 (`_verify_api_key`)、`source_frontend` 派生 (`_resolve_source_frontend`, 从 `api_key.note`)、模型白名单校验 (`mnemosync-any`)、记忆加载、上下文拼装、短期记忆装填 (`build_short_term_history`, v0.2.6), 再交给 `MultiForwarder`
-- **短期记忆装填 (v0.2.6)**: 主 Forwarder 调用前, forward.py 用 `main_candidate.context_length` 从 `conversation_turns` 双窗裁剪历史; 主对话流结束后同步写 user + assistant 两条 turn。见 [message-processing.md](message-processing.md) §4.1
+- **鉴权与身份解析 (v0.3.0)**: [src/api/routes/forward.py](../../src/api/routes/forward.py) 完成 API Key 验证 (`_verify_api_key`) 后, 立即通过 `_resolve_identity_context` 解析身份 (详见 [identity.md](identity.md))。身份策略绑定在 API Key 的 `strategy_id` 上, 解析结果 (`IdentityContext`) 提供 `actor_id` / `effective_user_id` / `space_id` / `channel_type` / `external_event_id`。解析失败或无策略时退化为**非归属模式**: 不创建 Actor, 不读写私有记忆, 回复仍正常工作。
+- **幂等预检与重放 (v0.3.0)**: 在提示词清洗和上游调用之前, `_lookup_idempotency` 按 `(api_key.id, external_event_id)` 查幂等缓存。命中则直接重放首次响应 (`_replay_json_response` / `_replay_stream_response`), 零 LLM 开销、零记忆副作用。首次成功响应后通过 `_record_idempotency` 落库。
+- **initial_state 注入 (v0.3.0)**: `create_chat_completion` 构建 initial_state 时注入 `actor_id` / `space_id` / `channel_type` / `persona_id` / `external_event_id` / `api_key_id`, 供下游节点和短期记忆装填使用。
+- **source_frontend 派生**: 从 `api_key.note` 服务器派生 (`_resolve_source_frontend`), 不依赖客户端
 - **模型白名单**: `/v1/chat/completions` 只接受 `model="mnemosync-any"` 或空, 其他直接 400
+- **短期记忆装填 (v0.2.6)**: 主 Forwarder 调用前, forward.py 用 `main_candidate.context_length` 从 `conversation_turns` 双窗裁剪历史, 传入 `space_id` 做空间分区; 主对话结束后同步写 user + assistant 两条 turn, 传入 `actor_id` / `space_id` / `external_event_id`
+- **受众过滤 (v0.3.0)**: 流式与非流式路径均构建 `RetrievalContext` (含 `effective_user_id` / `actor_id` / `space_id` / `channel_type` / `relationship`), 传给 `MemoryRetriever.search` 和 `AudienceFilter.filter` 做 ChromaDB `$or` 粗筛 + `is_visible` 精筛
 - **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的决策函数控制。见 [agents.md](agents.md) §4
-- **流式字段透传**: `_handle_stream` 会把 `request` 里所有 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `MultiForwarder.chat_stream(**passthrough)`
+- **流式字段透传**: `_handle_stream` 会把 `request` 里的 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `MultiForwarder.chat_stream(**passthrough)`
+- **客户端工具协议 (第一阶段)**: 流式与非流式主路径都会将客户端 `tools` / `tool_choice` 交给 MAIN；存在 `tools` 时同时透传 `parallel_tool_calls`。非流式使用 `MainDialogueResult` 保留完整 `message` / `finish_reason` / `usage`, 返回的 `tool_calls` 不再丢失。流式 SSE 继续原样返回客户端，同时 `parse_sse_stream_full` 按 `tool_calls[index]` 累积跨帧 `function.arguments`, 并保留 `finish_reason`。纯工具调用中间轮不会触发记忆与关系分析。
+- **工具结果续轮**: 当请求以 `role=tool` 结尾时，核心只从最后一条 user 之后接纳连续的 `assistant(tool_calls) → tool` 事务尾部。校验包括：函数必须在本轮 `tools` 中、call ID 唯一且匹配、arguments 为 JSON 对象、所有并行调用都有结果、消息数和体积受限。合法事务接到服务器短期历史末端；其他客户端历史继续丢弃。工具续轮不重复写入根 user 事件、不复用根事件幂等键，也不启用代理推理。
+- **API Key 工具策略**: 每个身份策略的 `tool_policy` 配置支持 `allowed_tools`（白名单）、`denied_tools`（黑名单）、`max_calls_per_round`（每轮最大调用数）和 `cooldown_seconds`（每工具冷却秒数）。策略对工具定义做入站过滤（模型不知道被禁工具的存在），对响应 `tool_calls` 做出站过滤（模型违反时作为最后防线移除）。被策略移除的工具调用不会到达客户端。
+- **工具参数隐私检查**: 在响应返回客户端前，对 `tool_calls` 的每个参数执行确定性验证：工具名称必须在本轮 `tools` 中、arguments 必须是合法 JSON 对象、参数体积不超过 2000 字节、参数不得包含内部 UUID 格式（防止泄露内部 actor/group ID）。不符合检查的调用被移除并记录日志。
+- **持久化冷却**: 内存中的冷却（单请求）从 `conversation_turns` 查询最近的 `tool_call` 事件，在跨请求/重启后仍生效。仅对配置了 `cooldown_seconds` 的工具生效，非流式路径完全有效，流式路径依赖内存冷却。
+- **记忆治理端点**: `DELETE /panel/admin/memories` 支持按 `source_user`（必填）批量删除记忆，可选过滤 `memory_type` 和 `before`（ISO 时间）。已有单条删除端点 `DELETE /panel/admin/memories/{memory_id}`。`GET /panel/admin/memories` 新增 `before`/`after` 时间范围过滤。管理面板"长期记忆"tab 已增加批量删除按钮，按当前 source_user + 类型筛选条件批量删除。
+- **工具策略管理**: 工具策略通过现有 identity strategy API 管理。在 identity strategy 的 `config` JSON 中添加 `tool_policy` 键即可配置白名单/黑名单/每轮上限/冷却，配置格式见 [forward.md](forward.md)。通过 `PATCH /panel/admin/identity/strategies/{id}` 更新后立即生效，无需重启。
+- **模型候选工具能力**: `ResolvedCandidate` 增加 `supports_tools` / `supports_stream_tools` / `supports_parallel_tool_calls` / `supports_tool_choice_required` 字段（默认全部为 True）。当请求携带 `tools` 时，`RoleResolver.first_for_tools()` 优先选择支持工具的候选，不支持工具的候选跳过而非视为失败。流式请求额外要求 `supports_stream_tools=True`。
+- **逻辑交互事务**: `interaction_id` 将同一根消息引发的多次 HTTP 请求（工具调用 → 工具结果 → 继续生成 → 最终文本）绑定为同一逻辑事务。根消息的 `request_id` 即 `interaction_id`；工具续轮通过首个 `tool_call_id` 查回该 ID。工具调用和结果分别作为 `event_type=tool_call` / `tool_result` 独立持久化，不混入自然语言流水。
+- **幂等重放**: 幂等缓存现在保留完整 `response_message`（含 `tool_calls`）和 `finish_reason`，重放时优先恢复完整响应而不只是文本。纯工具调用响应可被正确重放。
+- **全局频率限制**: `ToolPolicy` 的 `global_max_per_window` / `global_window_seconds` 字段按时间窗口统计 `tool_call` 事件总数, 超限拦截。与按用户+空间的冷却互补, 覆盖 API Key 级别。
+- **空间级串行锁**: 同一 `space_id` 的请求逐条处理, 不同空间并行。锁键优先级 `space_id > source_user > api_key_id > "global"`。非流式在 `create_chat_completion` 的 try/finally 释放; 流式在 `locked_stream` 包装器结束后释放。防止同一群聊并行生成回复导致内容冲突。
+- **内部 tool 拦截**: `InternalToolRegistry` 注册服务端内部工具 (身份绑定等), 仅非流式路径注入主模型。模型调用内部 tool 时, `main_dialogue_node` 拦截执行 handler, 合成 `tool_result`, 再调一轮 LLM 生成自然回复。出站时从 `tool_calls` 中剥离内部 tool, 客户端不可见。
+- **跨平台身份绑定**: 双触发模式。指令触发: 用户发自定义指令词 (默认"绑定"), 服务端拦截生成 6 位验证码, 不调 LLM; 另一端发"绑定 {code}"确认。自然语言触发: 模型调用内部 tool `initiate_identity_binding` / `confirm_identity_binding`, 服务端执行绑定逻辑。绑定复用 UserGroup, 验证码 5 分钟 TTL。指令词可通过 `runtime.identity_bind_command` / `runtime.identity_bind_confirm_prefix` 自定义。
+- **管线调试事件**: `DebugEventBus.emit_pipeline()` 发射语义管线事件 (tool_policy / tool_transaction / tool_call_decision / trigger_reason / expressor_rewrite / cooldown_blocked), 通过现有 SSE 流推送, 前端按类型渲染卡片和详情。
+- **交互事务聚合**: `GET /panel/admin/conversation-turns/interactions` 列出最近的逻辑交互摘要; `InteractionList.vue` 组件可展开查看同一 `interaction_id` 的所有事件 (message / tool_call / tool_result)。
+- **评估维度统计**: `GET /panel/admin/debug/evaluation` 从 `conversation_turns` 聚合统计 (回复平均长度 / 工具调用分布 / 交互事务比例)。
+- **仍有限制**: 流式路径不支持内部 tool 拦截 (SSE 帧已发出无法回改); 全局频率限制在流式路径仅影响持久化不阻断已发出的调用。
 - **调试面板 (v0.2.5)**: `debug_hook` 模块级单例被 lifespan 注入 `set_debug_bus(bus)`, 让 forwarder 每次出/入方向都写一条 event 到 DebugEventBus; 订阅数为 0 时 emit 走惰性 gate 近似 no-op
 
 ---
@@ -236,3 +258,4 @@ ForwarderConfig(
 | v0.2.4 | 2026-07-17 | 嵌入角色单绑定, `MultiForwarder.embed()` 遇错不 fallback; ChromaDB collection 锁定 (service_id, model, dim) |
 | v0.2.5 | 2026-07-17 | `debug_hook` 模块级单例; forwarder 出/入方向 emit 到 DebugEventBus |
 | v0.2.6 | 2026-07-18 | forward.py 装填改由 `render_main_dialogue_system` + `build_short_term_history` 组合; 主对话完成后写 `conversation_turns` 两条 |
+| v0.3.0 | 2026-07-26 | forward.py 新增身份解析、幂等预检/重放、initial_state 注入 actor_id/space_id/channel_type/persona_id/external_event_id/api_key_id; 记忆检索与短期记忆装填接入 space_id 分区与受众过滤 |

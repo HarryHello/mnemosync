@@ -1,26 +1,27 @@
 # 多 Agent 设计 | Multi-Agent Design
 
-> **系统版本**: v0.2.11
+> **系统版本**: v0.3.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **作者**: HarryHelloo
 
 ---
 
 ## 1. 概述
 
-Mnemosync 一次请求由 LangGraph + API 层编排 **5 个 Agent** 完成。其中代理推理是**原生推理的补齐** (详见 §4), 提示词清洗是**服务器人格权威的守门员** (详见 §6)。
+Mnemosync 一次请求由 LangGraph + API 层编排 **6 个 Agent** 完成。其中代理推理是**原生推理的补齐** (详见 §4), 提示词清洗是**服务器人格权威的守门员** (详见 §6), Expressor 是**拟人化表达的最后防线** (详见 §3)。
 
 ### 1.1 Agent 全景
 
 | # | Agent | 推理方法 | 使用模型 | 触发时机 | 输出 |
 |---|-------|---------|---------|---------|------|
-| 1 | 主对话 | 直接推理 | 主模型 | 每次请求必跑 | 回复文本 |
+| 1 | 主对话 | 直接推理 | 主模型 | 每次请求必跑 | 回复文本 + 工具调用 |
 | 2 | 代理推理 | CoT (无工具) | 辅助模型 | 主模型无原生推理 & (前台点名推理 或 `proxy_thinking_default=true`) 时启用 | 供主对话参考的思考文本 + 前台 `reasoning_content` 字段 |
-| 3 | 记忆分析 | ReAct | 辅助模型 | 主对话后, 与关系分析并行 | 新记忆候选 + 衰减评估 JSON |
-| 4 | 关系分析 | ReAct | 辅助模型 | 主对话后, 与记忆分析并行 | 亲密度/信任度增量 JSON |
-| 5 | 提示词清洗 | ReAct | 辅助模型 | API 层预处理, 客户端 system 消息非空时 | 保留的功能性指令 + 丢弃的人格描述 JSON |
+| 3 | Expressor | 单次改写 | 辅助模型 | 群聊最终文本（finish_reason=stop），≥10 字符 | 改写后的口语化回复 |
+| 4 | 记忆分析 | ReAct | 辅助模型 | 主对话后, 与关系分析并行 | 新记忆候选 + 衰减评估 JSON |
+| 5 | 关系分析 | ReAct | 辅助模型 | 主对话后, 与记忆分析并行 | 亲密度/信任度增量 JSON |
+| 6 | 提示词清洗 | ReAct | 辅助模型 | API 层预处理, 客户端 system 消息非空时 | 保留的功能性指令 + 丢弃的人格描述 JSON |
 
 **代码位置**: 所有 Agent 的执行函数集中在 [src/core/agents/factory.py](../../src/core/agents/factory.py); ReAct 循环由 [src/core/agents/base.py](../../src/core/agents/base.py) 的 `run_react_loop` 驱动。
 
@@ -89,35 +90,73 @@ parse_request
 
 ---
 
-## 3. 记忆分析 Agent
+## 2.5 触发原因识别
 
-**代码**: [factory.py:137 `run_memory_analysis`](../../src/core/agents/factory.py#L137)
-**Prompt**: 默认 [prompts/defaults/memory_analysis.md](../../src/core/agents/prompts/defaults/memory_analysis.md) + [memory_analysis_decay_header.md](../../src/core/agents/prompts/defaults/memory_analysis_decay_header.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_memory_analysis_prompt`](../../src/core/agents/prompts/memory_analysis.py)
+`src/core/memory/trigger_reason.py` 从本轮消息推断触发上下文（@提及/回复/常规），通过 `__TRIGGER_REASON__` 占位符注入 `main_dialogue_frame`，使 MAIN 理解为什么被呼叫。不依赖客户端专用适配；reply_to 元数据优先，其次为 `@开头` 模式的提及检测，最后为常规发言。
 
-### 3.1 职责
+## 3. Expressor 表达改写 Agent
+
+`src/core/agents/prompts/defaults/expressor.md` + `run_expressor()` (factory.py:196)：将 MAIN 最终文本改写为适合当前聊天场景（尤其是群聊）的表达形式。
+
+### 3.0 表达习惯注入
+
+Expressor 从 `src/core/memory/expression_style.py` 获取当前空间的表达习惯（确定性规则，零 LLM 成本），通过 `__EXPRESSION_STYLE__` 占位符注入 prompt。提取维度：句末语气词频率（"呢""吧""呀"）、标点偏好（"~""！""…"）、句长偏好（短句/长句）、常见回应模式（"好的""嗯"）。样本不足 3 条时不注入。
+
+### 3.1 触发条件
+
+### 3.1 触发条件
+
+Expressor 仅在同时满足以下条件时调用：
+
+- `finish_reason == "stop"`（非工具调用中间轮）
+- `content` 非空且长度 ≥ `min_rewrite_length`（默认 10 字符）
+- `channel_type == "group"`（仅群聊；私聊不启用）
+- `enabled=True`（当前通过代码开关，未来可通过配置）
+
+### 3.2 职责边界
+
+- 只处理最终文本，不处理 `tool_calls` 消息
+- 使用 ASSIST 角色（低成本模型）
+- 失败时返回原文，不影响主回复
+- 改写后长度异常膨胀时返回原文
+- 超过 `max_input_length`（默认 2000 字符）时截断输入
+
+### 3.3 禁止内容（与 MAIN Prompt 一致）
+
+- 删除括号动作描写：`（蹭了蹭你）` `（戳了戳）`
+- 删除星号动作描写：`*拍拍*` `*摸头*`
+- 删除自我描述：`[发送表情包]` `[戳一戳]`
+- 删除舞台指令或旁白
+
+## 4. 记忆分析 Agent
+
+**代码**: [factory.py:259 `run_memory_analysis`](../../src/core/agents/factory.py#L259)
+**Prompt**: 默认 [prompts/defaults/memory_analysis.md](../../src/core/agents/prompts/defaults/memory_analysis.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_memory_analysis_prompt`](../../src/core/agents/prompts/memory_analysis.py)
+
+### 4.1 职责
 
 - 从本轮对话中提取值得长期保存的信息 (`new_memories`)
 - 评估一批已有普通记忆的衰减状态 (`decay_evaluations`)
 
 两件事在同一次 ReAct 循环中完成; v0.2.0 曾计划把衰减评估拆成独立 Agent, 后合并。
 
-### 3.2 ReAct 工具
+### 4.2 ReAct 工具
 
 | 工具 | 工厂函数 | 用途 |
 |------|---------|------|
-| `vector_search` | `make_vector_search_tool` | 检索已有记忆判断重复/冲突/关联 |
-| `emotion_analyzer` | `make_emotion_analyzer_tool` | 分析对话情绪标签和强度 |
-| `time_decay_calculator` | `make_time_decay_calculator_tool` | 计算已有记忆的理论衰减优先级 |
+| `vector_search` | `make_vector_search_tool` | 检索已有记忆判断重复/冲突/关联 (v0.3.0: 带受众过滤) |
+
+**v0.3.0 变化**: 情绪分析不再作为 ReAct 工具 — 由 `main_dialogue_node` 预计算一次 (`_compute_emotion`), 结果通过 `emotion_analysis` 文本参数传给 Agent。衰减计算不再由 LLM 驱动 — 改为 `run_deterministic_decay()` 确定性公式批量处理, `decay_evaluations` 字段始终返回 `[]`。**非归属守卫**: `source_user` 为空 (非归属模式) 时节点直接返回 `{"new_memories": [], "decay_evaluations": []}`, 不调用 LLM、不写任何私有记忆。
 
 工具通过工厂注入依赖 (Forwarder / VectorStore / MemoryStore), 见 [tools.md](tools.md)。
 
-### 3.3 循环约束
+### 4.3 循环约束
 
-- `max_iterations = 6` (由 nodes.py 传入)
-- 提示词要求: 先 `vector_search` 查重 → `emotion_analyzer` 定情绪 → 有衰减目标时 `time_decay_calculator` → 输出 JSON
+- `max_iterations = 4` (由 nodes.py 传入)
+- 提示词要求: 先 `vector_search` 查重 (v0.3.0 起检索带受众过滤, 工具闭包绑定 `RetrievalContext`) → 输出 JSON
 - Agent 判断无需工具调用时直接输出 JSON, 循环终止
 
-### 3.4 输出 JSON schema
+### 4.4 输出 JSON schema
 
 ```json
 {
@@ -149,7 +188,7 @@ parse_request
 
 字段解析由 `_parse_candidate` / `_parse_decay_eval` 完成, 未识别的枚举值回退到 `MemoryType.NORMAL` / `DecayState.ACTIVE`。
 
-### 3.5 衰减速率参考
+### 4.5 衰减速率参考
 
 | decay_rate | 半衰期 | 场景 |
 |-----------|--------|------|
@@ -160,7 +199,7 @@ parse_request
 | 0.7 | ~17天 | 短期事件 |
 | 0.9 | ~11天 | 临时信息、情绪波动 |
 
-### 3.6 衰减评估决策规则
+### 4.6 衰减评估决策规则
 
 | 调整后优先级 | decision |
 |-------------|---------|
@@ -171,7 +210,7 @@ parse_request
 
 ---
 
-## 4. 代理推理 Agent
+## 5. 代理推理 Agent
 
 **代码**: [factory.py:226 `run_proxy_thinking`](../../src/core/agents/factory.py#L226) · 决策与 SSE 合成: [src/api/reasoning_control.py](../../src/api/reasoning_control.py)
 **Prompt**: 默认 [prompts/defaults/proxy_thinking.md](../../src/core/agents/prompts/defaults/proxy_thinking.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_proxy_thinking_prompt`](../../src/core/agents/prompts/proxy_thinking.py)
@@ -244,22 +283,22 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 
 ---
 
-## 5. 关系分析 Agent
+## 6. 关系分析 Agent
 
 **代码**: [factory.py:190 `run_relationship_analysis`](../../src/core/agents/factory.py#L190)
 **Prompt**: 默认 [prompts/defaults/relationship_analysis.md](../../src/core/agents/prompts/defaults/relationship_analysis.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_relationship_analysis_prompt`](../../src/core/agents/prompts/relationship_analysis.py)
 
 ### 5.1 职责
 
-从本轮对话中量化亲密度 / 信任度增量, 更新 `RelationshipState`。
+从本轮对话中量化亲密度 / 信任度增量, 更新 `RelationshipState`。**非归属守卫** (v0.3.0): `source_user` 为空时节点直接返回 `{"relationship_delta": {}}`, 不调用 LLM、不更新关系。
 
 ### 5.2 循环与工具
 
-- 走 `run_react_loop`, `max_iterations = 3`
+- 走 `run_react_loop`, `max_iterations = 2`
 - 工具:
-  - `emotion_analyzer` — 每轮识别关系信号强度
-  - `update_addressing` (v0.2.10) — 检测到用户真诚请求改变称呼 / 关系背景时, 把 `persona_addressing / user_addressing / context` 落库到 `relationships` 表, 同时写 `relationship_audit_log`; `persona_id / user_id` 通过工厂闭包 bind, Agent 无法越权改写他人。详见 [tools.md §5](tools.md#5-make_update_addressing_toolmemory_store-persona_id-user_id-v0210)
-- 提示词流程: 调 `emotion_analyzer` → 识别关系信号 → (如有称呼演化) 调 `update_addressing` → 量化 → 输出 JSON
+  - `update_addressing` (v0.2.10) — 检测到用户真诚请求改变称呼 / 关系背景时, 把 `persona_addressing / user_addressing / context` 落库到 `relationships` 表, 同时写 `relationship_audit_log`; `persona_id` (从 state 读取) / `user_id` (effective_user_id) 通过工厂闭包 bind, Agent 无法越权改写他人; v0.3.0 起闭包同时绑定 `actor_id` 供溯源 (不改变写入目标)。详见 [tools.md](tools.md)
+- 情绪信号不再经工具: `main_dialogue_node` 预计算的 `emotion_analysis` 作为文本参数传入提示词
+- 提示词流程: 读取情绪分析 → 识别关系信号 → (如有称呼演化) 调 `update_addressing` → 量化 → 输出 JSON
 
 ### 5.3 信号量化参考
 
@@ -297,16 +336,16 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 
 ---
 
-## 6. 提示词清洗 Agent
+## 7. 提示词清洗 Agent
 
-**代码**: [factory.py:246 `run_prompt_cleaning`](../../src/core/agents/factory.py#L246) · 工具: [tools/sentence_classifier.py](../../src/tools/sentence_classifier.py)
+**代码**: [factory.py:282 `run_prompt_cleaning`](../../src/core/agents/factory.py#L282)
 **Prompt**: 默认 [prompts/defaults/prompt_cleaning_system.md](../../src/core/agents/prompts/defaults/prompt_cleaning_system.md) + [prompt_cleaning_user.md](../../src/core/agents/prompts/defaults/prompt_cleaning_user.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builders: [`load_prompt_cleaning_system` / `build_prompt_cleaning_user_prompt`](../../src/core/agents/prompts/prompt_cleaning.py)
 
 ### 6.1 定位 (服务器人格权威守门员)
 
 Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `[persona]` 配置权威定义, 客户端请求中的 `system` 消息**不被信任**为人格来源。
 
-但客户端 `system` 消息里常同时含**功能性指令** (格式约束 / 工具约束 / 输出规则), 简单丢弃会误伤这些合法配置。提示词清洗 Agent 的职责: **逐句分离人格描述与功能性指令**, 前者丢弃, 后者与服务器人格合并注入主对话。
+但客户端 `system` 消息里常同时含**功能性指令** (格式约束 / 工具约束 / 输出规则), 简单丢弃会误伤这些合法配置。提示词清洗 Agent 的职责: **单次 LLM 重写, 剥离人格描述, 保留功能性指令**, 然后与服务器人格合并注入主对话。
 
 参见 [architecture.md](../architecture.md) 和 [dev-decisions.md](../dev-decisions.md)。
 
@@ -316,53 +355,60 @@ Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `
 
 1. 从 `settings.persona` 加载服务器人格 (`prompt` + `name`)
 2. 提取客户端 `system` 消息第一条 (若为空则跳过清洗, 直接用服务器人格)
-3. 若非空 → 调 `run_prompt_cleaning` → 得 `PromptCleaningOutput(retained, discarded, reasoning)`
-4. 最终 persona = `settings.persona.prompt + "\n\n" + "\n".join(retained)`
+3. 若非空 → 调 `run_prompt_cleaning` → 得 `PromptCleaningOutput(clean_prompt, reasoning, raw_output, steps=[])`
+4. 最终 persona = `settings.persona.prompt + "\n\n" + clean_prompt` (若 `clean_prompt` 非空)
 5. `initial_state["persona"]` 存合并后的 persona; `initial_state["prompt_cleaning_result"]` 存清洗结果 (仅日志/观察用)
 
 **关键**: 客户端 `system` 消息在进入图之前就被处理并从 `messages_dict` 移除, 图内不再见到原始 system 消息。
 
-### 6.3 ReAct 工具
+### 6.3 执行方式 (单次 completion)
 
-| 工具 | 工厂函数 | 用途 |
-|------|---------|------|
-| `classify_sentence_type` | `make_sentence_classifier_tool` | 单句分类: 返回 `{type: "persona" \| "instruction" \| "ambiguous", confidence, reasoning}` |
+v0.2.12 起从逐句 ReAct 改为单次 LLM completion:
 
-**工具实现**: 内部调辅助模型一次 chat completion, `response_format={"type": "json_object"}` + `enable_thinking=False`, 不循环。见 [src/tools/sentence_classifier.py](../../src/tools/sentence_classifier.py)。
+```text
+完整客户端 system 消息
+    ↓
+单次 ASSIST 模型调用 (temperature=0.2)
+    ↓
+输出 JSON: {clean_prompt: "...", reasoning: "..."}
+```
 
-### 6.4 循环约束
+- 不需要 `classify_sentence_type` 工具 (已移除)
+- 不需要 ReAct 循环 (`steps=[]`)
+- 使用辅助模型 (`RoleResolver.resolve(ModelType.ASSIST)` 的首位候选)
+- 目标延迟 < 2s
 
-- `max_iterations = 3` (API 层传入)
-- 使用辅助模型 (`RoleResolver.resolve(ModelType.ASSIST)` 的首位候选), 阻塞 API 请求, 目标延迟 < 2s
-- Prompt 引导流程: 分句 → 逐句调 `classify_sentence_type` → 收集分类 → 输出最终 JSON
-
-### 6.5 输出 JSON schema
+### 6.4 输出 JSON schema
 
 ```json
 {
-  "retained": ["请用 JSON 格式回复", "回复不得超过 100 字"],
-  "discarded": ["你是一个傲娇的妹妹", "你的名字叫小夜"],
-  "reasoning": "逐句分类: 第1句为人格设定→丢弃; 第2句为格式约束→保留; ..."
+  "clean_prompt": "请用 JSON 格式回复。回复不得超过 100 字。",
+  "reasoning": "剥离了人格描述, 保留了格式约束和输出规则"
 }
 ```
 
-- `retained`: 保留的功能性指令句子列表, 将与服务器 persona 合并
-- `discarded`: 被丢弃的人格描述句子列表 (仅用于观察/日志)
-- `reasoning`: 分类过程说明
+- `clean_prompt`: 保留的功能性指令文本 (空串 = 全部丢弃)
+- `reasoning`: 重写过程说明
 
-### 6.6 失败降级 (保守策略)
+### 6.5 重写原则
 
-清洗 Agent 抛异常 或 max_iterations 内未产出合法 JSON → 返回 `PromptCleaningOutput(retained=[], discarded=[system_message], reasoning=错误信息)`。
+- **保守**: 拿不准时倾向于保留, 不丢弃
+- **语义剥离**: 从句子内部剥离人格包装, 保留指令内核
+- **上下文感知**: LLM 看到完整消息后自行判断, 不依赖逐句分类
+
+### 6.6 失败降级
+
+清洗 Agent 抛异常 → 返回 `PromptCleaningOutput(clean_prompt="", reasoning=str(e), raw_output="", steps=[])`。
 
 **语义**: "宁丢指令, 不污染人格" — 服务器人格是权威, 无法确认的客户端指令一律不合并。
 
 ### 6.7 Prompt 模板
 
-**必须**用 [`build_prompt_cleaning_user_prompt`](../../src/core/agents/prompts/prompt_cleaning.py) (内部用 `str.replace` 填 `__SYSTEM_MESSAGE__`), **不能**用 `str.format`——原因同关系分析 (Prompt 里含字面 JSON)。
+**必须**用 [`build_prompt_cleaning_user_prompt`](../../src/core/agents/prompts/prompt_cleaning.py) (内部用 `str.replace` 填 `__SYSTEM_MESSAGE__`), **不能**用 `str.format`——Prompt 里含字面 JSON。
 
 ---
 
-## 7. 自定义 Agent 提示词
+## 8. 自定义 Agent 提示词
 
 从 v0.2.1 (2026-07-16) 起, 所有 Agent 提示词从**硬编码常量**改为**两层 Markdown 文件**, 允许运维/高级用户在不改代码/不重启的前提下调整。
 
@@ -381,18 +427,16 @@ Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `
 - `load` 时覆盖文件不存在 → 静默回退默认
 - `load` 时覆盖文件 YAML frontmatter 解析失败 → warn 日志 + 回退默认
 
-### 7.2 已注册的 8 个提示词
+### 7.2 已注册的 6 个提示词
 
 | name | 用途 | 必需占位符 |
 |------|------|-----------|
-| `memory_analysis` | 记忆分析 Agent 主体 | `SOURCE_USER`, `CONVERSATION`, `DECAY_TARGETS` |
-| `memory_analysis_decay_header` | 记忆分析的衰减目标段头 | (无) |
-| `relationship_analysis` | 关系分析 Agent | `CURRENT_REL`, `CONVERSATION` |
+| `memory_analysis` | 记忆分析 Agent 主体 | `SOURCE_USER`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `CONVERSATION`, `PERSONA_NAME`, `PERSONA_ADDRESSING`, `USER_ADDRESSING`, `RELATION_CONTEXT`, `EMOTION_ANALYSIS` |
+| `relationship_analysis` | 关系分析 Agent | `CURRENT_REL`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `CONVERSATION`, `PERSONA_NAME`, `PERSONA_ADDRESSING`, `USER_ADDRESSING`, `RELATION_CONTEXT`, `EMOTION_ANALYSIS` |
 | `prompt_cleaning_system` | 提示词清洗 Agent 的 system prompt | (无) |
 | `prompt_cleaning_user` | 提示词清洗 Agent 的 user prompt | `SYSTEM_MESSAGE` |
-| `proxy_thinking` | 代理推理 Agent | `USER_NAME`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
-| `sentence_classifier` | `classify_sentence_type` 工具 (提示词清洗内部调用) | `TEXT` |
-| `main_dialogue_frame` | 主对话上下文框架 (行为准则/section 标题/记忆容器) | `PERSONA_NAME`, `PERSONA_PROMPT`, `USER_NAME`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION` |
+| `proxy_thinking` | 代理推理 Agent | `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
+| `main_dialogue_frame` | 主对话上下文框架 | `PERSONA_NAME`, `PERSONA_PROMPT`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `SPACE_LABEL`, `ACTIVE_PARTICIPANTS`, `TRIGGER_REASON`, `TOOL_CAPABILITY_HINT`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION` |
 
 权威列表: [`src/core/prompts/registry.py`](../../src/core/prompts/registry.py) 的 `PROMPT_REGISTRY`. 未在 registry 中的 name 一律拒绝加载/保存 (**路径穿越防御**)。
 
@@ -403,7 +447,7 @@ Markdown + **可选** YAML frontmatter:
 ```markdown
 ---
 version: 1
-placeholders: [SOURCE_USER, CONVERSATION, DECAY_TARGETS]
+placeholders: [SOURCE_USER, CURRENT_SPEAKER, CHANNEL_TYPE, CONVERSATION]
 ---
 你正在为用户 __SOURCE_USER__ 分析对话...
 
@@ -451,37 +495,51 @@ mnemosync prompt validate --all          # 校验全部, CI 友好
 
 ---
 
-## 8. AgentState (共享状态)
+## 9. AgentState (共享状态)
 
 **代码**: [src/core/graph/state.py](../../src/core/graph/state.py)
 
 ```python
 class AgentState(TypedDict, total=False):
-    # 请求上下文 (parse_request 写入)
+    # 请求上下文 (parse_request 写入 + API 层预注入)
     messages: list[dict]
     extracted_new: list[dict]
-    source_user: str
-    source_frontend: str | None    # v0.2.5: 派生自 api_key.note (服务器不信任客户端 header)
+    tools: list[dict] | None      # 客户端本轮工具定义, 仅 MAIN 可用
+    tool_choice: str | dict | None
+    parallel_tool_calls: bool | None
+    tool_transaction: ToolTransactionTail | None  # 已校验的客户端工具续轮
+    source_user: str               # v0.3.0: = effective_user_id (可为空 = 非归属模式)
+    actor_id: str | None           # v0.3.0: 当前参与者 Actor ID
     persona: str
     persona_name: str
+    persona_id: str                # v0.3.0: 人格标识 (当前固定 "default", 从 state 读不再硬编码)
     thread_id: str
     proxy_thinking_enabled: bool
+    space_id: str | None           # v0.3.0: 会话空间 ID (群聊分区)
+    channel_type: str | None       # v0.3.0: "direct" | "group" | None
+    current_speaker: str | None    # v0.3.0: 模型可读的当前发言者身份
+    active_participants: list[str] # v0.3.0: 裁剪后短期历史中的活跃参与者
 
     # 代理推理 (proxy_thinking 写入)
     proxy_thinking_result: str | None
 
     # 提示词清洗 (API 层写入, 来自 run_prompt_cleaning)
-    prompt_cleaning_result: dict  # {retained, discarded, reasoning}
+    prompt_cleaning_result: dict  # {clean_prompt, reasoning}
+
+    # 情绪分析 (main_dialogue 预计算, memory_analysis + relationship_analysis 共享)
+    emotion_analysis: dict        # v0.3.0: emotion/intensity/category/keywords/summary
 
     # 主对话输出 (main_dialogue 写入)
     main_model: str               # v0.2.3: RoleResolver 解析出的首位主候选 model
-    response: str
+    response: str                 # 最终用户可见文本; 纯工具调用时为空
+    response_message: dict        # 完整 assistant message (可含 tool_calls)
+    finish_reason: str | None     # stop / length / tool_calls / 上游扩展值
     response_chunks: list[bytes]
     upstream_usage: dict          # 上游原样 usage (prompt/completion/total_tokens)
 
     # 记忆分析输出 (memory_analysis 写入)
     new_memories: list[dict]
-    decay_evaluations: list[dict]
+    decay_evaluations: list[dict]  # v0.3.0: 恒为 [] (衰减改为确定性公式)
     decay_targets: list[dict]
 
     # 关系分析输出 (relationship_analysis 写入)
@@ -492,11 +550,13 @@ class AgentState(TypedDict, total=False):
     stream_mode: bool
 ```
 
+**请求级附加键** (v0.3.0): forward.py 构建 initial_state 时还会注入 `source_frontend` / `external_event_id` / `api_key_id` 等不在 TypedDict 中的键 (LangGraph 容忍额外输入键, 节点与回写路径按需读取)。
+
 **注意**: 检索出的记忆 (`retrieved_memories` / `permanent_memories`) **不放入 state**, 由 forward.py 或 `main_dialogue_node` 内部处理; 短期记忆 `conversation_turns` 也不入 state, 装填后的 messages 才进 state。状态尽量瘦身以减少 checkpoint 开销 (checkpoint 在 v0.2.6 起仅作单请求内节点间共享 state, 见 [langgraph.md §6](langgraph.md))。
 
 ---
 
-## 9. 错误处理约定
+## 10. 错误处理约定
 
 - 单个 Agent 失败不影响并行分支; 每个 node 都用 try/except 包住, 失败时写 `state.errors`
 - 记忆分析失败 → 跳过入库, 关系分析继续
@@ -506,7 +566,7 @@ class AgentState(TypedDict, total=False):
 
 ---
 
-## 10. 版本历史
+## 11. 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
@@ -518,6 +578,8 @@ class AgentState(TypedDict, total=False):
 | v0.2.1 | 2026-07-16 | 提示词从硬编码常量迁到两层文件系统 (defaults + 用户覆盖), 新增 §7 自定义提示词章节, 记录 8 项 registry 与 `.replace` 统一约定; 修复 factory.py:314 proxy_thinking `.format` 静默返回未渲染模板的历史 bug |
 | v0.2.3 | 2026-07-17 | 主对话/记忆分析/关系分析/代理推理/提示词清洗全部改由 `RoleResolver` 解析角色 → 首位 `ResolvedCandidate` 提供 model + base_url + api_key; AgentState 补充 `main_model` (v0.2.3), `source_frontend` (v0.2.5) |
 | v0.2.6 | 2026-07-18 | 与代码对齐: `source_frontend` 字段说明 (派生自 api_key.note); AgentState 检索/短期记忆均不入 state 的注释更新 (checkpoint 已退化为单请求内 state 共享) |
+| v0.3.0 | 2026-07-26 | AgentState 新增 `actor_id` / `persona_id` / `space_id` / `channel_type` / `emotion_analysis`; `source_user` 语义改为 effective_user_id (可为空); 记忆/关系分析节点加非归属守卫; 情绪分析改为 `main_dialogue_node` 预计算共享 (不再是 ReAct 工具); 衰减改确定性公式 (`decay_evaluations` 恒空); `vector_search` 工具绑定受众上下文; `update_addressing` 闭包加 `actor_id` 溯源; 所有 `get_relationship` 从 state 读 `persona_id`; memory_analysis 迭代上限 6→4, relationship_analysis 3→2 |
 | v0.2.9 | 2026-07-19 | 记忆分析 / 关系分析 prompt 通过 `__PERSONA_ADDRESSING__` / `__USER_ADDRESSING__` / `__RELATION_CONTEXT__` 占位符消费关系基线; 默认人格改为"宅家内向的妹妹" |
 | v0.2.10 | 2026-07-19 | 关系分析 Agent 新增 `update_addressing` 工具 (自证 `reason` ≥ 10 字, 落 `relationships` 三 nullable 列 + `relationship_audit_log`); prompt 加"称呼演化"判断维度; `nodes.py._resolve_addressing` 让占位符按 表 → override → config → 默认 四层取值 |
 | v0.2.11 | 2026-07-19 | 文档补齐 v0.2.7–v0.2.11 (persona_override.toml, /conversation-turns/sources, /panel/admin/persona) |
+| v0.3.1 | 2026-07-28 | 新增第 3 个 Agent: Expressor (群聊最终文本表达改写, 不改写工具调用); 触发原因识别 (`__TRIGGER_REASON__`); 平台能力提示 (`__TOOL_CAPABILITY_HINT__`); 工具参数隐私检查; 工具事务桥接; 逻辑交互 ID; 模型候选工具能力声明; Agent 总数从 5 更新为 6; 触发原因识别从 §2.5 升为独立小节; 所有章节重编号 |

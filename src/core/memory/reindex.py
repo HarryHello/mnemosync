@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -87,7 +87,7 @@ def should_prune(
         return False, ""
     if entry.is_forgotten:
         return True, "forgotten"
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     if entry.expires_at is not None and entry.expires_at < now:
         return True, "expired"
     if entry.compute_theoretical_priority() < priority_threshold:
@@ -168,7 +168,7 @@ class Reindexer:
                 raise
 
             self.progress.state = ReindexState.RUNNING
-            self.progress.started_at = datetime.now(timezone.utc)
+            self.progress.started_at = datetime.now(UTC)
             logger.info(
                 "reindex 开始: prune=%s threshold=%.3f embedding=%s/%s",
                 prune, priority_threshold, cand.service_id, cand.model,
@@ -178,7 +178,7 @@ class Reindexer:
                 self.progress.total = await self.memory_store.count_all()
                 self.vector_store.reset_collection()
 
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 batch: list[tuple[MemoryEntry, list[float]]] = []
                 async for entry in self.memory_store.iter_all(batch_size=batch_size):
                     if prune:
@@ -210,7 +210,7 @@ class Reindexer:
                 self.vector_store.lock_embedding(cand.service_id, cand.model, lock_dim)
 
                 self.progress.state = ReindexState.SUCCESS
-                self.progress.finished_at = datetime.now(timezone.utc)
+                self.progress.finished_at = datetime.now(UTC)
                 logger.info(
                     "reindex 完成: total=%d processed=%d pruned=%d",
                     self.progress.total, self.progress.processed, self.progress.pruned,
@@ -236,7 +236,7 @@ class Reindexer:
     def _fail(self, error: str) -> None:
         self.progress.state = ReindexState.ERROR
         self.progress.error = error
-        self.progress.finished_at = datetime.now(timezone.utc)
+        self.progress.finished_at = datetime.now(UTC)
 
 
 class Pruner:
@@ -260,7 +260,7 @@ class Pruner:
         total_before = await self.memory_store.count_all()
         breakdown = PruneBreakdown()
         to_delete: list[str] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         async for entry in self.memory_store.iter_all(batch_size=batch_size):
             drop, reason = should_prune(

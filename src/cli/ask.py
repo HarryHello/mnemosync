@@ -68,6 +68,7 @@ async def _run_non_stream(question: str, source_user: str, persona: str, persona
     initial_state = {
         "messages": [{"role": "user", "content": question}],
         "source_user": source_user,
+        "current_speaker": source_user,
         "persona": persona,
         "persona_name": persona_name,
         "proxy_thinking_enabled": False,
@@ -127,7 +128,8 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
             if entry:
                 retrieved_entries.append(entry)
 
-        rel = await memory_store.get_relationship("default", source_user)
+        from src.core.constants import DEFAULT_PERSONA_ID
+        rel = await memory_store.get_relationship(DEFAULT_PERSONA_ID, source_user) if source_user else None
         print(
             f"🧠 记忆: 永久 {len(perms)} 条 · 检索 {len(retrieved_entries)} 条 · 关系 "
             f"{format_relationship(rel) if rel else '(无)'}",
@@ -142,6 +144,8 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
             retrieved_memories=retrieved_entries,
             conversation_history=[{"role": "user", "content": question}],
             relationship=rel,
+            current_speaker=source_user,
+            channel_type="direct",
         )
 
         print(f"💬 [{source_user} → {persona_name}] {question}\n", file=sys.stderr)
@@ -192,6 +196,7 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
     memory_state = {
         "messages": [{"role": "user", "content": question}],
         "source_user": source_user,
+        "current_speaker": source_user,
         "persona": persona,
         "persona_name": persona_name,
         "proxy_thinking_enabled": False,
@@ -261,7 +266,7 @@ async def _run_via_http(question: str, source_user: str, persona: str, api_key: 
 async def run_ask(
     question: str,
     *,
-    source_user: str = "cli",
+    source_user: str = "",
     persona_file: str | None = None,
     stream: bool = False,
     debug: bool = False,
@@ -296,9 +301,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
         if sys.stdin.isatty():
             print(
                 "❌ 未提供问题。用法示例:\n"
-                '   mnemosync ask "你好"\n'
-                '   echo "你好" | mnemosync ask\n'
-                "提示: --user 需要一个值, 之后再跟问题, 如 mnemosync ask --user harry \"你好\"",
+                '   mnemosync ask --user harry "你好"\n'
+                '   echo "你好" | mnemosync ask --user harry\n'
+                "提示: --user 必须提供, 之后跟问题, 如 mnemosync ask --user harry \"你好\"",
                 file=sys.stderr,
             )
             return 1

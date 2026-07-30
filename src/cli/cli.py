@@ -100,7 +100,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     app = FastAPI(
         title="Mnemosync API",
         description="智能代理中间件 - LLM 上下文编排与人格记忆管理",
-        version="0.2.0",
+        version="0.3.0",
         lifespan=app_lifespan,
     )
 
@@ -125,9 +125,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if os.path.exists(ui_dist):
         app.mount("/assets", StaticFiles(directory=os.path.join(ui_dist, "assets")), name="assets")
 
+        from fastapi import HTTPException as _HTTPException
+
         @app.get("/{full_path:path}")
         async def serve_spa(full_path: str):
-            """SPA 路由: 所有非 API 路径返回 index.html."""
+            """SPA 路由: 未注册的非 API 路径返回 index.html.
+
+            /panel/* 与 /v1/* 属于 API 命名空间, 若未命中已注册路由必须直接 404,
+            否则前端 fetch 拿到 HTML, response.json() 会抛 "Unexpected token '<'".
+            """
+            if full_path.startswith(("panel/", "v1/")) or full_path in ("panel", "v1"):
+                raise _HTTPException(status_code=404, detail="Not Found")
             file_path = os.path.join(ui_dist, full_path)
             if os.path.isfile(file_path):
                 return FileResponse(file_path)
@@ -452,6 +460,24 @@ Mnemosync CLI
   prompt reset --all                   全部回默认
   prompt validate <name> / --all       校验占位符齐全性
 
+身份管理 (v0.3.0 多用户):
+  identity strategy list               列出身份识别策略
+  identity strategy create --name "AstrBot QQ" --type regex \\
+      --frontend astrbot --actor-pattern 'QQ号[:：]\\s*(\\d+)' \\
+      --name-pattern '用户名[:：]\\s*(\\S+)' --space-pattern '群号[:：]\\s*(\\d+)'
+                                       创建策略 (便捷参数或 --config JSON)
+  identity strategy show <id>          查看策略详情 (含 config)
+  identity strategy update <id> [--name X] [--config JSON] [--active/--inactive]
+  identity strategy delete <id>        删除策略
+  identity actor list [--frontend X] [--search 关键词]
+                                       列出参与者 (请求到达时自动创建)
+  identity actor show <actor_id>       参与者详情 (组归属 + effective_user_id)
+  identity group list                  列出用户组 (含成员数)
+  identity group create --name 张三    创建用户组 (一个真实人)
+  identity group show <group_id>       查看组成员
+  identity bind <actor_id> <group_id>  跨平台身份归一 (共享记忆与关系)
+  identity unbind <actor_id> <group_id>
+
 升级:
   upgrade             拉取最新代码并更新依赖
   upgrade --branch dev  指定分支（默认 main）
@@ -513,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
     # ── ask ──
     ask_parser = subparsers.add_parser("ask", help="命令行直连主对话 (调试用)")
     ask_parser.add_argument("question", nargs="?", default=None, help="问题内容 (不填则从 stdin 读入)")
-    ask_parser.add_argument("--user", default="cli", help="source_user 标识 (默认: cli)")
+    ask_parser.add_argument("--user", required=True, help="source_user 标识 (必填)")
     ask_parser.add_argument("--persona-file", default=None, help="人格 prompt 文件路径")
     ask_parser.add_argument("--stream", action="store_true", help="流式输出 (与生产 SSE 路径一致)")
     ask_parser.add_argument("--debug", action="store_true", help="打印上游 HTTP 请求/响应 (等价 serve --debug)")
@@ -527,6 +553,10 @@ def main(argv: list[str] | None = None) -> int:
     # ── prompt ──
     from src.cli.prompt_cmd import build_parser as _build_prompt_parser
     _build_prompt_parser(subparsers)
+
+    # ── identity ──
+    from src.cli.identity_cmd import build_parser as _build_identity_parser
+    _build_identity_parser(subparsers)
 
     # ── upgrade ──
     upgrade_parser = subparsers.add_parser("upgrade", help="升级 Mnemosync")

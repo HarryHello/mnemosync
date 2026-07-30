@@ -1,8 +1,8 @@
 # 认证 API 文档
 
-> **系统版本**: v0.2.11
+> **系统版本**: v0.3.0
 > **文档状态**: 与代码同步
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 
 ---
 
@@ -51,7 +51,20 @@ curl -X POST http://localhost:16125/auth/login \
 }
 ```
 
-### 2.3 修改密码 (首次强制)
+### 2.3 首次登录设置账号密码 (强制)
+
+首次登录后, `LoginResponse.must_change_password=true`; 此时面板会自动跳转 `/setup` 页面, 且**服务端硬拦**: 除 `/panel/auth/*` 白名单外, 所有 `/panel/*` 返回 `403 password_change_required` (v0.2.12)。
+
+```bash
+curl -X POST http://localhost:16125/panel/auth/setup-credentials \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"old_password": "mnemosync", "new_username": "harry", "new_password": "your_new_password"}'
+```
+
+一次性同时改用户名与密码, 完成后 `must_change_password=false`, 需重新登录。之后再调此端点将返回 400, 改用 `/auth/change-password`。
+
+### 2.4 修改密码 (日常)
 
 ```bash
 curl -X POST http://localhost:16125/auth/change-password \
@@ -60,7 +73,7 @@ curl -X POST http://localhost:16125/auth/change-password \
   -d '{"old_password": "mnemosync", "new_password": "your_new_password"}'
 ```
 
-### 2.4 访问受保护端点
+### 2.5 访问受保护端点
 
 ```bash
 curl http://localhost:16125/auth/me \
@@ -129,6 +142,32 @@ curl http://localhost:16125/auth/me \
 
 **错误**: `400` 旧密码错误或新密码不合法。
 
+> 若当前用户 `must_change_password=true`, 应改用 `/auth/setup-credentials` (可同时改用户名), 而非此端点。
+
+### POST /auth/setup-credentials
+
+首次登录一次性设定新用户名与新密码 (v0.2.12)。仅当当前用户 `must_change_password=true` 时可用。
+
+**请求头**: `Authorization: Bearer <token>`
+
+**请求**:
+```json
+{
+  "old_password": "string",
+  "new_username": "string (1-50)",
+  "new_password": "string (最少 6 字符, 不能是默认密码)"
+}
+```
+
+**响应** (200): `{ "success": true, "message": "账号密码已设置, 请重新登录" }`
+
+**错误**:
+- `400 账号已完成初始化` — 当前 `must_change_password=false`, 请改用 `/auth/change-password`
+- `400 用户名已被占用`
+- `400 原密码错误`
+- `400 密码强度不足` (< 6 位或等于默认密码 `mnemosync`)
+- `422` — Pydantic 长度/类型校验失败
+
 ### POST /auth/init-default-user
 
 无鉴权; 幂等创建默认管理员 `mnemosync/mnemosync`。用于外部工具首次初始化。
@@ -157,24 +196,28 @@ curl http://localhost:16125/auth/me \
 
 | 概念 | 说明 | 用途 |
 |------|------|------|
-| **管理员用户** | 登录 WebUI/CLI 的账号 | 配置人格、管理 API Key、查看日志 |
-| **API Key** | 前端客户端使用的密钥 | AstrBot/AIRI/Web 等接入 `/v1/chat/completions` |
-| **最终用户** | 与前端对话的普通人 | 由各前端自行管理, Mnemosync 通过 `source_user` 字段区分 |
+| **管理员用户** | 登录 WebUI/CLI 的账号 | 配置人格、管理 API Key、查看日志、管理身份 |
+| **API Key** | 前端客户端使用的密钥 | AstrBot/AIRI/Web 等接入 `/v1/chat/completions`; v0.3.0 起可绑定身份策略 (`strategy_id`) |
+| **参与者 (Actor)** | 前端上的一个可识别账号 (v0.3.0) | 由服务器按 API Key 绑定的策略从请求中解析, (frontend, external_key) 唯一 |
+| **最终用户 (UserGroup)** | 与前端对话的普通人 (v0.3.0) | 一个真实人 = 一个用户组; 多平台 Actor 绑到同组后共享记忆与关系 (effective_user_id) |
 
 ```
 管理员
    │登录
    ▼
-Mnemosync 管理面 (auth + api-keys + admin)
-   │生成
+Mnemosync 管理面 (auth + api-keys + identity + admin)
+   │生成 API Key + 绑定身份策略
    ▼
-API Key sk-xxx
+API Key sk-xxx (strategy_id → direct/api_key_bound/regex/llm)
    │分发给前端
    ▼
 AstrBot / AIRI / Web  ── 走 /v1/chat/completions
    │
    ▼
-最终用户 (QQ 好友 / 网站访客 …)
+服务器侧身份解析 → Actor → effective_user_id (未绑策略 → 非归属模式)
+```
+
+身份解析流程、14 个 `/panel/admin/identity/*` 管理端点与 `mnemosync identity` CLI 详见 [modules/identity.md](modules/identity.md)。关系端点 (`GET/PUT /panel/admin/relationship` 等) 另支持 `actor_id` 查询参数, 自动解析为 effective_user_id。
 ```
 
 ---
@@ -197,6 +240,22 @@ AstrBot / AIRI / Web  ── 走 /v1/chat/completions
 
 **使用**: 与 [`/auth/me`](#get-authme) 相同, 携带 `Authorization: Bearer <token>` 请求头即可。Token 从 `POST /auth/login` 获取。
 
+### 7.1 首次登录硬拦 (v0.2.12)
+
+面板端 (`/panel/api_router`) 除 `/panel/auth/*` 白名单外, 所有非 auth 路由在 include 时统一注入 `require_password_settled` dependency ([src/api/routes/auth.py](../src/api/routes/auth.py)) — 若当前用户 `must_change_password=true`, 返回 `403 password_change_required`, 不放行进业务处理。
+
+**白名单** (不受此拦截):
+- `POST /panel/auth/login`
+- `POST /panel/auth/logout`
+- `GET /panel/auth/me`
+- `POST /panel/auth/change-password`
+- `POST /panel/auth/setup-credentials`
+- `POST /panel/auth/init-default-user`
+
+**不受影响**: `/v1/*` OpenAI 兼容层走 API Key 鉴权, 与本拦截完全隔离 — 即便管理员首次登录未完成, 已生成的 API Key 仍可调用 `/v1/chat/completions`。
+
+**前端**: `ui/src/router/index.ts` 全局守卫在 `must_change_password=true` 时强制跳 `/setup`; 但**服务端拦截才是权威**, F12 绕过 UI 亦无用。CLI `mnemosync login` 仍是修改用户名的唯一入口 (面板不做此功能)。
+
 ---
 
 ## 8. 数据库
@@ -204,10 +263,13 @@ AstrBot / AIRI / Web  ── 走 /v1/chat/completions
 | 文件 | 用途 |
 |------|------|
 | `data/auth.db` | 管理员账号 + 会话 Token |
-| `data/api_keys.db` | 前端 API Key (含 v0.2.5 `source` 列) |
-| `data/conversation.db` | v0.2.6 跨前端短期记忆 (`conversation_turns`) |
+| `data/api_keys.db` | 前端 API Key (含 v0.2.5 `source` 列、v0.3.0 `strategy_id` 列) |
+| `data/conversation.db` | v0.2.6 跨前端短期记忆 (`conversation_turns`; v0.3.0 含空间事件流列) |
 | `data/http_logs.db` | v0.2.5 调试面板 HTTP 日志 |
 | `data/memory.db` | v0.2.10 长期记忆 + `relationship_audit_log` (字段级审计) |
+| `data/notifications.db` | v0.2.13 通知中心 |
+| `data/identity.db` | v0.3.0 身份四表 (actors / user_groups / actor_group_memberships / identity_strategies) |
+| `data/idempotency.db` | v0.3.0 幂等重放缓存 (平台重发消息原样返回首次响应) |
 | `data/persona_override.toml` | v0.2.11 面板 `PUT /panel/admin/persona` 落地的人格覆盖 (优先级最高), 见 [configuration.md §3.1](configuration.md#31-persona-v021-服务器优先人格) |
 
 ---
@@ -217,11 +279,11 @@ AstrBot / AIRI / Web  ── 走 /v1/chat/completions
 **Q: 支持多管理员吗?**
 A: 数据模型支持, 但当前 UI/CLI 只暴露默认管理员; 需要手动通过 auth_store 添加。
 
-**Q: 未来会支持最终用户系统吗?**
-A: 单人格架构下不打算支持——终端用户由前端自行管理。多人格是未来规划 (v1.0+)。
+**Q: 最终用户如何管理?**
+A: v0.3.0 起 Mnemosync 内置单人格多用户身份体系: 服务器按 API Key 绑定的策略从请求中解析参与者 (Actor), 管理员可在面板「身份管理」页或 `mnemosync identity` CLI 中把同一人的多平台 Actor 绑定到用户组, 记忆与关系按 effective_user_id 隔离/共享。不依赖任何前端配合。详见 [modules/identity.md](modules/identity.md)。多人格仍是未来规划 (v1.0+)。
 
 **Q: API Key 与代理思考的关系?**
-A: 独立。API Key 只做鉴权; 代理思考是否启用由 [`src/api/reasoning_control.py`](../src/api/reasoning_control.py) 的 `should_use_proxy_thinking()` 按 4 条规则决策 (tools 存在 → 关; 原生思考模型 → 关; 前台点名 `reasoning_effort` / `thinking` / `reasoning` → 开; 否则回落 `[graph].proxy_thinking_default`)。详见 [agents.md](modules/agents.md) §4。
+A: 独立。API Key 只做鉴权与身份策略绑定; 代理思考是否启用由 [`src/api/reasoning_control.py`](../src/api/reasoning_control.py) 的 `should_use_proxy_thinking()` 按 4 条规则决策 (tools 存在 → 关; 原生思考模型 → 关; 前台点名 `reasoning_effort` / `thinking` / `reasoning` → 开; 否则回落 `[graph].proxy_thinking_default`)。详见 [agents.md](modules/agents.md) §4。
 
 ---
 
@@ -239,3 +301,5 @@ A: 独立。API Key 只做鉴权; 代理思考是否启用由 [`src/api/reasonin
 | v0.2.9 | 2026-07-19 | 关系基线 (`persona.relation.persona_addressing` / `user_addressing` / `context`) 抽入 TOML, 供 memory / relationship 两个 Agent 的 prompt 使用 |
 | v0.2.10 | 2026-07-19 | 关系称呼动态演化: `relationships` 表新增 3 个 nullable 列 (`persona_addressing` / `user_addressing` / `context`) + `relationship_audit_log` 表; 新增 `PUT /panel/admin/relationship` 与 `GET /panel/admin/relationship/audit`; 关系分析 Agent 获得 `update_addressing` tool (自证 `reason` ≥ 10 字, source='agent'); 面板 `RelationshipsPage` 加编辑对话框与变更历史面板 (可"回退到此"); `RelationshipResponse` 恒返回当前有效值 (表 → TOML 基线回退) |
 | v0.2.11 | 2026-07-19 | 人格配置面板编辑: 新增 `GET/PUT/DELETE /panel/admin/persona` 端点, 持久化 `data/persona_override.toml` (多层合并, 优先级: override > config.local [persona] > 资源默认); 运行时 `_reset_settings()` 热重载; 前端 `PromptsPage` 新增"人格编辑"标签页 (name / prompt / relation 三段编辑, 含保存与重置为默认) |
+| v0.2.12 | 2026-07-20 | 面板首次登录强制改账号密码: 新增 `POST /panel/auth/setup-credentials` (同时改用户名 + 密码) 与 `require_password_settled` dependency; `must_change_password=True` 时 `/panel/admin/*` / `/panel/api-keys/*` / `/panel/admin/debug/*` 全部返回 `403 password_change_required`; 前端新增 `/setup` 页面 (BlankLayout) 与全局守卫强制跳转; `/settings` 精简为改密 + 只读用户名 + CLI 提示; `/v1/*` API Key 鉴权路径不受影响 |
+| v0.3.0 | 2026-07-26 | 概念区分新增参与者/用户组两层 (服务器侧身份解析, 取代"最终用户由前端自行管理"); 新增 14 个 `/panel/admin/identity/*` 端点 (策略 CRUD / 参与者只读 / 用户组 / 绑定解绑) 与 `actor_id` 关系端点参数; `POST /panel/api-keys` 支持 `strategy_id`; 数据库表补 `identity.db` / `idempotency.db` / `notifications.db`; 详见 [modules/identity.md](modules/identity.md) |

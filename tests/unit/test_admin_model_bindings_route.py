@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
+from src.api.state import AppState
 from src.core.models.resolver import RoleResolver
 from src.infra.llm_service.models import LLMServiceProvider, ModelType
 from src.infra.llm_service.store import LLMServiceStore
@@ -54,11 +55,11 @@ def app(store: LLMServiceStore) -> FastAPI:
     def _fake_user() -> User:
         return User(
             id="test", username="test", password_hash="",
+            must_change_password=False,
             is_active=True, created_at=None, updated_at=None,
         )
 
-    app.state.llm_service_store = store
-    app.state.resolver = resolver
+    app.state = AppState(llm_service_store=store, resolver=resolver)
     app.dependency_overrides[get_current_user] = _fake_user
     return app
 
@@ -69,8 +70,7 @@ def app_unauth(store: LLMServiceStore) -> FastAPI:
     outer = APIRouter(prefix="/panel")
     outer.include_router(admin_router)
     app.include_router(outer)
-    app.state.llm_service_store = store
-    app.state.resolver = RoleResolver(store)
+    app.state = AppState(llm_service_store=store, resolver=RoleResolver(store))
     return app
 
 
@@ -80,6 +80,7 @@ def test_model_bindings_require_auth(app_unauth: FastAPI) -> None:
         ("GET", "/panel/admin/model-bindings"),
         ("POST", "/panel/admin/model-bindings"),
         ("DELETE", "/panel/admin/model-bindings/main/0"),
+        ("PATCH", "/panel/admin/model-bindings/main/0"),
         ("PUT", "/panel/admin/model-bindings/main/reorder"),
     ]:
         resp = client.request(method, path, json={} if method != "GET" else None)
@@ -265,3 +266,109 @@ def test_probe_dimension_unknown_service_404(app: FastAPI) -> None:
         json={"service_id": "does-not-exist", "model": "x"},
     )
     assert resp.status_code == 404
+
+
+def test_patch_updates_editable_fields_and_invalidates_cache(app: FastAPI) -> None:
+    """PATCH 更新 service_id / model / metadata; resolver 缓存应被 invalidate."""
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/model-bindings",
+        json={
+            "role": "main",
+            "service_id": "s1",
+            "model": "m1",
+            "context_length": 8192,
+        },
+    )
+    assert resp.status_code == 200
+
+    resolver: RoleResolver = app.state.resolver
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(resolver.first(ModelType.MAIN))
+    initial_version = resolver.version
+
+    resp = client.patch(
+        "/panel/admin/model-bindings/main/0",
+        json={
+            "service_id": "s2",
+            "model": "m1b",
+            "context_length": 32768,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["role"] == "main"
+    assert body["priority"] == 0
+    assert body["service_id"] == "s2"
+    assert body["model"] == "m1b"
+    assert body["context_length"] == 32768
+
+    assert resolver.version > initial_version
+
+
+def test_patch_clears_nullable_fields(app: FastAPI) -> None:
+    """显式传 null 应清空 context_length / embedding_dim."""
+    client = TestClient(app)
+    client.post(
+        "/panel/admin/model-bindings",
+        json={
+            "role": "embedding",
+            "service_id": "s1",
+            "model": "e1",
+            "embedding_dim": 1024,
+        },
+    )
+    resp = client.patch(
+        "/panel/admin/model-bindings/embedding/0",
+        json={"embedding_dim": None},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["embedding_dim"] is None
+
+
+def test_patch_missing_binding_returns_404(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.patch(
+        "/panel/admin/model-bindings/main/9",
+        json={"model": "x"},
+    )
+    assert resp.status_code == 404
+
+
+def test_patch_unknown_service_returns_400(app: FastAPI) -> None:
+    client = TestClient(app)
+    client.post(
+        "/panel/admin/model-bindings",
+        json={"role": "main", "service_id": "s1", "model": "m1"},
+    )
+    resp = client.patch(
+        "/panel/admin/model-bindings/main/0",
+        json={"service_id": "does-not-exist"},
+    )
+    assert resp.status_code == 400
+
+
+def test_patch_empty_body_returns_400(app: FastAPI) -> None:
+    client = TestClient(app)
+    client.post(
+        "/panel/admin/model-bindings",
+        json={"role": "main", "service_id": "s1", "model": "m1"},
+    )
+    resp = client.patch(
+        "/panel/admin/model-bindings/main/0",
+        json={},
+    )
+    assert resp.status_code == 400
+
+
+def test_patch_blank_model_returns_400(app: FastAPI) -> None:
+    client = TestClient(app)
+    client.post(
+        "/panel/admin/model-bindings",
+        json={"role": "main", "service_id": "s1", "model": "m1"},
+    )
+    resp = client.patch(
+        "/panel/admin/model-bindings/main/0",
+        json={"model": "   "},
+    )
+    assert resp.status_code == 400

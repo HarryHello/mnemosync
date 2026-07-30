@@ -7,15 +7,14 @@ API Key 采用 Fernet 对称加密后落库, 密钥自动生成并存于同库 c
 from __future__ import annotations
 
 import aiosqlite
-import base64
 import hashlib
 import secrets
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional, Protocol
+from datetime import datetime, UTC
+from typing import Protocol
 
-from cryptography.fernet import Fernet, InvalidToken
+from src.infra.crypto import FernetEncryptor
+from src.persistence.base import SqliteStore
 
 
 API_KEY_SOURCE_USER = "user"
@@ -28,14 +27,15 @@ class ApiKey:
     key_hash: str        # sha256(raw_key), 用于鉴权时按 raw_key 反查
     key_prefix: str      # 前 12 字符, 用于快速识别
     note: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_used_at: datetime | None = None
     is_active: bool = True
     key_full: str | None = None  # 解密后的完整 key, 仅内存持有
     source: str = API_KEY_SOURCE_USER  # 来源: user (手动) / panel-debug (调试面板自动生成)
+    strategy_id: str | None = None  # 绑定的身份识别策略 ID (v0.3.0)
 
     @staticmethod
-    def generate(note: str, source: str = API_KEY_SOURCE_USER) -> "ApiKey":
+    def generate(note: str, source: str = API_KEY_SOURCE_USER, strategy_id: str | None = None) -> "ApiKey":
         raw = f"sk-{secrets.token_urlsafe(32)}"
         return ApiKey(
             id=secrets.token_hex(16),
@@ -44,10 +44,11 @@ class ApiKey:
             note=note,
             key_full=raw,
             source=source,
+            strategy_id=strategy_id,
         )
 
     def mark_used(self) -> None:
-        self.last_used_at = datetime.now(timezone.utc)
+        self.last_used_at = datetime.now(UTC)
 
 
 class ApiKeyStore(Protocol):
@@ -60,7 +61,7 @@ class ApiKeyStore(Protocol):
     async def update_last_used(self, key_id: str) -> None: ...
 
 
-class SqliteApiKeyStore:
+class SqliteApiKeyStore(SqliteStore):
     """SQLite API Key 存储.
 
     使用方式:
@@ -71,76 +72,31 @@ class SqliteApiKeyStore:
     _ENCRYPTION_KEY_ID = "__api_key_encryption_key__"
 
     def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
-        self._fernet: Optional[Fernet] = None
+        super().__init__(db_path)
+        self._encryptor = FernetEncryptor(
+            db_path=self.db_path,
+            config_table="api_key_config",
+            key_id=self._ENCRYPTION_KEY_ID,
+            raise_on_decrypt_failure=False,
+        )
 
-    # ============ 生命周期 ============
-
-    async def connect(self) -> None:
-        if self._db is not None:
-            return
-        self._db = await aiosqlite.connect(self.db_path)
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        await self._db.execute("PRAGMA foreign_keys=ON")
-        await self._init_schema(self._db)
-        await self._db.commit()
-        await self._migrate_legacy_plaintext(self._db)
-
-    async def close(self) -> None:
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
-
-    @asynccontextmanager
-    async def _conn(self):
-        if self._db is not None:
-            yield self._db
-        else:
-            async with aiosqlite.connect(self.db_path) as db:
-                yield db
+    async def _post_connect(self, db: aiosqlite.Connection) -> None:
+        await self._migrate_legacy_plaintext(db)
 
     # ============ 加密 ============
 
-    async def _load_or_create_key(self, db: aiosqlite.Connection) -> bytes:
-        async with db.execute(
-            "SELECT value FROM api_key_config WHERE key = ?", (self._ENCRYPTION_KEY_ID,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row and row[0]:
-                return base64.urlsafe_b64decode(row[0])
-        key = Fernet.generate_key()
-        await db.execute(
-            "INSERT OR REPLACE INTO api_key_config (key, value) VALUES (?, ?)",
-            (self._ENCRYPTION_KEY_ID, base64.urlsafe_b64encode(key).decode()),
-        )
-        await db.commit()
-        return key
-
-    async def _get_fernet(self, db: aiosqlite.Connection) -> Fernet:
-        if self._fernet is None:
-            key = await self._load_or_create_key(db)
-            self._fernet = Fernet(key)
-        return self._fernet
-
     async def _encrypt(self, db: aiosqlite.Connection, plaintext: str) -> str:
-        f = await self._get_fernet(db)
-        return f.encrypt(plaintext.encode("utf-8")).decode("utf-8")
+        return await self._encryptor.encrypt_with(db, plaintext)
 
     async def _decrypt(self, db: aiosqlite.Connection, ciphertext: str) -> str | None:
-        if not ciphertext:
-            return None
-        f = await self._get_fernet(db)
-        try:
-            return f.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
-        except InvalidToken:
-            return None
+        return await self._encryptor.decrypt_with(db, ciphertext)
 
     # ============ Schema ============
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS api_key_config (
                 key TEXT PRIMARY KEY,
@@ -158,22 +114,23 @@ class SqliteApiKeyStore:
                 is_active INTEGER NOT NULL DEFAULT 1,
                 key_full TEXT,
                 key_encrypted TEXT,
-                source TEXT NOT NULL DEFAULT 'user'
+                source TEXT NOT NULL DEFAULT 'user',
+                strategy_id TEXT
             )
         """)
-        # 兼容早期库
-        for ddl in (
-            "ALTER TABLE api_keys ADD COLUMN key_full TEXT",
-            "ALTER TABLE api_keys ADD COLUMN key_encrypted TEXT",
-            "ALTER TABLE api_keys ADD COLUMN source TEXT NOT NULL DEFAULT 'user'",
-        ):
-            try:
-                await db.execute(ddl)
-            except aiosqlite.OperationalError:
-                pass
         await db.execute("CREATE INDEX IF NOT EXISTS idx_key_hash ON api_keys(key_hash)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_is_active ON api_keys(is_active)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_source ON api_keys(source)")
+
+        # 命名迁移: 替代 try/except ALTER TABLE
+        from src.persistence.migrations import add_column_if_missing
+
+        await MigrationRunner([
+            ("001_add_key_full", add_column_if_missing("api_keys", "key_full", "TEXT")),
+            ("002_add_key_encrypted", add_column_if_missing("api_keys", "key_encrypted", "TEXT")),
+            ("003_add_source", add_column_if_missing("api_keys", "source", "TEXT NOT NULL DEFAULT 'user'")),
+            ("004_add_strategy_id", add_column_if_missing("api_keys", "strategy_id", "TEXT")),
+        ]).apply(db)
 
     async def _migrate_legacy_plaintext(self, db: aiosqlite.Connection) -> None:
         """把历史明文 key_full 加密写入 key_encrypted, 然后清空明文列."""
@@ -211,8 +168,8 @@ class SqliteApiKeyStore:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO api_keys
-                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full, key_encrypted, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                (id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full, key_encrypted, source, strategy_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
                 """,
                 (
                     api_key.id,
@@ -224,6 +181,7 @@ class SqliteApiKeyStore:
                     1 if api_key.is_active else 0,
                     encrypted,
                     api_key.source or API_KEY_SOURCE_USER,
+                    api_key.strategy_id,
                 ),
             )
             await db.commit()
@@ -289,7 +247,7 @@ class SqliteApiKeyStore:
         async with self._conn() as db:
             await db.execute(
                 "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
-                (datetime.now(timezone.utc).isoformat(), key_id),
+                (datetime.now(UTC).isoformat(), key_id),
             )
             await db.commit()
 
@@ -298,6 +256,7 @@ class SqliteApiKeyStore:
         legacy_plain = row[7] if len(row) > 7 else None
         encrypted = row[8] if len(row) > 8 else None
         source = row[9] if len(row) > 9 and row[9] else API_KEY_SOURCE_USER
+        strategy_id = row[10] if len(row) > 10 else None
         key_full: str | None = None
         if encrypted:
             key_full = await self._decrypt(db, encrypted)
@@ -308,9 +267,10 @@ class SqliteApiKeyStore:
             key_hash=row[1],
             key_prefix=row[2],
             note=row[3],
-            created_at=datetime.fromisoformat(row[4]) if row[4] else datetime.now(timezone.utc),
+            created_at=datetime.fromisoformat(row[4]) if row[4] else datetime.now(UTC),
             last_used_at=datetime.fromisoformat(row[5]) if row[5] else None,
             is_active=bool(row[6]),
             key_full=key_full,
             source=source,
+            strategy_id=strategy_id,
         )

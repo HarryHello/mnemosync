@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from src.api.routes.admin_debug import router as admin_debug_router
 from src.api.routes.auth import get_current_user
+from src.api.state import AppState
 from src.infra.debug_bus import DebugEventBus
 from src.persistence.api_key_store import (
     API_KEY_SOURCE_PANEL_DEBUG,
@@ -44,12 +45,12 @@ def app(api_key_store: SqliteApiKeyStore) -> FastAPI:
     app.include_router(outer)
 
     bus = DebugEventBus(capacity=10, grace_seconds=999.0)  # grace 大, 不干扰测试
-    app.state.api_key_store = api_key_store
-    app.state.debug_bus = bus
+    app.state = AppState(api_key_store=api_key_store, debug_bus=bus)
 
     def _user() -> User:
         return User(
             id="test", username="test", password_hash="",
+            must_change_password=False,
             is_active=True, created_at=None, updated_at=None,
         )
 
@@ -63,8 +64,10 @@ def app_unauth(api_key_store: SqliteApiKeyStore) -> FastAPI:
     outer = APIRouter(prefix="/panel")
     outer.include_router(admin_debug_router)
     app.include_router(outer)
-    app.state.api_key_store = api_key_store
-    app.state.debug_bus = DebugEventBus(capacity=10)
+    app.state = AppState(
+        api_key_store=api_key_store,
+        debug_bus=DebugEventBus(capacity=10),
+    )
     return app
 
 

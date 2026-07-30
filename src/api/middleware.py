@@ -9,12 +9,12 @@
 """
 
 import json
+import logging
 import os
 import time
-import logging
-from typing import Callable
+from collections.abc import Callable
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, _StreamingResponse
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
@@ -22,34 +22,31 @@ from src.infra.debug_context import new_correlation_id, set_correlation_id
 
 logger = logging.getLogger(__name__)
 
-# 默认配置 (向后兼容 cleanup_old_logs 的调用点)
+# 默认日志保留配置 (与 HttpLogStore.cleanup() 参数一致, 供管理面板使用)
 DEFAULT_RETENTION_DAYS = 7
 DEFAULT_MAX_RECORDS = 10000
-DEFAULT_DB_PATH = "data/http_logs.db"
 
 
-def _print_debug(method: str, direction: str, url: str, headers: dict = None, body: any = None, status: int = None):
-    """打印调试信息到控制台."""
-    colors = {
-        "REQUEST": "\033[96m",
-        "RESPONSE": "\033[92m",
-        "UPSTREAM": "\033[93m",
-        "RESET": "\033[0m",
+def _log_debug(method: str, direction: str, url: str, headers: dict = None, body: any = None, status: int = None):
+    """通过标准 logger 输出调试请求/响应信息."""
+    extra: dict[str, object] = {
+        "direction": direction,
+        "method": method,
+        "url": str(url),
     }
-
-    color = colors.get(direction, colors["RESET"])
-    reset = colors["RESET"]
-
-    print(f"\n{color}{'='*60}")
-    print(f"[{direction}] {method} {url}")
-    if status:
-        print(f"  Status: {status}")
+    if status is not None:
+        extra["status"] = status
     if headers:
-        print(f"  Headers: {json.dumps(headers, indent=2, ensure_ascii=False)[:500]}")
+        extra["headers"] = _truncate_json(headers, 500)
     if body:
-        body_str = json.dumps(body, indent=2, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
-        print(f"  Body: {body_str[:1000]}")
-    print(f"{'='*60}{reset}\n")
+        body_str = json.dumps(body, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
+        extra["body"] = body_str[:1000]
+    logger.debug("http %s %s %s", direction, method, url, extra=extra)
+
+
+def _truncate_json(obj: object, max_len: int) -> str:
+    s = json.dumps(obj, ensure_ascii=False)
+    return s[:max_len]
 
 
 class HttpLogMiddleware(BaseHTTPMiddleware):
@@ -105,7 +102,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                 request_headers[key] = "***"
 
         if self.debug:
-            _print_debug(
+            _log_debug(
                 request.method,
                 "REQUEST",
                 str(request.url),
@@ -145,7 +142,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
 
         def _log(response_body):
             if self.debug:
-                _print_debug(
+                _log_debug(
                     request.method,
                     "RESPONSE",
                     str(request.url),
@@ -178,33 +175,34 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                 "client_ip": request.client.host if request.client else None,
             })
 
-        # 流式响应: 收集完整流内容后再入队
-        if isinstance(response, StreamingResponse):
-            original_iter = response.body_iterator
-            collected: list[bytes] = []
+        # 收集响应体
+        # Starlette 1.0.0 的 BaseHTTPMiddleware.call_next 返回 _StreamingResponse,
+        # 其 body 不在 .body 属性中而在 .body_iterator 流中, 需要主动消费。
+        # 同时兼容普通 StreamingResponse (如流式 chat).
+        if isinstance(response, (_StreamingResponse, StreamingResponse)):
+            body_chunks: list[bytes] = []
+            async for chunk in response.body_iterator:
+                body_chunks.append(chunk)
 
-            async def logging_iter():
-                async for chunk in original_iter:
-                    collected.append(chunk)
-                    yield chunk
-                # 流结束
-                body_bytes = b"".join(collected)
-                response_body = None
-                if body_bytes:
-                    try:
-                        response_body = json.loads(body_bytes.decode("utf-8", errors="replace"))
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        response_body = body_bytes.decode("utf-8", errors="replace")[:1000]
-                _log(response_body)
+            body_bytes = b"".join(body_chunks)
+            response_body = None
+            if body_bytes:
+                try:
+                    response_body = json.loads(body_bytes.decode("utf-8", errors="replace"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    response_body = body_bytes.decode("utf-8", errors="replace")[:1000]
 
-            return StreamingResponse(
-                logging_iter(),
+            _log(response_body)
+
+            # 返回新的 Response, 用收集到的 body_bytes 重建
+            return Response(
+                content=body_bytes,
                 status_code=response.status_code,
                 headers=dict(response.headers),
                 media_type=response.media_type,
             )
 
-        # 非流式响应
+        # 兜底: 普通 Response (如直接返回的 JSONResponse, 但 call_next 不会走这里)
         response_body = None
         content_type = response.headers.get("content-type", "")
         if "json" in content_type:
@@ -218,27 +216,3 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         _log(response_body)
         return response
 
-
-def cleanup_old_logs(
-    db_path: str = DEFAULT_DB_PATH,
-    retention_days: int = DEFAULT_RETENTION_DAYS,
-    max_records: int = DEFAULT_MAX_RECORDS,
-):
-    """清理过期日志 (同步, 用于离线维护脚本)."""
-    import sqlite3
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "DELETE FROM http_logs WHERE created_at < datetime('now', ? || ' days')",
-            (-retention_days,),
-        )
-        conn.execute(
-            "DELETE FROM http_logs WHERE id NOT IN ("
-            "SELECT id FROM http_logs ORDER BY created_at DESC LIMIT ?)",
-            (max_records,),
-        )
-        conn.commit()
-        conn.close()
-        logger.info("Cleaned up old HTTP logs")
-    except Exception as e:
-        logger.warning("Failed to cleanup HTTP logs: %s", e)

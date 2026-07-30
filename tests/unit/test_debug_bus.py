@@ -137,6 +137,43 @@ def test_redact_short_bearer():
     assert out["Authorization"] == "Bearer ****"
 
 
+@pytest.mark.asyncio
+async def test_emit_pipeline_no_subscribers():
+    """emit_pipeline 在无订阅者时应静默跳过."""
+    bus = DebugEventBus()
+    result = bus.emit_pipeline(correlation_id="cid", event_kind="test", data={"x": 1})
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_emit_pipeline_delivers_to_subscribers():
+    """emit_pipeline 应将管线事件推送给订阅者."""
+    bus = DebugEventBus()
+    sub_id, q = await bus.subscribe()
+    try:
+        eid = bus.emit_pipeline(
+            correlation_id="cid-1",
+            event_kind="tool_policy",
+            data={"stage": "inbound", "removed_tools": ["poke"]},
+        )
+        assert eid is not None
+        ev = await asyncio.wait_for(q.get(), timeout=1.0)
+        assert ev.direction == "pipeline"
+        assert ev.url == "pipeline:tool_policy"
+        assert ev.correlation_id == "cid-1"
+    finally:
+        await bus.unsubscribe(sub_id)
+
+
+@pytest.mark.asyncio
+async def test_emit_pipeline_helper_safe_with_none():
+    """emit_pipeline 辅助函数在 bus=None 时应安全跳过."""
+    from src.infra.debug_context import emit_pipeline, set_correlation_id
+    set_correlation_id("cid-test")
+    emit_pipeline(None, event_kind="test", data={"x": 1})
+    # Should not raise
+
+
 def test_redact_cookie_header():
     out = _redact_headers({"Cookie": "session=xyz"})
     assert out["Cookie"] == "***"

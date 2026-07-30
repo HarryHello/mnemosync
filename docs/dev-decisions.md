@@ -252,6 +252,7 @@ v0.2.5 之前, 每次 `/v1/chat/completions` 用的都是**客户端传来的** 
 ### 显式范围外
 
 - **thread/user 分区**: 单人格单用户阶段不做; 未来上多用户时按 `source_user` 分表
+  > *(v0.3.0 注: 多用户已落地, 但未分表 — 改为 `source_user` 存 effective_user_id 做逻辑隔离 + conversation_turns 按 space_id 分区, 见上文 v0.3.0 决策)*
 - **真实 tokenizer**: 不引入 tiktoken 等; 估算 + 保留区已够用
 - **回滚客户端 UI 语义**: 用户在客户端"清空对话"依然会让客户端自己丢历史, Mnemosync 不管
 - **assistant turn 精确 token 计数**: 用同一 estimate 口径; 上游返回的 `usage.completion_tokens` 更准但读起来要跨流处理, 收益不值
@@ -302,6 +303,39 @@ v0.2.9 的 `[persona]` 段只能改 `config.local.toml` 后重启, 面板无法�
 - **多 persona / 每用户 persona 切换**: 单人格单用户阶段不做
 - **prompt 版本历史 / diff**: 走 PromptStore 那套 (面板 Agent prompt 覆盖) 而非 persona override; 需要时再扩
 - **partial PUT**: 一次全量覆写更简单, 前端在 GET 时拿到当前值填表单即可
+
+---
+
+## 单人格多用户基础 (v0.3.0)
+
+### 背景
+
+v0.2.x 单人格单用户: `source_user` 恒为 `"default"`, 所有记忆/关系/对话共享一桶。群聊场景 (AstrBot QQ 群) 要求识别不同参与者、按人隔离记忆、群聊上下文不串台; 且客户端是不可控黑盒 ("你永远无法要求前台为你适配"), 身份必须在服务器侧解决。当前实现见 [modules/identity.md](modules/identity.md), 无实际部署者, 决定**不兼容 v0.2.x 的 `"default"` 用户**, 直接移除全部硬编码。
+
+### 决策
+
+1. **身份三层模型**: Actor (一个平台账号, `(frontend, external_key)` 唯一, 系统按策略自动建档) → UserGroup (一个真实人, 管理员手动绑定) → effective_user_id (绑组取 group_id, 否则 actor_id) 作为记忆与关系的**唯一隔离边界**。`memory_entries.source_user` 与 `relationships.user_id` 语义升级为 effective_user_id, 无 schema 变更。
+2. **策略绑定 API Key**: 一个 Key = 一个前台接入, 绑定一个身份策略 (direct / api_key_bound / regex / llm)。身份从请求内容/字段**服务器侧提取**, 客户端不声明、不可伪造。regex 策略面向 AstrBot 式"身份信息塞 prompt 文本"的现实; llm 策略兜底不规则格式。
+3. **非归属模式**: 无策略或解析失败 → `effective_user_id = None`: 不建 Actor、不读写私有记忆、仅 PUBLIC 记忆可见、照常回复。宁可不记忆也不串户——取代 v0.2.x 的 `"default"` 兜底。
+4. **空间事件流**: `conversation_turns` 按 `space_id` 分区, 提交时同事务分配空间内单调序号 `committed_sequence` (MAX+1), 乱序到达标记 `late_arrival`。群聊装填只读本空间 (`list_for_space`)——群 A 的对话绝不泄入群 B 或私聊; 私聊/非归属轮次不分区。
+5. **幂等重放**: 平台重发按 `(api_key.id, external_event_id)` 命中缓存, 原样返回首次响应 (流式拼 SSE), **零 LLM 调用、零记忆副作用**。失败不写缓存 (允许重试再生成), `INSERT OR IGNORE` 保留首次结果。独立 `data/idempotency.db` 避免与热库 WAL 互扰。
+6. **受众过滤两级**: 粗筛走 ChromaDB `$or` where (自己桶 / PUBLIC / 本空间, 超集), 精筛走 `AudienceFilter.is_visible` (关系门槛、deny/allow 策略只能在 Python 层判)。SOURCE_RESTRICTED 非来源用户永不可见——即使同空间。记忆先过滤再交给模型, 不靠 prompt 防泄露。
+7. **关系属于"人"不属于账号**: 称呼/关系写 effective_user_id; `update_addressing` 闭包附带 `actor_id` 仅溯源。管理端点支持传 `actor_id` 自动解析——面板上点任一平台账号都查到同一个人的关系。
+8. **identity.db 独立库**: 身份四表自成 `data/identity.db`, 与 memory/conversation 分离 (读写模式不同, WAL/vacuum 互不干扰), 与幂等库同理。
+
+### 显式范围外
+
+- **多人格**: `persona_id` 从 state 读取 (值仍固定 `"default"`), personas 表与多人格路由不做
+- **SpaceState / Checkpoint / 群聊摘要**: 空间只做事件流与隔离, 不做状态机
+- **跨平台身份自动绑定**: 绑组由管理员手动操作, 不做自动推断
+- **v0.2.x `"default"` 用户数据迁移**: 无实际部署者, 不迁移
+
+### 同期落地 (Phase 1 收尾, v0.2.12)
+
+- 提示词清洗改单次 LLM 重写 (`sentence_classifier` 工具移除)
+- 衰减改确定性公式 `run_deterministic_decay()` (`time_decay_calculator` 工具移除; `decay_evaluations` 字段保留但恒空)
+- 情绪分析去重: `main_dialogue_node` 预计算一次, 经 state 共享给两个分析 Agent (不再各调一次)
+- memory_analysis 迭代上限 6→4, relationship_analysis 3→2
 
 ---
 

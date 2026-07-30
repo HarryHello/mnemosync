@@ -18,9 +18,9 @@ from typing import Iterator
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
+from src.api.state import AppState
 from src.persistence.auth_store import User
 from src.persistence.conversation_store import SqliteConversationStore
 
@@ -46,11 +46,12 @@ def app(store: SqliteConversationStore) -> FastAPI:
     outer = APIRouter(prefix="/panel")
     outer.include_router(admin_router)
     app.include_router(outer)
-    app.state.conversation_store = store
+    app.state = AppState(conversation_store=store)
 
     def _user() -> User:
         return User(
             id="test", username="test", password_hash="",
+            must_change_password=False,
             is_active=True, created_at=None, updated_at=None,
         )
 
@@ -64,7 +65,7 @@ def app_unauth(store: SqliteConversationStore) -> FastAPI:
     outer = APIRouter(prefix="/panel")
     outer.include_router(admin_router)
     app.include_router(outer)
-    app.state.conversation_store = store
+    app.state = AppState(conversation_store=store)
     return app
 
 
@@ -95,6 +96,10 @@ def test_list_returns_descending_with_total(app: FastAPI, store: SqliteConversat
     assert body["items"][0]["role"] == "user"
     assert "ts" in body["items"][0]
     assert "token_count" in body["items"][0]
+    assert body["items"][0]["origin"] == "current"
+    assert "actor_id" in body["items"][0]
+    assert "space_id" in body["items"][0]
+    assert "observed_at" in body["items"][0]
 
 
 def test_list_respects_limit(app: FastAPI, store: SqliteConversationStore) -> None:

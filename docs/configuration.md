@@ -1,9 +1,9 @@
 # 配置文档 | Configuration
 
-> **系统版本**: v0.2.11
+> **系统版本**: v0.3.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
-> **最后更新**: 2026-07-19
+> **最后更新**: 2026-07-26
 > **作者**: HarryHelloo
 
 ---
@@ -15,7 +15,7 @@ Mnemosync 用**单一配置源**: 项目根目录下的 `config.local.toml`。**
 **辅助入口**:
 - 首次部署: 复制 `config.example.toml` → `config.local.toml`, 填入 `[persona]` 与自定义参数
 - 环境变量仅接管极少数运行时项 (见 [§4](#4-环境变量-有限支持))
-- **模型服务商与角色绑定**不再从本文件读取; 通过面板 (`/panel/admin/model-bindings`) 或 CLI (`set-model` / `set-embedding-model`) 管理, 落库到 `data/llm_service.db` (`role_bindings` + `services` 两张表)
+- **模型服务商与角色绑定**不再从本文件读取; 通过面板 (`/panel/admin/model-bindings`) 或 CLI (`mnemosync login` → `model add <role> <service_id> <model>`) 管理, 落库到 `data/llm_service.db` (`role_bindings` + `services` 两张表)
 
 ---
 
@@ -85,9 +85,9 @@ context            = "..."
 | `conversation_db_path` | `data/conversation.db` | v0.2.6: 跨前端对话流水 (`conversation_turns` 表) |
 | `short_term_days` | `7` | v0.2.6: 短期记忆时间窗宽度, 后台清理任务的删除阈值 |
 
-路径相对项目根目录。API Key 数据库路径当前**在代码中硬编码**为 `data/api_keys.db` ([lifespan.py](../src/api/lifespan.py)), v0.2.x 暂未纳入 storage 段。
+路径相对项目根目录。API Key 数据库路径当前**在代码中硬编码**为 `data/api_keys.db` ([lifespan.py](../src/api/lifespan.py)), v0.2.x 暂未纳入 storage 段。v0.3.0 新增的 `data/identity.db` (身份四表) 与 `data/idempotency.db` (幂等重放缓存) 同样在 lifespan 中硬编码, 暂不可配。
 
-**注意**: `short_term_days` 是硬边界 — 超过此时长的对话流水会被 lifespan 起的每 24h 后台任务清理; 主装填路径也不再考虑窗外的记录。想扩大保留可以调大此值, 但要注意 SQLite 表体积增长与向量记忆的分工。
+**注意**: `short_term_days` 是硬边界 — 超过此时长的对话流水会被 lifespan 起的每 24h 后台任务清理; 主装填路径也不再考虑窗外的记录。想扩大保留可以调大此值, 但要注意 SQLite 表体积增长与向量记忆的分工。v0.3.0 起群聊按 `space_id` 分区装填 (时间窗同样适用于空间流水), 详见 [modules/identity.md §5](modules/identity.md#5-空间事件流与幂等)。
 
 ### 3.3 [memory]
 
@@ -183,10 +183,10 @@ log_level = "info"
 
 ```bash
 mnemosync login
-> set-model main dashscope qwen-max
-> set-model assist dashscope qwen-turbo
-> set-embedding-model dashscope text-embedding-v3 --dim 1024
-> set-model rerank dashscope qwen3-rerank
+> model add main dashscope qwen-max
+> model add assist dashscope qwen-turbo
+> model add embedding dashscope text-embedding-v3 --dim 1024
+> model add rerank dashscope qwen3-rerank
 ```
 
 ---
@@ -230,3 +230,4 @@ mnemosync login
 | v0.2.9 | 2026-07-18 | `[persona]` 加 `[persona.relation]` 段 (persona_addressing / user_addressing / context), 默认人格改为"宅家内向的妹妹" |
 | v0.2.10 | 2026-07-19 | `[persona.relation]` 三字段变为**运行时可演化** — Agent 通过 `update_addressing` tool 落库到 `relationships` 表, TOML 值降级为"新装基线" |
 | v0.2.11 | 2026-07-19 | 新增 `data/persona_override.toml` 覆盖层 (面板 `PUT /panel/admin/persona` 写入, 优先级高于 `config.local.toml`) |
+| v0.3.0 | 2026-07-26 | 注明 `data/identity.db` / `data/idempotency.db` 两个新库 (lifespan 硬编码, 暂不可配); 短期记忆时间窗说明补充空间分区装填 |

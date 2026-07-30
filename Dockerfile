@@ -39,8 +39,8 @@ COPY install.sh ./
 # 从 ui-builder 阶段拷贝编译后的前端资源
 COPY --from=ui-builder /ui/dist ./ui/dist
 
-# 复制配置模板
-COPY config.example.toml config.local.toml
+# 复制配置模板供参考 (运行时需通过 volume 挂载真实 config.local.toml)
+COPY config.example.toml ./config.example.toml
 
 # 创建数据目录
 RUN mkdir -p /app/data

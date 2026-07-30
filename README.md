@@ -4,7 +4,7 @@
 
 **跨平台人格记忆同步代理 | Cross-Platform Persona Memory Sync Proxy**
 
-[![License](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Status](https://img.shields.io/badge/Status-Early%20Development-yellow)](https://github.com/Mnemosync/Mnemosync)
 [![Python](https://img.shields.io/badge/Python-3.12+-green.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-red.svg)](https://fastapi.tiangolo.com/)
@@ -19,7 +19,7 @@
 │  \_│  │_╱╲_│ ╲_╱╲____╱╲_│  │_╱╲___╱╲____╱  \_/ ╲_│ ╲_╱╲____╱  │
 │                                                               │
 │                         Mnemosync                             │
-│                          v0.2.11                              │
+│                          v0.3.0                               │
 │                                                               │
 ╰───────────────────────────────────────────────────────────────╯
 ```
@@ -42,6 +42,9 @@ Mnemosync 在网络层拦截 OpenAI 兼容请求，**服务器持有对话真相
 ---
 
 ## ✨ 核心特性
+
+- **👥 单人格多用户 (v0.3.0)**
+  一个实例一个人格, 同时服务多个真实用户。API Key 绑定**身份识别策略** (direct / api_key_bound / regex / llm), 服务器侧从请求中提取参与者 (Actor): AstrBot 的 QQ 号、ChatBox 的固定用户、或模型语义识别。**跨平台身份归一**: 把同一人在不同平台的 Actor 绑进一个用户组 (UserGroup), 记忆与关系以有效用户 ID 为边界共享。群聊按空间 (space) 分区成独立对话流, 记忆检索**先按受众过滤再交给模型**——其他参与者的私有记忆不会泄入上下文。未绑定策略的 Key 进入非归属模式 (不建身份、不读写私有记忆、照常回复)。平台重发消息按事件 ID 幂等重放, 不烧重复 token。
 
 - **🧠 跨前端连续对话 (v0.2.6)**
   服务端维护 `conversation_turns` append-only 流水，所有前端 (AstrBot / AIRI / Web / SDK) 写入同一 bucket。装填时**忽略客户端携带的历史**，只取最后一条 user 消息，其余上下文由服务器双窗装填 (时间窗默认 7d + 模型窗按 `context_length` 从最老那端裁剪)。换前端不失忆，客户端 UI"清空"也不会抹掉服务器的连续记忆。
@@ -71,15 +74,15 @@ Mnemosync 在网络层拦截 OpenAI 兼容请求，**服务器持有对话真相
 
 ## 🏗️ 架构原理
 
-Mnemosync 的核心不变量是 **"服务器持有真相"**：多个前端 = 同一个用户 = 同一份记忆 = 同一个人格。
+Mnemosync 的核心不变量是 **"服务器持有真相"**：人格由服务器权威持有；每个真实用户 (有效用户 ID) 一条连续对话流、一份私有记忆；群聊空间是独立的对话分区。
 
 ```mermaid
 graph LR
     A[前端: AstrBot/AIRI/Web] -->|1. OpenAI 兼容请求 | B(Mnemosync /v1)
     subgraph Mnemosync
-      B -->|2. 只取最后一条 user | C[短期记忆装填]
-      C -->|3. 时间窗+模型窗| D[conversation_turns]
-      B -->|4. 检索长期记忆| E[ChromaDB + SQLite]
+      B -->|2. 身份解析 + 幂等预检| C[短期记忆装填]
+      C -->|3. 时间窗+模型窗, 按空间隔离| D[conversation_turns]
+      B -->|4. 受众过滤检索| E[ChromaDB + SQLite]
       D --> F[build main_dialogue messages]
       E --> F
       F -->|5. 装填后 messages| G(MultiForwarder)
@@ -91,21 +94,20 @@ graph LR
     B -->|10. 流式响应| A
 ```
 
-详细拓扑与 Agent 分工见 [docs/architecture.md](./docs/architecture.md)。
+详细拓扑与 Agent 分工见 [docs/architecture.md](./docs/architecture.md), 身份体系见 [docs/modules/identity.md](./docs/modules/identity.md)。
 
 ---
 
-## 🔑 API Key 与前端识别
+## 🔑 API Key 与身份识别
 
-**当前版本为单人格单用户架构** —— 一个 Mnemosync 实例 = 一个人格 = 一个用户 (`source_user='default'`)。
+**v0.3.0 起为单人格多用户架构** —— 一个 Mnemosync 实例 = 一个人格, 服务多个真实用户。
 
-API Key (每前端一枚) 的作用是**区分前端来源**，非多用户隔离：
+API Key (每前端一枚) 的双重作用:
 
-- 每个 Key 建议对应一个前端 (AstrBot / AIRI / Web / 自研)，命名靠 `note` 字段
-- 服务器把 `api_key.note` 作为 `source_frontend` 元数据写入 `conversation_turns` (v0.2.6)，仅用于观测，不参与查询条件
-- 所有 Key 共享同一份人格 + 同一条连续对话流
+- **区分前端来源**: `api_key.note` 作为 `source_frontend` 元数据写入 `conversation_turns` (v0.2.6), 仅用于观测
+- **绑定身份策略** (v0.3.0): `strategy_id` 指向身份识别策略, 决定如何从请求中提取参与者。未绑定的 Key 进入**非归属模式**——不建立身份、不读写任何私有记忆, 但仍可正常回复
 
-多人格 / 多用户是未来规划 (`persona_id` 字段已预留)。
+典型配置: AstrBot 群 → regex 策略 (从 prompt 文本提取 QQ 号/群号); ChatBox → api_key_bound 策略 (Key 即身份); 规范客户端 → direct 策略 (读 `request.user` 字段)。同一人在不同平台的身份可在面板「身份管理」页或 `mnemosync identity` CLI 中绑定归一。多人格仍是未来规划 (`persona_id` 字段已预留)。
 
 ---
 
@@ -161,8 +163,26 @@ sk-qwertyuiop...   # 保存
 
 # 在面板"模型管理"页面绑定 main / assist / embedding / rerank
 # 或用 CLI:
-Mnemosync > set-model main dashscope qwen-max
-Mnemosync > set-embedding-model dashscope text-embedding-v3 --dim 1024
+Mnemosync > model add main dashscope qwen-max
+Mnemosync > model add embedding dashscope text-embedding-v3 --dim 1024
+```
+
+### 配置多用户身份 (v0.3.0)
+
+不配置身份策略也能用 (非归属模式: 不建身份、不读写私有记忆、照常回复)。要让记忆按用户隔离:
+
+```bash
+# 以 AstrBot 群为例: 创建 regex 策略, 从 prompt 文本提取 QQ号/群号
+mnemosync identity strategy create --name "AstrBot QQ" --type regex \
+    --frontend astrbot \
+    --actor-pattern 'QQ号[:：]\s*(\d+)' \
+    --name-pattern '用户名[:：]\s*(\S+)' \
+    --space-pattern '群号[:：]\s*(\d+)'
+
+# 在面板「API Key」页创建 Key 时绑定该策略 (或 identity CLI 管理策略)
+# 之后同一人在不同平台的身份可在面板「身份管理」页绑定归一:
+mnemosync identity group create --name 张三
+mnemosync identity bind <actor_id> <group_id>
 ```
 
 ### 接入前端
@@ -182,7 +202,8 @@ Mnemosync > set-embedding-model dashscope text-embedding-v3 --dim 1024
 - [部署指南](./docs/deployment.md) — Docker / 源码 / 备份
 - [开发决策记录](./docs/dev-decisions.md) — 各版本重大设计决策
 - 模块文档: [modules/](./docs/modules/)
-  - [记忆系统](./docs/modules/memory-system.md) — 长期 + 短期双窗装填
+  - [身份管理](./docs/modules/identity.md) — 策略 / 参与者 / 用户组 / 空间事件流 / 幂等 (v0.3.0)
+  - [记忆系统](./docs/modules/memory-system.md) — 长期 + 短期双窗装填 + 受众过滤
   - [Agent 与提示词](./docs/modules/agents.md)
   - [LangGraph 编排](./docs/modules/langgraph.md)
   - [消息处理管道](./docs/modules/message-processing.md)
@@ -217,7 +238,8 @@ Mnemosync > set-embedding-model dashscope text-embedding-v3 --dim 1024
 - [x] **v0.2.9** — `[persona.relation]` 三字段基线 (`persona_addressing / user_addressing / context`), 默认人格改为"宅家内向的妹妹"
 - [x] **v0.2.10** — 关系称呼动态演化: `update_addressing` tool + `relationship_audit_log`; 面板编辑对话框 + 变更历史 + 回退
 - [x] **v0.2.11** — 人格面板编辑 (`data/persona_override.toml` 热重载); `MemoriesPage` 全列 sortable + filter; 亲密度 / 信任度按数值分档着色; SVG favicon 品牌图标
-- [ ] **未来** — 多人格 (`persona_id`) / 多用户 / 人格自我演化
+- [x] **v0.3.0** — **单人格多用户**: 身份识别策略 (绑定 API Key) + 参与者/用户组跨平台身份归一 + 非归属模式; 群聊空间事件流 + 幂等重放; 记忆受众过滤; 面板「身份管理」页 + `mnemosync identity` CLI
+- [ ] **未来** — 多人格 (`persona_id`) / 人格自我演化 / 群聊摘要与检查点
 
 ---
 

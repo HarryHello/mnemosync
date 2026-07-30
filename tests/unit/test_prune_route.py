@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
+from src.api.state import AppState
 from src.core.memory.models import MemoryEntry, MemoryType, Visibility
 from src.core.memory.reindex import ReindexProgress, ReindexState
 from src.core.models.resolver import RoleResolver
@@ -84,15 +85,18 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     def _fake_user() -> User:
         return User(
             id="test", username="test", password_hash="",
+            must_change_password=False,
             is_active=True, created_at=None, updated_at=None,
         )
 
-    app.state.llm_service_store = llm_store
-    app.state.memory_store = memory_store
-    app.state.vector_store = vector_store
-    app.state.resolver = resolver
-    app.state.multi_forwarder = forwarder
-    app.state.reindex_progress = progress
+    app.state = AppState(
+        llm_service_store=llm_store,
+        memory_store=memory_store,
+        vector_store=vector_store,
+        resolver=resolver,
+        multi_forwarder=forwarder,
+        reindex_progress=progress,
+    )
     app.dependency_overrides[get_current_user] = _fake_user
 
     # 预置记忆
