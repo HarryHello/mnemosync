@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from src.api.routes.forward import _handle_non_stream
 from src.api.schemas.forward import ChatCompletionRequest, ChatMessage
+from src.api.state import AppState
 
 
 async def test_non_stream_response_preserves_tool_calls_and_finish_reason():
@@ -64,7 +65,7 @@ async def test_non_stream_response_preserves_tool_calls_and_finish_reason():
     )
     http_request = SimpleNamespace(
         app=SimpleNamespace(
-            state=SimpleNamespace(
+            state=AppState(
                 conversation_store=conversation_store,
                 resolver=SimpleNamespace(),
             )

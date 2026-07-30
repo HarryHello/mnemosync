@@ -6,6 +6,7 @@ import type {
   NotificationListResponse,
   UnreadCountResponse,
 } from '@/types/api'
+import { buildQuery } from '@/utils/constants'
 import { apiDelete, apiGet, apiPost } from './http'
 
 export interface NotificationListParams {
@@ -17,13 +18,8 @@ export interface NotificationListParams {
 export async function listNotifications(
   params: NotificationListParams = {},
 ): Promise<NotificationListResponse> {
-  const q = new URLSearchParams()
-  if (params.page) q.set('page', String(params.page))
-  if (params.page_size) q.set('page_size', String(params.page_size))
-  if (params.unread_only) q.set('unread_only', 'true')
-  const qs = q.toString()
   return apiGet<NotificationListResponse>(
-    `/admin/notifications${qs ? `?${qs}` : ''}`,
+    `/admin/notifications${buildQuery(params)}`,
   )
 }
 

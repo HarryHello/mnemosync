@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
+from src.api.state import AppState
 from src.core.models.resolver import RoleResolver
 from src.infra.llm_service.models import LLMServiceProvider, ModelType
 from src.infra.llm_service.store import LLMServiceStore
@@ -58,8 +59,7 @@ def app(store: LLMServiceStore) -> FastAPI:
             is_active=True, created_at=None, updated_at=None,
         )
 
-    app.state.llm_service_store = store
-    app.state.resolver = resolver
+    app.state = AppState(llm_service_store=store, resolver=resolver)
     app.dependency_overrides[get_current_user] = _fake_user
     return app
 
@@ -70,8 +70,7 @@ def app_unauth(store: LLMServiceStore) -> FastAPI:
     outer = APIRouter(prefix="/panel")
     outer.include_router(admin_router)
     app.include_router(outer)
-    app.state.llm_service_store = store
-    app.state.resolver = RoleResolver(store)
+    app.state = AppState(llm_service_store=store, resolver=RoleResolver(store))
     return app
 
 

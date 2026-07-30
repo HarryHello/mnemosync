@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from src.api import api_router
 from src.api.routes.auth import get_current_user
+from src.api.state import AppState
 from src.persistence.auth_store import User
 from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.memory_store import SqliteMemoryStore
@@ -48,8 +49,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
     app = FastAPI()
     app.include_router(api_router)
-    app.state.memory_store = memory_store
-    app.state.identity_store = identity_store
+    app.state = AppState(memory_store=memory_store, identity_store=identity_store)
 
     yield app
 

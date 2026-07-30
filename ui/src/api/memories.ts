@@ -12,7 +12,7 @@ import type {
   RelationshipListResponse,
   RelationshipUpdateBody,
 } from '@/types/api'
-import { API_BASE } from '@/utils/constants'
+import { API_BASE, buildQuery } from '@/utils/constants'
 import { apiDelete, apiGet, apiPost, request } from './http'
 
 // ============================================================================
@@ -33,16 +33,9 @@ export interface MemoryListParams {
 export async function listMemories(
   params: MemoryListParams = {},
 ): Promise<MemoryListResponse> {
-  const q = new URLSearchParams()
-  if (params.source_user) q.set('source_user', params.source_user)
-  if (params.page) q.set('page', String(params.page))
-  if (params.page_size) q.set('page_size', String(params.page_size))
-  if (params.memory_type) q.set('memory_type', params.memory_type)
-  if (params.sort_by) q.set('sort_by', params.sort_by)
-  if (params.sort_order) q.set('sort_order', params.sort_order)
-  if (params.before) q.set('before', params.before)
-  if (params.after) q.set('after', params.after)
-  return request<MemoryListResponse>(`${API_BASE}/admin/memories?${q.toString()}`)
+  return request<MemoryListResponse>(
+    `${API_BASE}/admin/memories${buildQuery(params)}`,
+  )
 }
 
 export async function getMemory(memoryId: string): Promise<Memory> {
@@ -66,12 +59,8 @@ export interface BatchDeleteMemoriesParams {
 export async function deleteMemoriesBatch(
   params: BatchDeleteMemoriesParams,
 ): Promise<{ success: boolean; deleted: number }> {
-  const q = new URLSearchParams()
-  q.set('source_user', params.source_user)
-  if (params.memory_type) q.set('memory_type', params.memory_type)
-  if (params.before) q.set('before', params.before)
   return request<{ success: boolean; deleted: number }>(
-    `${API_BASE}/admin/memories?${q.toString()}`,
+    `${API_BASE}/admin/memories${buildQuery(params)}`,
     { method: 'DELETE' },
   )
 }
@@ -112,14 +101,8 @@ export interface ListRelationshipsParams {
 export async function listRelationships(
   params: ListRelationshipsParams = {},
 ): Promise<RelationshipListResponse> {
-  const q = new URLSearchParams()
-  if (params.page) q.set('page', String(params.page))
-  if (params.page_size) q.set('page_size', String(params.page_size))
-  if (params.sort_by) q.set('sort_by', params.sort_by)
-  if (params.sort_order) q.set('sort_order', params.sort_order)
-  const qs = q.toString()
   return request<RelationshipListResponse>(
-    `${API_BASE}/admin/relationships${qs ? `?${qs}` : ''}`,
+    `${API_BASE}/admin/relationships${buildQuery(params)}`,
   )
 }
 

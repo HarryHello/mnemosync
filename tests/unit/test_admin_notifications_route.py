@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
+from src.api.state import AppState
 from src.persistence.auth_store import User
 from src.persistence.notification_store import NotificationStore
 
@@ -45,7 +46,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
             is_active=True, created_at=None, updated_at=None,
         )
 
-    app.state.notification_store = store
+    app.state = AppState(notification_store=store)
     app.dependency_overrides[get_current_user] = _fake_user
 
     yield app

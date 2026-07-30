@@ -12,14 +12,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.api.middleware import HttpLogMiddleware
+from src.api.state import AppState
 from src.infra.debug_bus import DebugEventBus
 
 
 def _build_app() -> tuple[FastAPI, DebugEventBus]:
     app = FastAPI()
     bus = DebugEventBus(capacity=100)
-    app.state.debug_bus = bus
-    app.state.api_key_store = None  # 中间件仅在 v1 且有 Auth 头时才用, 走不到这里
+    app.state = AppState(debug_bus=bus, api_key_store=None)
     app.add_middleware(HttpLogMiddleware, debug=False)
 
     @app.get("/v1/ping")

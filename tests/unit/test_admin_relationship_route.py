@@ -15,6 +15,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
+from src.api.state import AppState
 from src.core.memory.models import Relationship
 from src.persistence.auth_store import User
 from src.persistence.memory_store import SqliteMemoryStore
@@ -39,8 +40,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     outer.include_router(admin_router)
     app.include_router(outer)
 
-    app.state.memory_store = memory_store
-    app.state.identity_store = identity_store
+    app.state = AppState(memory_store=memory_store, identity_store=identity_store)
     app.dependency_overrides[get_current_user] = lambda: User(
         id="test", username="test", password_hash="",
         must_change_password=False,

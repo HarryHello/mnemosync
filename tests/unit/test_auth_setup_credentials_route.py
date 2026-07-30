@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.api import api_router
+from src.api.state import AppState
 from src.persistence.auth_store import SqliteAuthStore
 
 
@@ -29,7 +30,7 @@ def app_and_store(tmp_path: Path) -> Iterator[tuple[FastAPI, SqliteAuthStore]]:
 
     app = FastAPI()
     app.include_router(api_router)
-    app.state.auth_store = auth_store
+    app.state = AppState(auth_store=auth_store)
 
     yield app, auth_store
 

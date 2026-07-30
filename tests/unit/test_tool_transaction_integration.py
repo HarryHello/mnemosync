@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from src.api.routes.forward import _handle_non_stream, _handle_stream
 from src.api.schemas.forward import ChatCompletionRequest, ChatMessage
+from src.api.state import AppState
 from src.api.tool_transactions import extract_tool_transaction_tail
 
 TOOLS = [
@@ -78,7 +79,7 @@ async def test_non_stream_tool_result_appends_validated_transaction_without_new_
     conversation_store = SimpleNamespace(append=AsyncMock())
     http_request = SimpleNamespace(
         app=SimpleNamespace(
-            state=SimpleNamespace(
+            state=AppState(
                 conversation_store=conversation_store,
                 resolver=SimpleNamespace(),
             )
@@ -131,7 +132,7 @@ async def test_stream_tool_result_appends_validated_transaction_to_upstream_mess
     multi_forwarder.chat_stream = chat_stream
     http_request = SimpleNamespace(
         app=SimpleNamespace(
-            state=SimpleNamespace(
+            state=AppState(
                 conversation_store=conversation_store,
                 multi_forwarder=multi_forwarder,
                 resolver=SimpleNamespace(),
