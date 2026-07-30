@@ -36,8 +36,7 @@ jobs:
       - name: Security audit (pip-audit)
         run: |
           uv pip install pip-audit
-          uv run pip-audit --descending
-        continue-on-error: true  # 仅警告, 不阻断 CI (新漏洞披露时给修复时间)
+          uv run pip-audit --descending --vulnerability-severity-threshold=high
 
   frontend:
     name: Frontend (Node 22)
@@ -71,5 +70,4 @@ jobs:
         run: npm run build
 
       - name: Security audit (npm audit)
-        run: npm audit --audit-level=moderate
-        continue-on-error: true  # 仅警告, 不阻断 CI
+        run: npm audit --audit-level=high
