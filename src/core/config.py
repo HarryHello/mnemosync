@@ -154,7 +154,10 @@ def _load_default_persona() -> dict[str, Any]:
     """从打包资源 TOML 读默认人格.
 
     Returns:
-        dict, 键 name / prompt / relation. relation 是嵌套 dict, 字段与 RelationConfig 对齐.
+        dict, 键 name / prompt / relation / identity (可选).
+        relation 是嵌套 dict, 字段与 RelationConfig 对齐.
+        identity 是嵌套 dict (personality / speaking_style / values / persona_addressing),
+        当 TOML 包含 ``[identity]`` 段时存在.
 
     兜底: 文件缺失、字段缺失、或 TOML 解析失败时用 _FALLBACK_PERSONA 补齐.
     """
@@ -177,7 +180,22 @@ def _load_default_persona() -> dict[str, Any]:
         "user_addressing": str(raw_rel.get("user_addressing") or fallback_rel["user_addressing"]),
         "context": str(raw_rel.get("context") or fallback_rel["context"]),
     }
-    return {"name": name, "prompt": prompt, "relation": relation}
+    result: dict[str, Any] = {"name": name, "prompt": prompt, "relation": relation}
+    # v0.3.3+: 资源 TOML 可选携带 [identity] 段, 供结构化定义初始化
+    raw_identity = data.get("identity")
+    if isinstance(raw_identity, dict):
+        identity: dict[str, Any] = {}
+        if "personality" in raw_identity:
+            identity["personality"] = raw_identity["personality"]
+        if "speaking_style" in raw_identity:
+            identity["speaking_style"] = raw_identity["speaking_style"]
+        if "values" in raw_identity:
+            identity["values"] = list(raw_identity["values"])
+        if "persona_addressing" in raw_identity:
+            identity["persona_addressing"] = str(raw_identity["persona_addressing"])
+        if identity:
+            result["identity"] = identity
+    return result
 
 
 @dataclass

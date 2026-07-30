@@ -10,12 +10,12 @@ from datetime import UTC, datetime, timedelta
 from fastapi import FastAPI
 
 from src.api.state import AppState
-from src.core.config import get_settings
+from src.core.config import _load_default_persona, get_settings
 from src.core.constants import DEFAULT_PERSONA_ID
 from src.core.identity.plugin_registry import discover_plugins
 from src.core.memory.reindex import ReindexProgress
 from src.core.models.resolver import RoleResolver
-from src.core.persona.definition import PersonaDefinition
+from src.core.persona.definition import PersonaDefinition, PersonaIdentity
 from src.core.tools.identity_binding import register_identity_binding_tools
 from src.core.tools.internal_registry import InternalToolRegistry, set_internal_tool_registry
 from src.infra.debug_bus import DebugEventBus
@@ -218,17 +218,31 @@ async def app_lifespan(app: FastAPI):
     )
     app.state = state
 
-    # ── 4. 自动迁移: legacy 人格 ─────────────────────
+    # ── 4. 自动迁移: legacy/config 人格到 DB ─────────
     active = await instances["persona_store"].get_active()
     if active is None:
-        legacy = PersonaDefinition.from_legacy(
-            name=settings.persona.name,
-            prompt=settings.persona.prompt,
-            persona_addressing=settings.persona.relation.persona_addressing,
-        )
-        legacy.version = "1.0.0"
-        await instances["persona_store"].save(legacy, changelog="从 config.local.toml 自动迁移", author="system")
-        logger.info("✅ 自动迁移 legacy 人格到 DB: %s (version=%s)", legacy.name, legacy.version)
+        defaults = _load_default_persona()
+        identity_data = defaults.get("identity", {})
+        if identity_data:
+            defn = PersonaDefinition(
+                version="1.0.0",
+                name=settings.persona.name,
+                identity=PersonaIdentity(
+                    personality=identity_data.get("personality", ""),
+                    speaking_style=identity_data.get("speaking_style", ""),
+                    values=list(identity_data.get("values", [])),
+                    persona_addressing=identity_data.get("persona_addressing", settings.persona.relation.persona_addressing),
+                ),
+            )
+        else:
+            defn = PersonaDefinition.from_legacy(
+                name=settings.persona.name,
+                prompt=settings.persona.prompt,
+                persona_addressing=settings.persona.relation.persona_addressing,
+            )
+            defn.version = "1.0.0"
+        await instances["persona_store"].save(defn, changelog="从 config.local.toml 自动迁移", author="system")
+        logger.info("✅ 自动迁移 legacy/config 人格到 DB: %s (version=%s)", defn.name, defn.version)
 
     # ── 5. 关系迁移: 修复 Actor 绑定前的孤立行 ──────
     try:

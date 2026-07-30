@@ -28,6 +28,7 @@ from src.api.schemas.admin import (
 )
 from src.core.config import (
     _delete_persona_override,
+    _load_default_persona,
     _load_persona_override,
     _reset_settings,
     _write_persona_override,
@@ -479,11 +480,39 @@ async def create_persona_profile(
     body: PersonaProfileCreateBody,
     request: Request,
 ):
-    """创建新人格 profile."""
+    """创建新人格 profile, 同时写入初始版本定义 (从默认提示词继承)."""
     store = _get_persona_store(request)
     if store is None:
         raise HTTPException(404, "persona_store not available")
     pid = await store.create_persona(name=body.name, description=body.description)
+
+    # 从默认/当前配置创建初始版本定义
+    from src.core.persona.definition import PersonaDefinition, PersonaIdentity
+    defaults = _load_default_persona()
+    identity_data = defaults.get("identity", {})
+    if identity_data:
+        defn = PersonaDefinition(
+            version="1.0.0",
+            name=body.name,
+            identity=PersonaIdentity(
+                personality=identity_data.get("personality", ""),
+                speaking_style=identity_data.get("speaking_style", ""),
+                values=list(identity_data.get("values", [])),
+                persona_addressing=identity_data.get("persona_addressing", "人格"),
+            ),
+        )
+    else:
+        # 无结构化 identity 时回退到 legacy prompt
+        defn = PersonaDefinition(
+            version="1.0.0",
+            name=body.name,
+            identity=PersonaIdentity(
+                personality=defaults.get("prompt", ""),
+                persona_addressing=defaults["relation"]["persona_addressing"],
+            ),
+        )
+    await store.save(defn, changelog="初始版本", persona_id=pid)
+
     profile = await store.get_persona(pid)
     if profile is None:
         raise HTTPException(500, "Failed to create persona profile")
