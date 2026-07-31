@@ -431,6 +431,42 @@ class SqliteIdentityStore(SqliteStore):
             ]
             return strategies, total
 
+    async def update_strategy(
+        self,
+        strategy_id: str,
+        *,
+        name: str | None = None,
+        config: str | None = None,
+        is_active: bool | None = None,
+    ) -> IdentityStrategy | None:
+        """更新策略字段，返回更新后的策略；不存在返回 None."""
+        existing = await self.get_strategy(strategy_id)
+        if existing is None:
+            return None
+
+        new_name = name if name is not None else existing.name
+        new_config = config if config is not None else existing.config
+        new_active = is_active if is_active is not None else existing.is_active
+        now = datetime.now(UTC)
+
+        async with self._conn() as db:
+            await db.execute(
+                "UPDATE identity_strategies SET name=?, config=?, is_active=?, updated_at=? WHERE id=?",
+                (new_name, new_config, 1 if new_active else 0, now.isoformat(), strategy_id),
+            )
+            await db.commit()
+
+        return await self.get_strategy(strategy_id)
+
+    async def delete_strategy(self, strategy_id: str) -> bool:
+        """删除策略，返回是否成功."""
+        async with self._conn() as db:
+            cur = await db.execute(
+                "DELETE FROM identity_strategies WHERE id = ?", (strategy_id,),
+            )
+            await db.commit()
+            return (cur.rowcount or 0) > 0
+
 
 def _parse_dt(v: str | None) -> datetime | None:
     if not v:

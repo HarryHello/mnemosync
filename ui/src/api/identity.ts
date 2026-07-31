@@ -166,7 +166,7 @@ export async function listInstalledPlugins(): Promise<InstalledPluginListRespons
 export async function installPlugin(
   fileName: string,
   downloadUrl: string,
-): Promise<{ success: boolean; file_name: string }> {
+): Promise<{ success: boolean; file_name: string; path: string }> {
   return apiPost('/admin/identity/plugins/install', {
     file_name: fileName,
     download_url: downloadUrl,

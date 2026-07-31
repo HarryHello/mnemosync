@@ -7,7 +7,6 @@
 
 import json
 import logging
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -119,21 +118,14 @@ async def update_identity_strategy(
     store: SqliteIdentityStore = Depends(get_identity_store),
 ):
     """更新策略 (名称/配置/启用状态)."""
-    s = await store.get_strategy(strategy_id)
+    s = await store.update_strategy(
+        strategy_id,
+        name=body.name,
+        config=body.config,
+        is_active=body.is_active,
+    )
     if s is None:
         raise HTTPException(404, detail="策略不存在")
-    # 当前 store 没有 update 方法, 通过 create 覆盖 (同 id)
-    config = body.config if body.config is not None else s.config
-    name = body.name if body.name is not None else s.name
-    is_active = body.is_active if body.is_active is not None else s.is_active
-    now = datetime.now(UTC)
-    async with store._conn() as db:
-        await db.execute(
-            "UPDATE identity_strategies SET name=?, config=?, is_active=?, updated_at=? WHERE id=?",
-            (name, config, 1 if is_active else 0, now.isoformat(), strategy_id),
-        )
-        await db.commit()
-    s = await store.get_strategy(strategy_id)
     return IdentityStrategyResponse(
         id=s.id, name=s.name, strategy_type=s.strategy_type,
         config=s.config, is_active=s.is_active,
@@ -221,12 +213,9 @@ async def delete_identity_strategy(
     store: SqliteIdentityStore = Depends(get_identity_store),
 ):
     """删除策略."""
-    s = await store.get_strategy(strategy_id)
-    if s is None:
+    removed = await store.delete_strategy(strategy_id)
+    if not removed:
         raise HTTPException(404, detail="策略不存在")
-    async with store._conn() as db:
-        await db.execute("DELETE FROM identity_strategies WHERE id = ?", (strategy_id,))
-        await db.commit()
     return {"success": True}
 
 
@@ -429,6 +418,18 @@ async def list_identity_plugins(
     return PluginListResponse(items=items, total=len(items))
 
 
+def _metadata_fields(metadata) -> dict:
+    """从 PluginMetadata 提取 schema 字段."""
+    if metadata is None:
+        return {"name": "", "description": "", "version": "", "author": ""}
+    return {
+        "name": metadata.name or "",
+        "description": metadata.description or "",
+        "version": metadata.version or "",
+        "author": metadata.author or "",
+    }
+
+
 @router.get("/identity/plugins/available", response_model=AvailablePluginListResponse)
 async def list_available_plugins():
     """从远程源列出可用插件.
@@ -439,17 +440,13 @@ async def list_available_plugins():
     from src.core.identity.plugin_manager import list_available, list_installed
 
     available = await list_available()
-    installed = await list_installed()
-    installed_names = {p.file_name for p in installed}
+    installed_names = {p.file_name for p in list_installed()}
 
     items = [
         AvailablePluginInfo(
             file_name=p.file_name,
             download_url=p.download_url,
-            name=p.metadata.name if p.metadata else "",
-            description=p.metadata.description if p.metadata else "",
-            version=p.metadata.version if p.metadata else "",
-            author=p.metadata.author if p.metadata else "",
+            **_metadata_fields(p.metadata),
             installed=p.file_name in installed_names,
         )
         for p in available
@@ -462,16 +459,12 @@ async def list_installed_plugins():
     """列出本地已安装的插件 (含元数据)."""
     from src.core.identity.plugin_manager import list_installed
 
-    installed = await list_installed()
     items = [
         InstalledPluginInfo(
             file_name=p.file_name,
-            name=p.metadata.name if p.metadata else "",
-            description=p.metadata.description if p.metadata else "",
-            version=p.metadata.version if p.metadata else "",
-            author=p.metadata.author if p.metadata else "",
+            **_metadata_fields(p.metadata),
         )
-        for p in installed
+        for p in list_installed()
     ]
     return InstalledPluginListResponse(items=items, total=len(items))
 

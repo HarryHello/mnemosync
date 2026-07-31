@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,7 +51,6 @@ class InstalledPlugin:
 
     file_name: str
     metadata: PluginMetadata | None = None
-    is_builtin: bool = False  # 是否随主程序分发
 
 
 async def list_available(source_url: str | None = None) -> list[AvailablePlugin]:
@@ -72,6 +72,8 @@ async def list_available(source_url: str | None = None) -> list[AvailablePlugin]
             logger.warning("插件源返回非列表: %s", url)
             return []
 
+        # 收集候选文件
+        candidates = []
         for item in files:
             if item.get("type") != "file":
                 continue
@@ -81,12 +83,20 @@ async def list_available(source_url: str | None = None) -> list[AvailablePlugin]
             download_url = item.get("download_url", "")
             if not download_url:
                 continue
+            candidates.append((name, download_url))
 
-            # 尝试获取元数据
-            metadata = await _fetch_metadata(download_url)
+        # 并行获取元数据
+        metadata_list = await asyncio.gather(
+            *[_fetch_metadata(url) for _, url in candidates],
+            return_exceptions=True,
+        )
+
+        for (name, url), metadata in zip(candidates, metadata_list):
+            if isinstance(metadata, Exception):
+                metadata = None
             plugins.append(AvailablePlugin(
                 file_name=name,
-                download_url=download_url,
+                download_url=url,
                 metadata=metadata,
             ))
     except httpx.HTTPStatusError as e:
@@ -97,7 +107,7 @@ async def list_available(source_url: str | None = None) -> list[AvailablePlugin]
     return plugins
 
 
-async def list_installed() -> list[InstalledPlugin]:
+def list_installed() -> list[InstalledPlugin]:
     """列出本地已安装的插件."""
     _ensure_plugin_dir()
     plugins: list[InstalledPlugin] = []
@@ -119,7 +129,7 @@ async def list_installed() -> list[InstalledPlugin]:
         if init.exists():
             metadata = _parse_metadata_from_file(init)
             plugins.append(InstalledPlugin(
-                file_name=subdir.name + "/",
+                file_name=subdir.name + "/__init__.py",
                 metadata=metadata,
             ))
 
@@ -131,16 +141,17 @@ async def install_plugin(file_name: str, download_url: str) -> Path:
 
     Args:
         file_name: 目标文件名 (如 astrbot.py)
-        download_url: 下载 URL
+        download_url: 下载 URL (仅允许 GitHub raw 地址)
 
     Returns:
         安装后的文件路径
 
     Raises:
-        ValueError: 文件名不合法
+        ValueError: 文件名不合法或 URL 不可信
         httpx.HTTPStatusError: 下载失败
     """
     _validate_file_name(file_name)
+    _validate_download_url(download_url)
     _ensure_plugin_dir()
 
     target = PLUGIN_DIR / file_name
@@ -153,29 +164,27 @@ async def install_plugin(file_name: str, download_url: str) -> Path:
     return target
 
 
-async def install_from_url(url: str) -> tuple[Path, str]:
-    """从任意 URL 安装插件.
-
-    自动从 URL 推断文件名。
-
-    Returns:
-        (文件路径, 文件名)
-    """
-    # 从 URL 提取文件名
-    file_name = url.rsplit("/", 1)[-1].split("?")[0]
-    if not file_name.endswith(".py"):
-        raise ValueError(f"URL 不指向 .py 文件: {url}")
-
-    return await install_plugin(file_name, url), file_name
-
-
 def remove_plugin(file_name: str) -> bool:
     """删除已安装的插件.
+
+    支持单文件 (astrbot.py) 和子目录 (my-plugin/__init__.py) 两种格式。
 
     Returns:
         是否成功删除
     """
     _validate_file_name(file_name)
+
+    if "/" in file_name:
+        # 子目录插件: 删除整个目录
+        dir_name = file_name.split("/")[0]
+        target = PLUGIN_DIR / dir_name
+        if not target.is_dir():
+            return False
+        import shutil
+        shutil.rmtree(target)
+        logger.info("插件目录已删除: %s", target)
+        return True
+
     target = PLUGIN_DIR / file_name
     if not target.exists():
         return False
@@ -258,12 +267,42 @@ def _extract_class_attrs(node: ast.ClassDef) -> PluginMetadata:
 
 def _validate_file_name(file_name: str) -> None:
     """校验文件名安全性."""
-    if "/" in file_name or "\\" in file_name:
+    # 子目录插件: "my-plugin/__init__.py"
+    if "/" in file_name:
+        parts = file_name.split("/")
+        if len(parts) != 2 or parts[1] != "__init__.py":
+            raise ValueError(f"子目录插件格式必须为 name/__init__.py: {file_name}")
+        if parts[0].startswith("_"):
+            raise ValueError(f"目录名不能以下划线开头: {file_name}")
+        return
+    if "\\" in file_name:
         raise ValueError(f"文件名不能包含路径分隔符: {file_name}")
     if file_name.startswith("_"):
         raise ValueError(f"文件名不能以下划线开头: {file_name}")
     if not file_name.endswith(".py"):
         raise ValueError(f"文件名必须以 .py 结尾: {file_name}")
+
+
+# 允许的下载来源 (主机名前缀)
+_ALLOWED_DOWNLOAD_HOSTS = [
+    "raw.githubusercontent.com",
+    "github.com",
+]
+
+
+def _validate_download_url(url: str) -> None:
+    """校验下载 URL 来源可信."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        raise ValueError(f"无效 URL: {url}")
+    if not any(parsed.hostname == host or parsed.hostname.endswith("." + host)
+               for host in _ALLOWED_DOWNLOAD_HOSTS):
+        raise ValueError(
+            f"下载来源不受信任: {parsed.hostname}。"
+            f"仅允许: {', '.join(_ALLOWED_DOWNLOAD_HOSTS)}"
+        )
 
 
 def _ensure_plugin_dir() -> None:
