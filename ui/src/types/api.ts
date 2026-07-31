@@ -609,6 +609,23 @@ export interface MarkReadResponse {
   marked: number
 }
 // ============================================================================
+// ============================================================================ 
+// Plugins (v0.3.3) 
+// ============================================================================ 
+
+
+export interface PluginInfo { 
+  name: string 
+  description: string 
+} 
+ 
+ 
+export interface PluginListResponse { 
+  items: PluginInfo[] 
+  total: number 
+} 
+ 
+
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
