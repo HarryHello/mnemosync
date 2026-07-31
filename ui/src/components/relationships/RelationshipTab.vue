@@ -8,6 +8,12 @@ import {
   updateRelationship,
 } from '@/api/client'
 import { formatDate } from '@/utils/format'
+import {
+  RELATIONSHIP_LEVEL_EXCELLENT,
+  RELATIONSHIP_LEVEL_HIGH,
+  RELATIONSHIP_LEVEL_MEDIUM,
+  RELATIONSHIP_LEVEL_LOW,
+} from '@/utils/constants'
 import type {
   ListRelationshipsParams,
 } from '@/api/client'
@@ -65,28 +71,28 @@ function clamp01(v: number): number {
 
 function levelText(v: number): string {
   const p = clamp01(v)
-  if (p >= 0.85) return '极高'
-  if (p >= 0.65) return '高'
-  if (p >= 0.4) return '中等'
-  if (p >= 0.2) return '低'
+  if (p >= RELATIONSHIP_LEVEL_EXCELLENT) return '极高'
+  if (p >= RELATIONSHIP_LEVEL_HIGH) return '高'
+  if (p >= RELATIONSHIP_LEVEL_MEDIUM) return '中等'
+  if (p >= RELATIONSHIP_LEVEL_LOW) return '低'
   return '陌生'
 }
 
 type TagType = 'primary' | 'success' | 'warning' | 'danger' | 'info'
 function levelType(v: number): TagType {
   const p = clamp01(v)
-  if (p >= 0.65) return 'success'
-  if (p >= 0.4) return 'primary'
-  if (p >= 0.2) return 'warning'
+  if (p >= RELATIONSHIP_LEVEL_HIGH) return 'success'
+  if (p >= RELATIONSHIP_LEVEL_MEDIUM) return 'primary'
+  if (p >= RELATIONSHIP_LEVEL_LOW) return 'warning'
   return 'danger'
 }
 
 type ProgressStatus = '' | 'success' | 'warning' | 'exception'
 function levelStatus(v: number): ProgressStatus {
   const p = clamp01(v)
-  if (p >= 0.65) return 'success'
-  if (p >= 0.4) return ''
-  if (p >= 0.2) return 'warning'
+  if (p >= RELATIONSHIP_LEVEL_HIGH) return 'success'
+  if (p >= RELATIONSHIP_LEVEL_MEDIUM) return ''
+  if (p >= RELATIONSHIP_LEVEL_LOW) return 'warning'
   return 'exception'
 }
 

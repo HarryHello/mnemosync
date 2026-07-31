@@ -18,6 +18,12 @@ export const LOCAL_STORAGE_KEYS = {
 // 虚拟模型 ID: 由 role_bindings 决定实际模型
 export const VIRTUAL_MODEL_ANY = 'mnemosync-any'
 
+// 关系阈值
+export const RELATIONSHIP_LEVEL_EXCELLENT = 0.85
+export const RELATIONSHIP_LEVEL_HIGH = 0.65
+export const RELATIONSHIP_LEVEL_MEDIUM = 0.4
+export const RELATIONSHIP_LEVEL_LOW = 0.2
+
 /** 构建 URL 查询字符串. 跳过 undefined / null / 空字符串; 保留 false 和 0. */
 export function buildQuery(params: object): string {
   const qs = new URLSearchParams()
