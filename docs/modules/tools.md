@@ -254,4 +254,4 @@ out = await run_relationship_analysis(
 | v0.2.11 | 2026-07-19 | 文档补齐: 与 v0.2.7–v0.2.11 面板/后端变更一致 |
 | v0.2.12 | 2026-07-25 | 移除 `time_decay_calculator` (衰减改确定性公式 `run_deterministic_decay`) 与 `sentence_classifier` (提示词清洗改单次重写); 情绪分析去重 |
 | v0.3.0 | 2026-07-26 | `make_vector_search_tool` 新增 `retrieval_ctx` 参数 (两级受众过滤); 情绪分析从 ReAct 工具改为 `main_dialogue_node` 预计算 + state 共享; `make_update_addressing_tool` 的 `persona_id` 改从 state 读取并新增 `actor_id` 溯源参数; 迭代上限 memory 6→4 / relationship 3→2 |
-| v0.3.3 | 2026-07-28 | 新增内部 tool 注册表 (`InternalToolRegistry`): 服务端内部工具注入主模型, 拦截执行, 不返回客户端; 首批内部 tool: `initiate_identity_binding` / `confirm_identity_binding` (跨平台身份绑定) |
+| v0.3.4 | 2026-07-28 | 新增内部 tool 注册表 (`InternalToolRegistry`): 服务端内部工具注入主模型, 拦截执行, 不返回客户端; 首批内部 tool: `initiate_identity_binding` / `confirm_identity_binding` (跨平台身份绑定) |

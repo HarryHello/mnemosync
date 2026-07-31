@@ -344,4 +344,4 @@ mnemosync identity unbind <actor_id> <group_id>
 | v0.3.0 | 2026-07-26 | 初始版本: 身份模型 + 四策略 + 非归属模式 (Sub-Phase A); 空间事件流 + 幂等 (B); 受众过滤联动 (C); 关系按 Actor 解析 (D); 面板身份管理页 + CLI 命令组 |
 | v0.3.1 | 2026-07-27 | 第五种策略类型 `plugin`: 插件接口 + AstrBot 参考实现; 新增 `/identity/plugins` 端点 |
 | v0.3.1 | 2026-07-31 | regex 策略 search_in 重构: 新增 `last_user`，废弃 `system_or_first_user` (向后兼容); 插件 `preprocess()` 改为可选; 插件文档 |
-| v0.3.3 | 2026-07-28 | 用户自助跨平台绑定: 指令触发 + 内部 tool 自然语言触发; 内部 tool 注册表架构 |
+| v0.3.4 | 2026-07-28 | 用户自助跨平台绑定: 指令触发 + 内部 tool 自然语言触发; 内部 tool 注册表架构 |

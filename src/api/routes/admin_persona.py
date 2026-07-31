@@ -39,7 +39,7 @@ from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 # ============================================================================
-# Structured Persona API (v0.3.3, SQLite-based)
+# Structured Persona API (v0.3.4, SQLite-based)
 # ============================================================================
 
 
@@ -302,7 +302,7 @@ async def reset_persona_config():
 
 
 # ============================================================================
-# Structured Persona (v0.3.3, SQLite-based)
+# Structured Persona (v0.3.4, SQLite-based)
 # ============================================================================
 
 
@@ -622,7 +622,7 @@ async def delete_persona_profile(
 
 
 # ============================================================================
-# Space Policy (v0.3.3, per-space social behavior)
+# Space Policy (v0.3.4, per-space social behavior)
 # ============================================================================
 
 
@@ -724,7 +724,7 @@ async def delete_space_policy(
 
 
 # ============================================================================
-# Character Card Import (v0.3.3, SillyTavern V1/V2)
+# Character Card Import (v0.3.4, SillyTavern V1/V2)
 # ============================================================================
 
 

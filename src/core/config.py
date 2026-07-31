@@ -181,7 +181,7 @@ def _load_default_persona() -> dict[str, Any]:
         "context": str(raw_rel.get("context") or fallback_rel["context"]),
     }
     result: dict[str, Any] = {"name": name, "prompt": prompt, "relation": relation}
-    # v0.3.3+: 资源 TOML 可选携带 [identity] 段, 供结构化定义初始化
+    # v0.3.4+: 资源 TOML 可选携带 [identity] 段, 供结构化定义初始化
     raw_identity = data.get("identity")
     if isinstance(raw_identity, dict):
         identity: dict[str, Any] = {}
