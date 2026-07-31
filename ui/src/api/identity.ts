@@ -1,6 +1,8 @@
 /**Identity API: 身份识别策略、Actor、UserGroup 管理. */
 
 import type {
+  PluginListResponse,
+
   Actor,
   ActorListResponse,
   IdentityStrategy,
@@ -141,4 +143,12 @@ export async function unbindActorFromGroup(
   await apiDelete(
     `/admin/identity/actors/${encodeURIComponent(actorId)}/groups/${encodeURIComponent(groupId)}`,
   )
+}
+
+// ============================================================================
+// Identity Plugins
+// ============================================================================
+
+export async function listPlugins(): Promise<PluginListResponse> {
+  return apiGet<PluginListResponse>('/admin/identity/plugins')
 }
