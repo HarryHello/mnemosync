@@ -18,7 +18,12 @@ from src.api.deps import (
 )
 from src.api.routes.auth import get_current_user
 from src.api.schemas.admin import (
+    AvailablePluginInfo,
+    AvailablePluginListResponse,
+    InstalledPluginInfo,
+    InstalledPluginListResponse,
     PluginInfo,
+    PluginInstallBody,
     PluginListResponse,
 
     ActorListResponse,
@@ -422,3 +427,85 @@ async def list_identity_plugins(
         for name, p in plugins.items()
     ]
     return PluginListResponse(items=items, total=len(items))
+
+
+@router.get("/identity/plugins/available", response_model=AvailablePluginListResponse)
+async def list_available_plugins():
+    """从远程源列出可用插件.
+
+    通过 GitHub API 获取插件源仓库的文件列表，解析每个插件的元数据。
+    同时标记哪些已安装。
+    """
+    from src.core.identity.plugin_manager import list_available, list_installed
+
+    available = await list_available()
+    installed = await list_installed()
+    installed_names = {p.file_name for p in installed}
+
+    items = [
+        AvailablePluginInfo(
+            file_name=p.file_name,
+            download_url=p.download_url,
+            name=p.metadata.name if p.metadata else "",
+            description=p.metadata.description if p.metadata else "",
+            version=p.metadata.version if p.metadata else "",
+            author=p.metadata.author if p.metadata else "",
+            installed=p.file_name in installed_names,
+        )
+        for p in available
+    ]
+    return AvailablePluginListResponse(items=items, total=len(items))
+
+
+@router.get("/identity/plugins/installed", response_model=InstalledPluginListResponse)
+async def list_installed_plugins():
+    """列出本地已安装的插件 (含元数据)."""
+    from src.core.identity.plugin_manager import list_installed
+
+    installed = await list_installed()
+    items = [
+        InstalledPluginInfo(
+            file_name=p.file_name,
+            name=p.metadata.name if p.metadata else "",
+            description=p.metadata.description if p.metadata else "",
+            version=p.metadata.version if p.metadata else "",
+            author=p.metadata.author if p.metadata else "",
+        )
+        for p in installed
+    ]
+    return InstalledPluginListResponse(items=items, total=len(items))
+
+
+@router.post("/identity/plugins/install", status_code=201)
+async def install_plugin(body: PluginInstallBody):
+    """从远程源安装插件.
+
+    下载 .py 文件到 plugins/ 目录，重启后自动生效。
+    """
+    from src.core.identity.plugin_manager import install_plugin as do_install
+
+    try:
+        path = await do_install(body.file_name, body.download_url)
+        return {"success": True, "file_name": body.file_name, "path": str(path)}
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    except Exception as e:
+        logger.warning("安装插件失败: %s", e)
+        raise HTTPException(502, detail=f"下载失败: {e}")
+
+
+@router.delete("/identity/plugins/{file_name:path}")
+async def remove_plugin(file_name: str):
+    """删除已安装的插件.
+
+    删除后需要重启才能生效 (插件实例仍驻留内存)。
+    """
+    from src.core.identity.plugin_manager import remove_plugin as do_remove
+
+    try:
+        removed = do_remove(file_name)
+        if not removed:
+            raise HTTPException(404, detail=f"插件文件不存在: {file_name}")
+        return {"success": True, "file_name": file_name}
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))

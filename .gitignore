@@ -5,6 +5,7 @@
 __pycache__/
 *.pyc
 data/
+plugins/
 *.db
 *.db-shm
 *.db-wal

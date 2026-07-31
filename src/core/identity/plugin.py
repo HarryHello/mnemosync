@@ -1,12 +1,13 @@
 """身份解析插件接口 (v0.3.1).
 
-插件负责把平台私有格式解析为两种产物:
+插件负责从平台私有格式中提取身份信息。
 
-* ``model_messages``: 供主模型消费的标准 OpenAI 消息;
-* ``events``: 按说话者拆分的结构化事件, 供 Mnemosync 去重持久化。
+必须实现:
+- ``extract()``: 从原始消息中识别当前请求者身份。
 
-插件协议不兼容早期仅返回 ``list[dict]`` 的 ``preprocess()`` 实现。第三方插件
-必须显式返回 ``PluginPreprocessResult``，避免核心管线猜测返回值形状。
+可选实现:
+- ``preprocess()``: 将消息转换为模型可消费格式 + 拆分为逐说话者事件。
+  默认实现直接返回原消息和空事件列表，适用于不需要消息预处理的平台。
 """
 
 from __future__ import annotations
@@ -79,7 +80,6 @@ class IdentityPlugin(ABC):
         """从原始消息中提取当前请求者与空间身份."""
         ...
 
-    @abstractmethod
     async def preprocess(
         self,
         messages: list[dict[str, Any]],
@@ -87,5 +87,9 @@ class IdentityPlugin(ABC):
         store: SqliteIdentityStore,
         identity: IdentityContext,
     ) -> PluginPreprocessResult:
-        """生成模型消息与逐说话者规范化事件."""
-        ...
+        """生成模型消息与逐说话者规范化事件.
+
+        默认实现直接返回原消息和空事件列表。
+        需要消息预处理的平台 (如群聊快照拆分) 应覆写此方法。
+        """
+        return PluginPreprocessResult(model_messages=messages, events=[])
