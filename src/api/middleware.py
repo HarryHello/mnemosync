@@ -123,14 +123,14 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                         if ak is not None:
                             inbound_key_note = ak.note
                     except Exception:
-                        pass
+                        logger.debug("Failed to lookup API key for debug event", exc_info=True)
             debug_bus.emit(
                 direction="inbound_request",
                 correlation_id=cid,
                 url=str(request.url),
                 method=request.method,
                 port=request.url.port,
-                headers=dict(request.headers),
+                headers=request_headers,
                 body=request_body,
                 key_note=inbound_key_note,
             )
@@ -211,7 +211,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                 if body:
                     response_body = json.loads(body.decode("utf-8", errors="replace"))
             except Exception:
-                pass
+                logger.debug("Failed to parse response body for logging", exc_info=True)
 
         _log(response_body)
         return response

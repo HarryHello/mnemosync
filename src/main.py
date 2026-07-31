@@ -21,6 +21,10 @@ def serve() -> None:
     try:
         pkg_version = _get_version("mnemosync")
     except Exception:
+        import logging
+        logging.getLogger(__name__).debug(
+            "Failed to read package version, using fallback", exc_info=True,
+        )
         pkg_version = "0.0.0+unknown"
 
     app = FastAPI(
@@ -72,7 +76,11 @@ def main() -> int:
                 try:
                     await auth_db.create_default_user("mnemosync")
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).debug(
+                        "create_default_user skipped (user may already exist)",
+                        exc_info=True,
+                    )
 
                 print("Success!")
 

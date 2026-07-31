@@ -69,42 +69,62 @@ export const useNotificationsStore = defineStore('notifications', () => {
   }
 
   async function markRead(id: number) {
-    await markNotificationRead(id)
-    const it = items.value.find((n) => n.id === id)
-    if (it && !it.read_at) {
-      it.read_at = new Date().toISOString()
-      unreadCount.value = Math.max(0, unreadCount.value - 1)
+    try {
+      await markNotificationRead(id)
+      const it = items.value.find((n) => n.id === id)
+      if (it && !it.read_at) {
+        it.read_at = new Date().toISOString()
+        unreadCount.value = Math.max(0, unreadCount.value - 1)
+      }
+    } catch (e) {
+      console.error('[notifications] markRead failed', e)
+      throw e
     }
   }
 
   async function markAllRead() {
-    const r = await markAllNotificationsRead()
-    if (r.marked > 0) {
-      const stamp = new Date().toISOString()
-      for (const n of items.value) if (!n.read_at) n.read_at = stamp
-      unreadCount.value = 0
+    try {
+      const r = await markAllNotificationsRead()
+      if (r.marked > 0) {
+        const stamp = new Date().toISOString()
+        for (const n of items.value) if (!n.read_at) n.read_at = stamp
+        unreadCount.value = 0
+      }
+    } catch (e) {
+      console.error('[notifications] markAllRead failed', e)
+      throw e
     }
   }
 
   async function remove(id: number) {
-    await apiDelete(id)
-    const idx = items.value.findIndex((n) => n.id === id)
-    if (idx >= 0) {
-      const target = items.value[idx]
-      const wasUnread = target ? !target.read_at : false
-      items.value.splice(idx, 1)
-      total.value = Math.max(0, total.value - 1)
-      if (wasUnread) unreadCount.value = Math.max(0, unreadCount.value - 1)
+    try {
+      await apiDelete(id)
+      const idx = items.value.findIndex((n) => n.id === id)
+      if (idx >= 0) {
+        const target = items.value[idx]
+        const wasUnread = target ? !target.read_at : false
+        items.value.splice(idx, 1)
+        total.value = Math.max(0, total.value - 1)
+        if (wasUnread) unreadCount.value = Math.max(0, unreadCount.value - 1)
+      }
+    } catch (e) {
+      console.error('[notifications] remove failed', e)
+      throw e
     }
   }
 
   async function removeRead() {
-    const r = await apiDeleteRead()
-    if (r.deleted > 0) {
-      items.value = items.value.filter((n) => !n.read_at)
-      total.value = Math.max(0, total.value - r.deleted)
+    try {
+      const r = await apiDeleteRead()
+      if (r.deleted > 0) {
+        items.value = items.value.filter((n) => !n.read_at)
+        total.value = Math.max(0, total.value - r.deleted)
+      }
+      return r.deleted
+    } catch (e) {
+      console.error('[notifications] removeRead failed', e)
+      throw e
     }
-    return r.deleted
   }
 
   function _onVisibility() {

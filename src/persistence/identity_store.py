@@ -96,15 +96,17 @@ class SqliteIdentityStore(SqliteStore):
                 # 存在则返回
                 now = datetime.now(UTC)
                 # 如果 display_name 更新了，写入
+                updated_name = row[3]
                 if display_name and row[3] != display_name:
                     await db.execute(
                         "UPDATE actors SET display_name = ?, updated_at = ? WHERE id = ?",
                         (display_name, now.isoformat(), row[0]),
                     )
                     await db.commit()
+                    updated_name = display_name
                 return Actor(
                     id=row[0], external_key=row[1], frontend=row[2],
-                    display_name=row[3] if row[3] else display_name,
+                    display_name=updated_name if updated_name else display_name,
                     metadata=row[4] if row[4] != "{}" else metadata,
                     created_at=_parse_dt(row[5]),
                     updated_at=_parse_dt(row[6]),
