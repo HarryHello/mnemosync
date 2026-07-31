@@ -41,7 +41,7 @@ function submit() {
     ElMessage.warning('原因至少 5 字')
     return
   }
-  const payload: any = { reason }
+  const payload: { reason: string; persona_addressing?: string; user_addressing?: string; context?: string } = { reason }
   let changed = false
   if (props.relationship) {
     if (form.persona_addressing !== props.relationship.persona_addressing) {

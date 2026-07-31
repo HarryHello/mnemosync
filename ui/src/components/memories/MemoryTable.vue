@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { Memory } from '@/types/api'
 
 const props = defineProps<{
@@ -21,12 +20,6 @@ const MEMORY_TYPE_FILTERS = [
   { text: '普通', value: 'normal' },
   { text: '永久', value: 'permanent' },
 ]
-
-function normalizeOrder(order: string | null | undefined): 'asc' | 'desc' | null {
-  if (order === 'ascending') return 'asc'
-  if (order === 'descending') return 'desc'
-  return null
-}
 
 function toElOrder(o: 'asc' | 'desc'): 'ascending' | 'descending' {
   return o === 'asc' ? 'ascending' : 'descending'

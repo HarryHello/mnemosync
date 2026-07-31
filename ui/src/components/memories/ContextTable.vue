@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { ConversationTurn } from '@/types/api'
 
 const props = defineProps<{
@@ -74,12 +73,6 @@ function speakerDetail(row: ConversationTurn): string {
   if (row.role === 'assistant') return row.source_frontend || 'mnemosync'
   if (!row.external_key) return row.actor_id ? '已匹配 Actor' : '未匹配 Actor'
   return `${row.source_frontend || 'unknown'} · ${row.external_key}`
-}
-
-function normalizeOrder(order: string | null | undefined): 'asc' | 'desc' | null {
-  if (order === 'ascending') return 'asc'
-  if (order === 'descending') return 'desc'
-  return null
 }
 
 function toElOrder(o: 'asc' | 'desc'): 'ascending' | 'descending' {

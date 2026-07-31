@@ -175,7 +175,7 @@ function openEditDialog() {
   editDialogVisible.value = true
 }
 
-async function submitEdit(payload: any) {
+async function submitEdit(payload: { persona_addressing?: string; user_addressing?: string; context?: string; reason: string }) {
   if (!rel.value || !selectedUserId.value) return
   const body: RelationshipUpdateBody = { ...payload, user_id: selectedUserId.value }
   editSaving.value = true
