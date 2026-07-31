@@ -194,6 +194,10 @@ function handleUserCommand(cmd: string) {
   background: transparent;
 }
 
+.brand-text {
+  user-select: none;
+}
+
 .menu {
   flex: 1;
   border-right: 0;
