@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from src.api.deps import (
     get_identity_store,
@@ -18,6 +18,9 @@ from src.api.deps import (
 )
 from src.api.routes.auth import get_current_user
 from src.api.schemas.admin import (
+    PluginInfo,
+    PluginListResponse,
+
     ActorListResponse,
     ActorResponse,
     GenerateConfigBody,
@@ -407,3 +410,16 @@ async def list_actor_groups(
         ],
         total=len(groups),
     )
+
+
+@router.get("/identity/plugins", response_model=PluginListResponse)
+async def list_identity_plugins(
+    request: Request,
+):
+    """列出所有已发现的身份解析插件."""
+    plugins = getattr(request.app.state, "identity_plugins", None) or {}
+    items = [
+        PluginInfo(name=name, description=p.description or "")
+        for name, p in plugins.items()
+    ]
+    return PluginListResponse(items=items, total=len(items))

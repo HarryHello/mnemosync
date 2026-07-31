@@ -496,6 +496,23 @@ class GenerateConfigResponse(BaseModel):
     config: str = Field(..., description="生成的 JSON 配置字符串")
 
 
+
+# ============================================================================ 
+# Plugins 
+# ============================================================================ 
+
+
+class PluginInfo(BaseModel): 
+    """已发现的身份解析插件信息.""" 
+    name: str 
+    description: str 
+ 
+ 
+class PluginListResponse(BaseModel): 
+    items: list[PluginInfo] 
+    total: int 
+ 
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
@@ -542,4 +559,7 @@ __all__ = [
     "IdentityStrategyListResponse",
     "IdentityStrategyCreateBody",
     "IdentityStrategyUpdateBody",
+    "PluginInfo",
+    "PluginListResponse",
+
 ]
