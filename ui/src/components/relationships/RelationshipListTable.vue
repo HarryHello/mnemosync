@@ -5,6 +5,7 @@
  * 只负责展示, 不调用 API. 通过 emit 向上传递用户操作.
  */
 import type { Relationship } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 defineProps<{
   items: Relationship[]
@@ -55,13 +56,6 @@ function identityDetail(row: Relationship): string {
   return accounts
     .map((account) => `${account.frontend} · ${account.external_key}`)
     .join(' / ')
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleString('zh-CN', { hour12: false })
 }
 </script>
 

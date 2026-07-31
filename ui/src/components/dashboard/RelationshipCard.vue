@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Relationship } from '@/types/api'
+import { formatDateOnly } from '@/utils/format'
 
 const props = defineProps<{
   relationships?: Relationship[]
@@ -39,13 +40,6 @@ function identityDetail(rel: Relationship): string {
 }
 
 const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleDateString('zh-CN')
-}
 </script>
 
 <template>

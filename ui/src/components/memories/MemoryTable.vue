@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Memory } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   items: Memory[]
@@ -35,11 +36,6 @@ function typeLabel(t: string): string {
   if (t === 'permanent') return '永久'
   if (t === 'normal') return '普通'
   return t
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 
 function contentPreview(content: string): string {

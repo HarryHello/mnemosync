@@ -8,6 +8,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
+import { formatDate } from '@/utils/format'
 import {
   createIdentityStrategy,
   deleteIdentityStrategy,
@@ -166,11 +167,6 @@ function prettyConfig(raw: string): string {
   } catch {
     return raw
   }
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return '—'
-  return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
 function hasToolPolicy(config: string): boolean {

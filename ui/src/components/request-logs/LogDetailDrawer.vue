@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { HttpLog } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   modelValue: boolean
@@ -32,8 +33,7 @@ function fmtDuration(ms: number | null): string {
 }
 
 function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s + 'Z').toLocaleString('zh-CN', { hour12: false })
+  return formatDate(s)
 }
 
 function pretty(v: unknown): string {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ConversationTurn } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   items: ConversationTurn[]
@@ -89,11 +90,6 @@ function roleLabel(r: string): string {
   if (r === 'user') return '用户'
   if (r === 'assistant') return '助手'
   return r
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 
 function contentPreview(content: string): string {

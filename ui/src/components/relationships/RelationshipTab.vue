@@ -7,6 +7,7 @@ import {
   listRelationships,
   updateRelationship,
 } from '@/api/client'
+import { formatDate } from '@/utils/format'
 import type {
   ListRelationshipsParams,
 } from '@/api/client'
@@ -87,13 +88,6 @@ function levelStatus(v: number): ProgressStatus {
   if (p >= 0.4) return ''
   if (p >= 0.2) return 'warning'
   return 'exception'
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleString('zh-CN', { hour12: false })
 }
 
 const fieldLabels: Record<string, string> = {

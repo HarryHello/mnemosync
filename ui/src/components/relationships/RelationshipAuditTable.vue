@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { RelationshipAuditEntry } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   items: RelationshipAuditEntry[]
@@ -21,13 +22,6 @@ function sourceTagType(src: string): 'primary' | 'success' | 'info' {
   if (src === 'agent') return 'primary'
   if (src === 'manual') return 'success'
   return 'info'
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleString('zh-CN', { hour12: false })
 }
 </script>
 

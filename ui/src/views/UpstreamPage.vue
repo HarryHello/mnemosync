@@ -8,6 +8,7 @@ import {
   updateUpstreamService,
   deleteUpstreamService,
 } from '@/api/client'
+import { formatDate } from '@/utils/format'
 import type { UpstreamService } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
 
@@ -123,10 +124,6 @@ async function onDelete(row: UpstreamService) {
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   }
-}
-
-function fmtDate(s: string): string {
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 
 onMounted(refresh)

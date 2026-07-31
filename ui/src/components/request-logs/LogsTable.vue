@@ -2,6 +2,7 @@
 import { reactive, ref, watch } from 'vue'
 import { Filter, Search } from '@element-plus/icons-vue'
 import type { HttpLog } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   items: HttpLog[]
@@ -113,8 +114,7 @@ function fmtDuration(ms: number | null): string {
 }
 
 function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s + 'Z').toLocaleString('zh-CN', { hour12: false })
+  return formatDate(s)
 }
 </script>
 
