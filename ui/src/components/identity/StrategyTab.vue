@@ -21,22 +21,22 @@ const STRATEGY_TYPES: Array<{ value: IdentityStrategyType; label: string; hint: 
   {
     value: 'direct',
     label: 'direct — 客户端 user 字段',
-    hint: '客户端正确使用 OpenAI request.user 字段 (Web / SDK)',
+    hint: '客户端通过 OpenAI request.user 字段传递用户标识 (Web / SDK)',
   },
   {
     value: 'api_key_bound',
     label: 'api_key_bound — Key 即身份',
-    hint: 'ChatBox 等单用户本地应用, 固定身份',
+    hint: '最简单: 每个 Key 对应一个固定用户, 适用于本地单用户应用 (ChatBox 等)',
   },
   {
     value: 'regex',
     label: 'regex — 正则提取',
-    hint: 'AstrBot 等把 QQ号/用户名/群号 塞进 prompt 文本的前台',
+    hint: '从消息文本中用正则匹配提取用户 ID、昵称、群号等 (AstrBot / 自定义 Bot)',
   },
   {
     value: 'llm',
     label: 'llm — 辅助模型提取',
-    hint: '身份格式不固定, 需要语义理解的前台',
+    hint: '身份格式不固定, 用辅助 LLM 从消息内容中语义提取',
   },
   {
     value: 'plugin',
@@ -50,7 +50,7 @@ const CONFIG_TEMPLATES: Record<IdentityStrategyType, string> = {
   api_key_bound: JSON.stringify(
     {
       external_key: 'local-user',
-      frontend: 'chatbox',
+      frontend: 'api_key_bound',
       display_name: '本地用户',
       channel_type: 'direct',
     },
@@ -61,10 +61,10 @@ const CONFIG_TEMPLATES: Record<IdentityStrategyType, string> = {
     {
       frontend: 'astrbot',
       actor_pattern: 'QQ号[:：]\\s*(\\d+)',
-      name_pattern: '用户名[:：]\\s*(\\S+)',
+      name_pattern: '昵称[:：]\\s*(\\S+)',
       space_pattern: '群号[:：]\\s*(\\d+)',
       event_id_pattern: '消息ID[:：]\\s*(\\S+)',
-      search_in: 'system_or_first_user',
+      search_in: 'last_user',
     },
     null,
     2,
@@ -447,16 +447,14 @@ onMounted(() => {
           </p>
         </el-form-item>
 
-        <el-form-item label="配置" prop="config" class="config-section">
-          <StrategyConfigForm
-            ref="configFormRef"
-            :strategy-type="form.strategy_type"
-            :config="form.config"
-            :tool-policy="form.tool_policy"
-            @update:config="(v: string) => (form.config = v)"
-            @update:tool-policy="(v: typeof form.tool_policy) => (form.tool_policy = v)"
-          />
-        </el-form-item>
+        <StrategyConfigForm
+          ref="configFormRef"
+          :strategy-type="form.strategy_type"
+          :config="form.config"
+          :tool-policy="form.tool_policy"
+          @update:config="(v: string) => (form.config = v)"
+          @update:tool-policy="(v: typeof form.tool_policy) => (form.tool_policy = v)"
+        />
       </el-form>
       <template #footer>
         <el-button :disabled="submitting" @click="dialogVisible = false">取消</el-button>

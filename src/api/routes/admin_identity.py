@@ -161,8 +161,7 @@ async def generate_strategy_config(
             '- name_pattern: 可选, 提取用户显示名称的正则, 包含一个捕获组\n'
             '- space_pattern: 可选, 提取群聊/会话 ID 的正则, 包含一个捕获组\n'
             '- event_id_pattern: 可选, 提取消息事件 ID 的正则, 包含一个捕获组\n'
-            '- search_in: 搜索范围, 可选值: system_or_first_user (优先 system 消息再第一条 user 消息),'
-            ' system (仅 system 消息), all (全部消息)\n\n'
+            '- search_in: 搜索范围, 可选值: system (仅 system 消息), last_user (最后一条 user 消息), all (全部消息)\n\n'
             "正则编写要点:\n"
             "- 用 \\s* 匹配可能的空白字符\n"
             "- 用 [:：] 匹配中英文冒号\n"

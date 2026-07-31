@@ -20,10 +20,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Regex 策略的默认搜索范围
+# Regex 策略的搜索范围
+SEARCH_SYSTEM = "system"               # 仅 system 消息
+SEARCH_LAST_USER = "last_user"         # 最后一条 user 消息
+SEARCH_ALL = "all"                     # 拼接所有消息
+# 向后兼容旧值
 SEARCH_SYSTEM_FIRST = "system_or_first_user"
-SEARCH_ALL = "all"
-SEARCH_SYSTEM = "system"
 
 
 class IdentityResolver:
@@ -289,13 +291,27 @@ class IdentityResolver:
 
     @staticmethod
     def _extract_search_text(messages: list[dict], search_in: str) -> str:
-        """从 messages 中提取搜索文本。"""
+        """从 messages 中提取搜索文本。
+
+        Args:
+            search_in: 搜索范围
+                - "system": 仅第一条 system 消息
+                - "last_user": 最后一条 user 消息
+                - "all": 拼接所有消息
+                - "system_or_first_user": (向后兼容) 同 system, 无则取第一条 user
+        """
         if search_in == SEARCH_SYSTEM:
             for msg in messages:
                 if msg.get("role") == "system" and msg.get("content"):
                     return str(msg.get("content", ""))
             return ""
+        if search_in == SEARCH_LAST_USER:
+            for msg in reversed(messages):
+                if msg.get("role") == "user" and msg.get("content"):
+                    return str(msg.get("content", ""))
+            return ""
         if search_in == SEARCH_SYSTEM_FIRST:
+            # 向后兼容: 先 system, 无则第一条 user
             for msg in messages:
                 if msg.get("role") == "system" and msg.get("content"):
                     return str(msg.get("content", ""))

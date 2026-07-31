@@ -3,7 +3,7 @@
  * 策略配置表单组件
  * 根据策略类型动态展示对应的配置字段
  */
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { IdentityStrategyType, PluginInfo } from '@/types/api'
 import { generateStrategyConfig, listPlugins } from '@/api/client'
 
@@ -47,7 +47,7 @@ const CONFIG_TEMPLATES: Record<IdentityStrategyType, string> = {
       name_pattern: '用户名[:：]\\s*(\\S+)',
       space_pattern: '群号[:：]\\s*(\\d+)',
       event_id_pattern: '消息ID[:：]\\s*(\\S+)',
-      search_in: 'system_or_first_user',
+      search_in: 'last_user',
     },
     null,
     2,
@@ -79,7 +79,7 @@ const configFields = reactive({
   name_pattern: '',
   space_pattern: '',
   event_id_pattern: '',
-  search_in: 'system_or_first_user' as string,
+  search_in: 'last_user' as string,
   prompt_template: '',
 })
 
@@ -94,6 +94,28 @@ const aiSampleMessage = ref('')
 const aiError = ref<string | null>(null)
 const showAiPanel = ref(false)
 
+// Regex 测试面板
+const regexTestText = ref('')
+const regexTestMatch = computed(() => {
+  const text = regexTestText.value
+  return {
+    actor: testPattern(text, configFields.actor_pattern),
+    name: testPattern(text, configFields.name_pattern),
+    space: testPattern(text, configFields.space_pattern),
+    eventId: testPattern(text, configFields.event_id_pattern),
+  }
+})
+
+function testPattern(text: string, pattern: string): string | null {
+  if (!text || !pattern) return null
+  try {
+    const m = new RegExp(pattern).exec(text)
+    return m?.[1] ?? null
+  } catch {
+    return null
+  }
+}
+
 function configToFields(jsonStr: string) {
   try {
     const cfg = JSON.parse(jsonStr || '{}')
@@ -105,7 +127,7 @@ function configToFields(jsonStr: string) {
     configFields.name_pattern = cfg.name_pattern || ''
     configFields.space_pattern = cfg.space_pattern || ''
     configFields.event_id_pattern = cfg.event_id_pattern || ''
-    configFields.search_in = cfg.search_in || 'system_or_first_user'
+    configFields.search_in = cfg.search_in || 'last_user'
     configFields.prompt_template = cfg.prompt_template || ''
   } catch {
     // ignore
@@ -118,10 +140,10 @@ function fieldsToConfig(): string {
       return JSON.stringify({ frontend: configFields.frontend || 'web' }, null, 2)
     case 'api_key_bound':
       return JSON.stringify({
-        external_key: configFields.external_key || 'local-user',
-        frontend: configFields.frontend || 'chatbox',
+        external_key: 'local-user',
+        frontend: 'api_key_bound',
         display_name: configFields.display_name || '本地用户',
-        channel_type: configFields.channel_type || 'direct',
+        channel_type: 'direct',
       }, null, 2)
     case 'regex':
       return JSON.stringify({
@@ -157,7 +179,7 @@ function resetConfigFields(type: IdentityStrategyType) {
   configFields.name_pattern = defaults.name_pattern || ''
   configFields.space_pattern = defaults.space_pattern || ''
   configFields.event_id_pattern = defaults.event_id_pattern || ''
-  configFields.search_in = defaults.search_in || 'system_or_first_user'
+  configFields.search_in = defaults.search_in || 'last_user'
   configFields.prompt_template = defaults.prompt_template || ''
 }
 
@@ -342,38 +364,25 @@ defineExpose({
     <!-- api_key_bound 类型 -->
     <template v-else-if="strategyType === 'api_key_bound'">
       <div class="field-group">
-        <el-form-item label="前端应用" class="config-field">
-          <el-input
-            v-model="configFields.frontend"
-            placeholder="例如: chatbox"
-            @input="onConfigFieldChange"
-          />
-        </el-form-item>
-        <el-form-item label="外部标识" class="config-field">
-          <el-input
-            v-model="configFields.external_key"
-            placeholder="例如: local-user"
-            @input="onConfigFieldChange"
-          />
-        </el-form-item>
         <el-form-item label="显示名" class="config-field">
           <el-input
             v-model="configFields.display_name"
-            placeholder="例如: 本地用户"
+            placeholder="例如: 本地用户 / Cherry Studio"
             @input="onConfigFieldChange"
           />
         </el-form-item>
-        <el-form-item label="频道类型" class="config-field">
-          <el-select v-model="configFields.channel_type" @change="onConfigFieldChange">
-            <el-option label="私聊 (direct)" value="direct" />
-            <el-option label="群聊 (group)" value="group" />
-          </el-select>
-        </el-form-item>
       </div>
+      <p class="form-hint">
+        此 Key 的请求将始终识别为此用户（固定身份）。适用于 ChatBox、Cherry Studio 等单用户本地应用。
+        外部标识和频道类型已自动配置，无需手动设置。
+      </p>
     </template>
 
     <!-- regex 类型 -->
     <template v-else-if="strategyType === 'regex'">
+      <p class="form-intro">
+        从消息文本中用<a href="https://github.com/cdoco/learn-regex-zh" target="_blank">正则表达式</a>提取身份。每条正则必须包含<strong>一个捕获组 <code>()</code></strong>，系统会提取括号内匹配到的值
+      </p>
       <div class="field-group">
         <el-form-item label="前端应用" class="config-field">
           <el-input
@@ -381,42 +390,87 @@ defineExpose({
             placeholder="例如: astrbot"
             @input="onConfigFieldChange"
           />
+          <p class="field-help">标识来源平台，如 astrbot、maibot、discord 等</p>
         </el-form-item>
-        <el-form-item label="用户正则" class="config-field">
+        <el-form-item label="用户标识" class="config-field" required>
           <el-input
             v-model="configFields.actor_pattern"
             placeholder="QQ号[:：]\\s*(\\d+)"
             @input="onConfigFieldChange"
           />
+          <p class="field-help">提取用户唯一 ID（必填）。例：QQ号、Discord ID、用户名</p>
         </el-form-item>
-        <el-form-item label="名称正则" class="config-field">
+        <el-form-item label="显示名称" class="config-field">
           <el-input
             v-model="configFields.name_pattern"
-            placeholder="用户名[:：]\\s*(\\S+)"
+            placeholder="昵称[:：]\\s*(\\S+)"
             @input="onConfigFieldChange"
           />
+          <p class="field-help">提取用户昵称（可选），用于展示</p>
         </el-form-item>
-        <el-form-item label="空间正则" class="config-field">
+        <el-form-item label="群聊 ID" class="config-field">
           <el-input
             v-model="configFields.space_pattern"
             placeholder="群号[:：]\\s*(\\d+)"
             @input="onConfigFieldChange"
           />
+          <p class="field-help">提取群聊 / 会话 ID（可选）。匹配到时频道类型自动设为「群聊」</p>
         </el-form-item>
-        <el-form-item label="事件ID正则" class="config-field">
+        <el-form-item label="消息 ID" class="config-field">
           <el-input
             v-model="configFields.event_id_pattern"
             placeholder="消息ID[:：]\\s*(\\S+)"
             @input="onConfigFieldChange"
           />
+          <p class="field-help">提取消息唯一 ID（可选），用于幂等去重</p>
         </el-form-item>
         <el-form-item label="搜索范围" class="config-field">
           <el-select v-model="configFields.search_in" @change="onConfigFieldChange">
-            <el-option label="System 或第一条用户消息" value="system_or_first_user" />
+            <el-option label="System 消息" value="system" />
             <el-option label="最后一条用户消息" value="last_user" />
-            <el-option label="所有 System 消息" value="all_system" />
+            <el-option label="所有消息" value="all" />
           </el-select>
+          <p class="field-help">决定从消息列表的哪个部分提取文本进行正则匹配</p>
         </el-form-item>
+      </div>
+
+      <!-- 测试提取面板 -->
+      <el-divider content-position="left">
+        <span class="divider-label">测试提取（可选）</span>
+      </el-divider>
+      <div class="regex-test-section">
+        <p class="test-hint">粘贴一条真实消息文本，实时预览正则提取结果：</p>
+        <el-input
+          v-model="regexTestText"
+          type="textarea"
+          :rows="3"
+          placeholder="例: [system] 用户: QQ号=123456, 昵称=小明, 群号=789012"
+        />
+        <div v-if="regexTestText && configFields.actor_pattern" class="test-results">
+          <div class="test-result-row">
+            <span class="test-label">用户标识：</span>
+            <code v-if="regexTestMatch.actor" class="test-value match">{{ regexTestMatch.actor }}</code>
+            <span v-else class="test-value no-match">未匹配</span>
+          </div>
+          <div v-if="configFields.name_pattern" class="test-result-row">
+            <span class="test-label">显示名称：</span>
+            <code v-if="regexTestMatch.name" class="test-value match">{{ regexTestMatch.name }}</code>
+            <span v-else class="test-value no-match">未匹配</span>
+          </div>
+          <div v-if="configFields.space_pattern" class="test-result-row">
+            <span class="test-label">群聊 ID：</span>
+            <code v-if="regexTestMatch.space" class="test-value match">{{ regexTestMatch.space }}</code>
+            <span v-else class="test-value no-match">未匹配</span>
+          </div>
+          <div v-if="configFields.event_id_pattern" class="test-result-row">
+            <span class="test-label">消息 ID：</span>
+            <code v-if="regexTestMatch.eventId" class="test-value match">{{ regexTestMatch.eventId }}</code>
+            <span v-else class="test-value no-match">未匹配</span>
+          </div>
+        </div>
+        <p v-else-if="regexTestText && !configFields.actor_pattern" class="test-hint" style="color: var(--el-color-warning)">
+          请先填写用户标识正则
+        </p>
       </div>
     </template>
 
@@ -601,6 +655,20 @@ defineExpose({
   line-height: 1.5;
 }
 
+.form-intro {
+  margin: 0 0 $space-3;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+
+  code {
+    background: var(--el-fill-color);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+}
+
 .field-group {
   :deep(.el-form-item__label) {
     font-size: 13px;
@@ -610,6 +678,65 @@ defineExpose({
 .config-field {
   :deep(.el-form-item__content) {
     display: block;
+  }
+}
+
+.field-help {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.4;
+}
+
+/* Regex 测试面板 */
+.regex-test-section {
+  padding: $space-3;
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: $radius-md;
+}
+
+.test-hint {
+  margin: 0 0 $space-2;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+
+.test-results {
+  margin-top: $space-2;
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+}
+
+.test-result-row {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  font-size: 13px;
+}
+
+.test-label {
+  color: var(--el-text-color-secondary);
+  min-width: 70px;
+  flex-shrink: 0;
+}
+
+.test-value {
+  font-family: var(--el-font-family-mono, monospace);
+  font-size: 12px;
+
+  &.match {
+    color: var(--el-color-success);
+    background: var(--el-color-success-light-9);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+
+  &.no-match {
+    color: var(--el-text-color-placeholder);
+    font-style: italic;
   }
 }
 
