@@ -230,10 +230,319 @@ async def proxy_thinking_node(
             await forwarder.close()
 
 
+async def _prepare_context(
+    state: AgentState,
+    config: RunnableConfig | None,
+    settings: Any,
+    forwarder: MultiForwarder,
+    memory_store: SqliteMemoryStore,
+    vector_store: VectorStore,
+    stores: dict[str, Any],
+) -> dict[str, Any]:
+    """加载关系、永久/检索记忆、情绪分析, 拼装 LLM 消息.
+
+    Returns:
+        包含 ``rel``, ``messages``, ``emotion_analysis`` 的字典,
+        供后续 pipeline 阶段消费.
+    """
+    from src.core.memory.audience import AudienceFilter
+
+    source_user = state["source_user"]
+
+    rel = await memory_store.get_relationship(
+        state["persona_id"], source_user,
+    ) if source_user else None
+    logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
+    retrieval_ctx = _retrieval_context(state, rel)
+
+    perms = await memory_store.list_permanent(
+        source_user or None,
+        limit=settings.memory.permanent_load_top,
+        space_id=state.get("space_id"),
+    )
+    perms = AudienceFilter.filter(perms, retrieval_ctx)
+    logger.debug("  📚 永久记忆: %d 条", len(perms))
+    for p in perms:
+        await memory_store.mark_accessed(p.id)
+
+    extracted = state.get("extracted_new", [])
+    query = ""
+    for m in reversed(extracted):
+        if m.get("role") == "user":
+            query = m.get("content", "")
+            break
+
+    logger.debug("  🔍 检索查询: %s", query[:100] if query else "(空)")
+
+    retrieved_entries: list = []
+    if query:
+        retriever = MemoryRetriever(forwarder, vector_store, memory_store)
+        results = await retriever.search(
+            query, top_k=settings.memory.retrieval_top_k,
+            retrieval_ctx=retrieval_ctx,
+        )
+        logger.debug("  🔍 检索结果: %d 条", len(results))
+        for r in results:
+            await memory_store.mark_accessed(r.memory_id)
+            entry = await memory_store.get_by_id(r.memory_id)
+            if entry:
+                retrieved_entries.append(entry)
+
+    # 情绪分析: 预计算一次, 供 memory_analysis + relationship_analysis 共享
+    emotion_analysis = await _compute_emotion(forwarder, extracted)
+    logger.debug("  💭 情绪分析: %s (强度=%.2f)", emotion_analysis.get("emotion", "?"), emotion_analysis.get("intensity", 0))
+
+    conversation_history = state.get("messages", [])
+    conversation_history = [m for m in conversation_history if m.get("role") != "system"]
+
+    # 推断本轮触发原因（不需要客户端修改）
+    extracted_user = ""
+    for m in reversed(extracted):
+        if m.get("role") == "user":
+            extracted_user = m.get("content", "")
+            break
+    trigger = infer_trigger_reason(
+        state.get("current_speaker"),
+        extracted_user,
+        channel_type=state.get("channel_type"),
+    )
+
+    # 调试事件: 触发原因
+    from src.infra.debug_context import emit_pipeline
+    emit_pipeline(
+        (config or {}).get("configurable", {}).get("debug_bus") if config else None,
+        event_kind="trigger_reason",
+        reason=trigger,
+        channel_type=state.get("channel_type"),
+    )
+
+    # 加载 Lorebook 条目 (关键词匹配)
+    lorebook_entries: list = []
+    lorebook_store = stores.get("lorebook_store")
+    if lorebook_store is not None and query:
+        try:
+            lorebook_entries = await lorebook_store.match_for_space(
+                query, space_id=state.get("space_id"), limit=5,
+            )
+        except Exception:
+            logger.warning("Lorebook match failed", exc_info=True)
+
+    messages = build_main_dialogue_messages(
+        persona_prompt=state.get("persona") or settings.persona.prompt,
+        persona_name=state.get("persona_name") or settings.persona.name,
+        user_name=state.get("current_speaker") or "未知参与者",
+        permanent_memories=perms,
+        retrieved_memories=retrieved_entries,
+        relationship=rel,
+        conversation_history=conversation_history,
+        proxy_thinking_result=state.get("proxy_thinking_result"),
+        current_speaker=state.get("current_speaker"),
+        channel_type=state.get("channel_type"),
+        space_label=state.get("space_id"),
+        active_participants=state.get("active_participants"),
+        trigger_reason=trigger,
+        tools=state.get("tools"),
+        persona_definition=state.get("persona_definition"),
+        space_id=state.get("space_id"),
+        lorebook_entries=lorebook_entries,
+    )
+
+    logger.debug("  📝 拼装消息数: %d", len(messages))
+
+    return {
+        "rel": rel,
+        "messages": messages,
+        "emotion_analysis": emotion_analysis,
+    }
+
+
+async def _invoke_llm(
+    forwarder: MultiForwarder,
+    messages: list,
+    state: AgentState,
+    stores: dict[str, Any],
+) -> Any:
+    """调用 LLM 生成回复, 含内部 tool 拦截 + 二次调用逻辑."""
+    logger.debug("  🚀 调用 LLM 生成回复...")
+    dialogue = await run_main_dialogue(
+        forwarder,
+        messages,
+        tools=state.get("tools"),
+        tool_choice=state.get("tool_choice"),
+        parallel_tool_calls=state.get("parallel_tool_calls"),
+    )
+
+    # 内部 tool 拦截: 模型调用了内部 tool 时, 服务端执行, 再调一轮 LLM
+    internal_names: set[str] = state.get("internal_tool_names") or set()
+    if dialogue.finish_reason == "tool_calls" and internal_names:
+        import json as _json
+
+        from src.core.tools.internal_registry import get_internal_tool_registry
+
+        registry = get_internal_tool_registry()
+        tool_calls = dialogue.message.get("tool_calls") or []
+        internal_calls = [
+            tc for tc in tool_calls
+            if tc.get("function", {}).get("name") in internal_names
+        ]
+        client_calls = [
+            tc for tc in tool_calls
+            if tc.get("function", {}).get("name") not in internal_names
+        ]
+
+        if internal_calls:
+            logger.debug("  🔧 内部 tool 拦截: %d 个", len(internal_calls))
+            # 执行内部 tool, 构建 tool_result
+            messages_with_tools = list(messages) + [dict(dialogue.message)]
+            identity_store = stores.get("identity_store")
+            for tc in internal_calls:
+                func = tc.get("function", {})
+                tool_name = func.get("name", "")
+                handler_tool = registry.get(tool_name)
+                if handler_tool is None:
+                    continue
+                # 解析参数
+                try:
+                    args = _json.loads(func.get("arguments") or "{}")
+                except _json.JSONDecodeError:
+                    args = {}
+                # 执行 handler
+                try:
+                    result = await handler_tool.handler(
+                        actor_id=state.get("actor_id"),
+                        space_id=state.get("space_id"),
+                        display_name=state.get("current_speaker"),
+                        identity_store=identity_store,
+                        **args,
+                    )
+                except Exception as e:
+                    result = {"success": False, "error": str(e)}
+                messages_with_tools.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": _json.dumps(result, ensure_ascii=False),
+                })
+                logger.debug("  🔧 内部 tool %s 结果: %s", tool_name, result)
+
+            # 再调一轮 LLM, 让模型基于 tool_result 生成自然回复
+            logger.debug("  🚀 内部 tool 执行完毕, 再调 LLM...")
+            dialogue = await run_main_dialogue(
+                forwarder,
+                messages_with_tools,
+                tools=state.get("tools"),
+                tool_choice=None,  # 第二轮不强制工具
+                parallel_tool_calls=state.get("parallel_tool_calls"),
+            )
+            # 第二轮如果仍有内部 tool_calls, 放弃拦截直接返回 (防死循环)
+            # 合并第一轮的客户端 tool_calls (如果有)
+            second_tool_calls = dialogue.message.get("tool_calls") or []
+            if client_calls and not second_tool_calls:
+                dialogue.message["tool_calls"] = client_calls
+                dialogue.finish_reason = "tool_calls"
+
+    return dialogue
+
+
+async def _process_response(
+    dialogue: Any,
+    state: AgentState,
+    forwarder: MultiForwarder,
+    config: RunnableConfig | None,
+    stores: dict[str, Any],
+    rel: Any,
+) -> str:
+    """提取回复文本; 群聊模式下经 Expressor 改写."""
+    content = dialogue.message.get("content")
+    response = content if isinstance(content, str) else ""
+
+    # Expressor 表达改写 (仅群聊最终文本, 不改写工具调用)
+    if (
+        dialogue.finish_reason == "stop"
+        and response
+        and state.get("channel_type") == "group"
+    ):
+        from src.core.agents import ExpressorConfig, run_expressor
+
+        # 从 space_policy_store 加载空间社交策略
+        space_policy = None
+        space_policy_store = stores.get("space_policy_store")
+        space_id = state.get("space_id")
+        if space_policy_store is not None and space_id:
+            try:
+                space_policy = await space_policy_store.get(space_id)
+            except Exception:
+                logger.warning("Failed to load space policy for expressor", exc_info=True)
+
+        expressor_cfg = ExpressorConfig(
+            enabled=space_policy.expressor_enabled if (space_policy and space_policy.expressor_enabled is not None) else True,
+            temperature=space_policy.expressor_temperature if space_policy is not None else 0.4,
+        )
+        relationship_summary = format_relationship(rel)
+        expression_style = state.get("expression_style", "")
+        rewritten = await run_expressor(
+            forwarder,
+            response,
+            state.get("current_speaker") or "未知参与者",
+            state.get("channel_type"),
+            relationship_summary,
+            config=expressor_cfg,
+            expression_style=expression_style,
+        )
+        if rewritten != response:
+            logger.debug(
+                "  ✨ Expressor 改写: %d → %d",
+                len(response), len(rewritten),
+            )
+            # 调试事件: Expressor 改写对比
+            from src.infra.debug_context import emit_pipeline
+            emit_pipeline(
+                (config or {}).get("configurable", {}).get("debug_bus") if config else None,
+                event_kind="expressor_rewrite",
+                original_length=len(response),
+                rewritten_length=len(rewritten),
+                original_preview=response[:200],
+                rewritten_preview=rewritten[:200],
+                expression_style=expression_style or None,
+            )
+            response = rewritten
+            dialogue.message["content"] = rewritten
+
+    return response
+
+
+def _extract_metadata(
+    response: str,
+    dialogue: Any,
+    emotion_analysis: dict,
+) -> dict[str, Any]:
+    """从对话结果组装最终返回字典."""
+    logger.debug(
+        "  ✅ 生成完成, 长度: %d, finish_reason: %s",
+        len(response),
+        dialogue.finish_reason,
+    )
+    result: dict[str, Any] = {
+        "response": response,
+        "response_message": dialogue.message,
+        "finish_reason": dialogue.finish_reason,
+        "emotion_analysis": emotion_analysis,
+    }
+    if dialogue.usage:
+        result["upstream_usage"] = dialogue.usage
+    return result
+
+
 async def main_dialogue_node(
     state: AgentState, config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
-    """主对话 Agent: 加载记忆 + 拼装上下文 + 生成回复."""
+    """主对话 Agent: 加载记忆 + 拼装上下文 + 生成回复.
+
+    Pipeline 由四个阶段组成:
+    1. ``_prepare_context``  -- 加载关系/记忆/情绪, 拼装 LLM 消息
+    2. ``_invoke_llm``       -- 调用 LLM + 内部 tool 拦截
+    3. ``_process_response`` -- 提取文本 + Expressor 改写
+    4. ``_extract_metadata`` -- 组装返回字典
+    """
     # 流式模式下 _run_memory_graph 已预填充 response: 直接返回, 不重复调用 LLM
     if "response" in state and state["response"] is not None:
         logger.debug("=" * 60)
@@ -244,7 +553,6 @@ async def main_dialogue_node(
         return result
 
     settings = get_settings()
-    source_user = state["source_user"]
     stores = _get_stores(config)
     forwarder: MultiForwarder = stores["multi_forwarder"]
     memory_store: SqliteMemoryStore = stores["memory_store"]
@@ -253,254 +561,17 @@ async def main_dialogue_node(
 
     logger.debug("=" * 60)
     logger.debug("🤖 [main_dialogue] 开始处理")
-    logger.debug("  source_user: %s", source_user)
+    logger.debug("  source_user: %s", state["source_user"])
 
     try:
-        from src.core.memory.audience import AudienceFilter
-
-        rel = await memory_store.get_relationship(state["persona_id"], source_user) if source_user else None
-        logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
-        retrieval_ctx = _retrieval_context(state, rel)
-
-        perms = await memory_store.list_permanent(
-            source_user or None,
-            limit=settings.memory.permanent_load_top,
-            space_id=state.get("space_id"),
+        ctx = await _prepare_context(
+            state, config, settings, forwarder, memory_store, vector_store, stores,
         )
-        perms = AudienceFilter.filter(perms, retrieval_ctx)
-        logger.debug("  📚 永久记忆: %d 条", len(perms))
-        for p in perms:
-            await memory_store.mark_accessed(p.id)
-
-        extracted = state.get("extracted_new", [])
-        query = ""
-        for m in reversed(extracted):
-            if m.get("role") == "user":
-                query = m.get("content", "")
-                break
-
-        logger.debug("  🔍 检索查询: %s", query[:100] if query else "(空)")
-
-        retrieved_entries: list = []
-        if query:
-            retriever = MemoryRetriever(forwarder, vector_store, memory_store)
-            results = await retriever.search(
-                query, top_k=settings.memory.retrieval_top_k,
-                retrieval_ctx=retrieval_ctx,
-            )
-            logger.debug("  🔍 检索结果: %d 条", len(results))
-            for r in results:
-                await memory_store.mark_accessed(r.memory_id)
-                entry = await memory_store.get_by_id(r.memory_id)
-                if entry:
-                    retrieved_entries.append(entry)
-
-        # 情绪分析: 预计算一次, 供 memory_analysis + relationship_analysis 共享
-        emotion_analysis = await _compute_emotion(forwarder, extracted)
-        logger.debug("  💭 情绪分析: %s (强度=%.2f)", emotion_analysis.get("emotion", "?"), emotion_analysis.get("intensity", 0))
-
-        conversation_history = state.get("messages", [])
-        conversation_history = [m for m in conversation_history if m.get("role") != "system"]
-
-        # 推断本轮触发原因（不需要客户端修改）
-        extracted_user = ""
-        for m in reversed(extracted):
-            if m.get("role") == "user":
-                extracted_user = m.get("content", "")
-                break
-        trigger = infer_trigger_reason(
-            state.get("current_speaker"),
-            extracted_user,
-            channel_type=state.get("channel_type"),
+        dialogue = await _invoke_llm(forwarder, ctx["messages"], state, stores)
+        response = await _process_response(
+            dialogue, state, forwarder, config, stores, ctx["rel"],
         )
-
-        # 调试事件: 触发原因
-        from src.infra.debug_context import emit_pipeline
-        emit_pipeline(
-            (config or {}).get("configurable", {}).get("debug_bus") if config else None,
-            event_kind="trigger_reason",
-            reason=trigger,
-            channel_type=state.get("channel_type"),
-        )
-
-        # 加载 Lorebook 条目 (关键词匹配)
-        lorebook_entries: list = []
-        lorebook_store = stores.get("lorebook_store")
-        if lorebook_store is not None and query:
-            try:
-                lorebook_entries = await lorebook_store.match_for_space(
-                    query, space_id=state.get("space_id"), limit=5,
-                )
-            except Exception:
-                pass
-
-        messages = build_main_dialogue_messages(
-            persona_prompt=state.get("persona") or settings.persona.prompt,
-            persona_name=state.get("persona_name") or settings.persona.name,
-            user_name=state.get("current_speaker") or "未知参与者",
-            permanent_memories=perms,
-            retrieved_memories=retrieved_entries,
-            relationship=rel,
-            conversation_history=conversation_history,
-            proxy_thinking_result=state.get("proxy_thinking_result"),
-            current_speaker=state.get("current_speaker"),
-            channel_type=state.get("channel_type"),
-            space_label=state.get("space_id"),
-            active_participants=state.get("active_participants"),
-            trigger_reason=trigger,
-            tools=state.get("tools"),
-            persona_definition=state.get("persona_definition"),
-            space_id=state.get("space_id"),
-            lorebook_entries=lorebook_entries,
-        )
-
-        logger.debug("  📝 拼装消息数: %d", len(messages))
-        logger.debug("  🚀 调用 LLM 生成回复...")
-        dialogue = await run_main_dialogue(
-            forwarder,
-            messages,
-            tools=state.get("tools"),
-            tool_choice=state.get("tool_choice"),
-            parallel_tool_calls=state.get("parallel_tool_calls"),
-        )
-
-        # 内部 tool 拦截: 模型调用了内部 tool 时, 服务端执行, 再调一轮 LLM
-        internal_names: set[str] = state.get("internal_tool_names") or set()
-        if dialogue.finish_reason == "tool_calls" and internal_names:
-            import json as _json
-
-            from src.core.tools.internal_registry import get_internal_tool_registry
-
-            registry = get_internal_tool_registry()
-            tool_calls = dialogue.message.get("tool_calls") or []
-            internal_calls = [
-                tc for tc in tool_calls
-                if tc.get("function", {}).get("name") in internal_names
-            ]
-            client_calls = [
-                tc for tc in tool_calls
-                if tc.get("function", {}).get("name") not in internal_names
-            ]
-
-            if internal_calls:
-                logger.debug("  🔧 内部 tool 拦截: %d 个", len(internal_calls))
-                # 执行内部 tool, 构建 tool_result
-                messages_with_tools = list(messages) + [dict(dialogue.message)]
-                identity_store = stores.get("identity_store")
-                for tc in internal_calls:
-                    func = tc.get("function", {})
-                    tool_name = func.get("name", "")
-                    handler_tool = registry.get(tool_name)
-                    if handler_tool is None:
-                        continue
-                    # 解析参数
-                    try:
-                        args = _json.loads(func.get("arguments") or "{}")
-                    except _json.JSONDecodeError:
-                        args = {}
-                    # 执行 handler
-                    try:
-                        result = await handler_tool.handler(
-                            actor_id=state.get("actor_id"),
-                            space_id=state.get("space_id"),
-                            display_name=state.get("current_speaker"),
-                            identity_store=identity_store,
-                            **args,
-                        )
-                    except Exception as e:
-                        result = {"success": False, "error": str(e)}
-                    messages_with_tools.append({
-                        "role": "tool",
-                        "tool_call_id": tc.get("id", ""),
-                        "content": _json.dumps(result, ensure_ascii=False),
-                    })
-                    logger.debug("  🔧 内部 tool %s 结果: %s", tool_name, result)
-
-                # 再调一轮 LLM, 让模型基于 tool_result 生成自然回复
-                logger.debug("  🚀 内部 tool 执行完毕, 再调 LLM...")
-                dialogue = await run_main_dialogue(
-                    forwarder,
-                    messages_with_tools,
-                    tools=state.get("tools"),
-                    tool_choice=None,  # 第二轮不强制工具
-                    parallel_tool_calls=state.get("parallel_tool_calls"),
-                )
-                # 第二轮如果仍有内部 tool_calls, 放弃拦截直接返回 (防死循环)
-                # 合并第一轮的客户端 tool_calls (如果有)
-                second_tool_calls = dialogue.message.get("tool_calls") or []
-                if client_calls and not second_tool_calls:
-                    dialogue.message["tool_calls"] = client_calls
-                    dialogue.finish_reason = "tool_calls"
-
-        content = dialogue.message.get("content")
-        response = content if isinstance(content, str) else ""
-
-        # Expressor 表达改写 (仅群聊最终文本, 不改写工具调用)
-        if (
-            dialogue.finish_reason == "stop"
-            and response
-            and state.get("channel_type") == "group"
-        ):
-            from src.core.agents import ExpressorConfig, run_expressor
-
-            # 从 space_policy_store 加载空间社交策略
-            space_policy = None
-            space_policy_store = stores.get("space_policy_store")
-            space_id = state.get("space_id")
-            if space_policy_store is not None and space_id:
-                try:
-                    space_policy = await space_policy_store.get(space_id)
-                except Exception:
-                    pass
-
-            expressor_cfg = ExpressorConfig(
-                enabled=space_policy.expressor_enabled if (space_policy and space_policy.expressor_enabled is not None) else True,
-                temperature=space_policy.expressor_temperature if space_policy is not None else 0.4,
-            )
-            relationship_summary = format_relationship(rel)
-            expression_style = state.get("expression_style", "")
-            rewritten = await run_expressor(
-                forwarder,
-                response,
-                state.get("current_speaker") or "未知参与者",
-                state.get("channel_type"),
-                relationship_summary,
-                config=expressor_cfg,
-                expression_style=expression_style,
-            )
-            if rewritten != response:
-                logger.debug(
-                    "  ✨ Expressor 改写: %d → %d",
-                    len(response), len(rewritten),
-                )
-                # 调试事件: Expressor 改写对比
-                from src.infra.debug_context import emit_pipeline
-                emit_pipeline(
-                    (config or {}).get("configurable", {}).get("debug_bus") if config else None,
-                    event_kind="expressor_rewrite",
-                    original_length=len(response),
-                    rewritten_length=len(rewritten),
-                    original_preview=response[:200],
-                    rewritten_preview=rewritten[:200],
-                    expression_style=expression_style or None,
-                )
-                response = rewritten
-                dialogue.message["content"] = rewritten
-
-        logger.debug(
-            "  ✅ 生成完成, 长度: %d, finish_reason: %s",
-            len(response),
-            dialogue.finish_reason,
-        )
-        result: dict[str, Any] = {
-            "response": response,
-            "response_message": dialogue.message,
-            "finish_reason": dialogue.finish_reason,
-            "emotion_analysis": emotion_analysis,
-        }
-        if dialogue.usage:
-            result["upstream_usage"] = dialogue.usage
-        return result
+        return _extract_metadata(response, dialogue, ctx["emotion_analysis"])
     finally:
         if owns_fwd:
             await forwarder.close()
