@@ -1,9 +1,9 @@
 # 身份管理模块
 
-> **模块版本**: v0.3.0
+> **模块版本**: v0.3.4
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-26
-> **最后更新**: 2026-07-26
+> **最后更新**: 2026-08-01
 > **作者**: HarryHelloo
 
 ---
@@ -333,6 +333,7 @@ mnemosync identity unbind <actor_id> <group_id>
 | [消息处理](message-processing.md) | 身份解析是请求预处理的第一步, 先于提示词清洗与图编排 |
 | [记忆系统](memory-system.md) | effective_user_id 为隔离边界; space_id 参与受众过滤; 幂等保护记忆不被重复写入 |
 | [LangGraph 编排](langgraph.md) | AgentState 携带 actor_id / space_id / persona_id / channel_type |
+| [内部工具](internal-tools.md) | InternalToolRegistry + 跨平台身份绑定内部 tool |
 | [上游转发](forward.md) | 内部 tool 注入与拦截; 空间级串行锁; 身份绑定指令触发拦截 |
 
 ---
@@ -344,4 +345,4 @@ mnemosync identity unbind <actor_id> <group_id>
 | v0.3.0 | 2026-07-26 | 初始版本: 身份模型 + 四策略 + 非归属模式 (Sub-Phase A); 空间事件流 + 幂等 (B); 受众过滤联动 (C); 关系按 Actor 解析 (D); 面板身份管理页 + CLI 命令组 |
 | v0.3.1 | 2026-07-27 | 第五种策略类型 `plugin`: 插件接口 + AstrBot 参考实现; 新增 `/identity/plugins` 端点 |
 | v0.3.1 | 2026-07-31 | regex 策略 search_in 重构: 新增 `last_user`，废弃 `system_or_first_user` (向后兼容); 插件 `preprocess()` 改为可选; 插件文档 |
-| v0.3.4 | 2026-07-28 | 用户自助跨平台绑定: 指令触发 + 内部 tool 自然语言触发; 内部 tool 注册表架构 |
+| v0.3.4 | 2026-07-28 | 用户自助跨平台绑定: 指令触发 + 内部 tool 自然语言触发; 内部 tool 注册表架构; 新增 cross-reference [内部工具](internal-tools.md) |

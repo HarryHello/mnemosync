@@ -1,8 +1,8 @@
 # 认证 API 文档
 
-> **系统版本**: v0.3.0
+> **系统版本**: v0.3.4
 > **文档状态**: 与代码同步
-> **最后更新**: 2026-07-26
+> **最后更新**: 2026-08-01
 
 ---
 
@@ -270,6 +270,9 @@ AstrBot / AIRI / Web  ── 走 /v1/chat/completions
 | `data/notifications.db` | v0.2.13 通知中心 |
 | `data/identity.db` | v0.3.0 身份四表 (actors / user_groups / actor_group_memberships / identity_strategies) |
 | `data/idempotency.db` | v0.3.0 幂等重放缓存 (平台重发消息原样返回首次响应) |
+| `data/persona.db` | v0.3.3 结构化人格版本存储 (personas + persona_versions) |
+| `data/lorebook.db` | v0.3.3 Lorebook 关键词知识条目 |
+| `data/space_policy.db` | v0.3.3 空间社交策略 |
 | `data/persona_override.toml` | v0.2.11 面板 `PUT /panel/admin/persona` 落地的人格覆盖 (优先级最高), 见 [configuration.md §3.1](configuration.md#31-persona-v021-服务器优先人格) |
 
 ---
@@ -303,3 +306,4 @@ A: 独立。API Key 只做鉴权与身份策略绑定; 代理思考是否启用�
 | v0.2.11 | 2026-07-19 | 人格配置面板编辑: 新增 `GET/PUT/DELETE /panel/admin/persona` 端点, 持久化 `data/persona_override.toml` (多层合并, 优先级: override > config.local [persona] > 资源默认); 运行时 `_reset_settings()` 热重载; 前端 `PromptsPage` 新增"人格编辑"标签页 (name / prompt / relation 三段编辑, 含保存与重置为默认) |
 | v0.2.12 | 2026-07-20 | 面板首次登录强制改账号密码: 新增 `POST /panel/auth/setup-credentials` (同时改用户名 + 密码) 与 `require_password_settled` dependency; `must_change_password=True` 时 `/panel/admin/*` / `/panel/api-keys/*` / `/panel/admin/debug/*` 全部返回 `403 password_change_required`; 前端新增 `/setup` 页面 (BlankLayout) 与全局守卫强制跳转; `/settings` 精简为改密 + 只读用户名 + CLI 提示; `/v1/*` API Key 鉴权路径不受影响 |
 | v0.3.0 | 2026-07-26 | 概念区分新增参与者/用户组两层 (服务器侧身份解析, 取代"最终用户由前端自行管理"); 新增 14 个 `/panel/admin/identity/*` 端点 (策略 CRUD / 参与者只读 / 用户组 / 绑定解绑) 与 `actor_id` 关系端点参数; `POST /panel/api-keys` 支持 `strategy_id`; 数据库表补 `identity.db` / `idempotency.db` / `notifications.db`; 详见 [modules/identity.md](modules/identity.md) |
+| v0.3.3 | 2026-08-01 | 数据库表补 `persona.db` / `lorebook.db` / `space_policy.db` (结构化人格 / Lorebook / 空间策略) |

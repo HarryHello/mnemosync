@@ -19,7 +19,7 @@
 │  \_│  │_╱╲_│ ╲_╱╲____╱╲_│  │_╱╲___╱╲____╱  \_/ ╲_│ ╲_╱╲____╱  │
 │                                                               │
 │                         Mnemosync                             │
-│                          v0.3.0                               │
+│                          v0.3.4                               │
 │                                                               │
 ╰───────────────────────────────────────────────────────────────╯
 ```
@@ -44,7 +44,7 @@ Mnemosync 在网络层拦截 OpenAI 兼容请求，**服务器持有对话真相
 ## ✨ 核心特性
 
 - **👥 单人格多用户 (v0.3.0)**
-  一个实例一个人格, 同时服务多个真实用户。API Key 绑定**身份识别策略** (direct / api_key_bound / regex / llm), 服务器侧从请求中提取参与者 (Actor): AstrBot 的 QQ 号、ChatBox 的固定用户、或模型语义识别。**跨平台身份归一**: 把同一人在不同平台的 Actor 绑进一个用户组 (UserGroup), 记忆与关系以有效用户 ID 为边界共享。群聊按空间 (space) 分区成独立对话流, 记忆检索**先按受众过滤再交给模型**——其他参与者的私有记忆不会泄入上下文。未绑定策略的 Key 进入非归属模式 (不建身份、不读写私有记忆、照常回复)。平台重发消息按事件 ID 幂等重放, 不烧重复 token。
+  一个实例一个人格, 同时服务多个真实用户。API Key 绑定**身份识别策略** (direct / api_key_bound / regex / llm / plugin), 服务器侧从请求中提取参与者 (Actor): AstrBot 的 QQ 号、ChatBox 的固定用户、或模型语义识别。**跨平台身份归一**: 把同一人在不同平台的 Actor 绑进一个用户组 (UserGroup), 记忆与关系以有效用户 ID 为边界共享。群聊按空间 (space) 分区成独立对话流, 记忆检索**先按受众过滤再交给模型**——其他参与者的私有记忆不会泄入上下文。未绑定策略的 Key 进入非归属模式 (不建身份、不读写私有记忆、照常回复)。平台重发消息按事件 ID 幂等重放, 不烧重复 token。支持插件级身份解析 (v0.3.1), 用户自助跨平台绑定 (v0.3.4)。
 
 - **🧠 跨前端连续对话 (v0.2.6)**
   服务端维护 `conversation_turns` append-only 流水，所有前端 (AstrBot / AIRI / Web / SDK) 写入同一 bucket。装填时**忽略客户端携带的历史**，只取最后一条 user 消息，其余上下文由服务器双窗装填 (时间窗默认 7d + 模型窗按 `context_length` 从最老那端裁剪)。换前端不失忆，客户端 UI"清空"也不会抹掉服务器的连续记忆。
@@ -66,6 +66,9 @@ Mnemosync 在网络层拦截 OpenAI 兼容请求，**服务器持有对话真相
 
 - **🛠️ 调试面板 (v0.2.5)**
   Web UI 内嵌调试聊天页 + HTTP hop 观测：每次请求的进出方向、body、耗时都通过 SSE 推给面板，支持流式 chunk 组装。
+
+- **🎭 结构化人格 (v0.3.3)**
+  人格从单段 Markdown 演进为结构化 PersonaDefinition (身份/风格/场景/行为边界)。支持按空间覆盖表达倾向、SillyTavern V1/V2 角色卡导入、Lorebook 关键词知识注入。多人格 profile 共存与切换 (v0.3.4)。
 
 - **🚀 轻量级部署**
   Python 3.12+ / FastAPI / SQLite / ChromaDB (本地嵌入式)。支持 Docker 一键启动。
@@ -210,6 +213,9 @@ mnemosync identity bind <actor_id> <group_id>
   - [Forward 转发路径](./docs/modules/forward.md)
   - [LLM 服务商与 role_bindings](./docs/modules/llm-service.md)
   - [工具](./docs/modules/tools.md)
+  - [内部工具与身份绑定](./docs/modules/internal-tools.md)
+  - [结构化人格](./docs/modules/persona-definition.md)
+  - [角色卡导入](./docs/modules/character-card.md)
   - [CLI](./docs/modules/cli.md)
 
 ---
@@ -239,7 +245,10 @@ mnemosync identity bind <actor_id> <group_id>
 - [x] **v0.2.10** — 关系称呼动态演化: `update_addressing` tool + `relationship_audit_log`; 面板编辑对话框 + 变更历史 + 回退
 - [x] **v0.2.11** — 人格面板编辑 (`data/persona_override.toml` 热重载); `MemoriesPage` 全列 sortable + filter; 亲密度 / 信任度按数值分档着色; SVG favicon 品牌图标
 - [x] **v0.3.0** — **单人格多用户**: 身份识别策略 (绑定 API Key) + 参与者/用户组跨平台身份归一 + 非归属模式; 群聊空间事件流 + 幂等重放; 记忆受众过滤; 面板「身份管理」页 + `mnemosync identity` CLI
-- [ ] **未来** — 多人格 (`persona_id`) / 人格自我演化 / 群聊摘要与检查点
+- [x] **v0.3.1** — 身份解析插件 (`plugin` 策略类型) + AstrBot 参考实现; regex `search_in` 重构
+- [x] **v0.3.3** — **结构化人格**: PersonaDefinition + 空间覆盖; SillyTavern V1/V2 角色卡导入; Lorebook 关键词知识; SocialPolicy 空间社交策略; Expressor 表达改写; 内部 tool 注册表; 跨平台身份绑定; 空间级串行锁; 管线调试事件
+- [x] **v0.3.4** — **多人格 profile**: `personas` 表 + 切换 API; `PersonaIdentity` 移除 per-user 字段; 用户自助跨平台绑定; 人格改名
+- [ ] **未来** — 人格自我演化 / 群聊摘要与检查点
 
 ---
 

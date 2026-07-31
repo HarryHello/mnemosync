@@ -339,6 +339,79 @@ v0.2.x 单人格单用户: `source_user` 恒为 `"default"`, 所有记忆/关系
 
 ---
 
+## 结构化人格定义 (v0.3.3)
+
+### 背景
+
+v0.2.x 的人格是单段 Markdown 文本, 写入 `config.local.toml` 的 `[persona]` 段。面板编辑走 `data/persona_override.toml` 文件覆盖层。这个设计在单人格阶段够用, 但暴露出几个问题:
+
+1. **单段文本不可分治**: 人格 = 角色身份 + 说话风格 + 场景描述 + 行为约束, 全部混在一个字符串里
+2. **不可版本化**: prompt 变更没有版本号、没有变更记录
+3. **不可组合**: 无法按空间覆盖表达倾向、无法导入外部角色卡
+4. **角色卡导入无路径**: 用户不能导入 SillyTavern Character Card
+
+### 决策
+
+1. **PersonaDefinition 结构化**: `personality` / `speaking_style` / `values` / `persona_addressing` 四个独立字段
+2. **空间覆盖**: `space_overrides: dict[str, PersonaOverride]`, 按 `space_id` 覆盖 `speaking_style` / `personality` / `scenario`
+3. **per-user 字段移除**: `user_addressing` 和 `context` 是 per-user 级别的, 由 `Relationship` 模型维护, 不在人格级定义中
+4. **版本化存储**: `persona_versions` 表, 每个版本是一个完整的 `PersonaDefinition` JSON, 支持回滚
+5. **向后兼容**: `from_legacy(name, prompt)` 自动转为结构化格式, `version="0.0.0"` 标记遗留
+
+### 显式范围外
+
+- **多人格**: `persona_id` 从 state 读取, personas 表与多人格路由在 v0.3.4 落地
+- **人格自我演化**: 长期目标, 本次不涉及
+- **Lorebook**: 作者预定义知识与对话长期记忆的分离, 在 v0.3.3 落地
+
+---
+
+## 角色卡导入 (v0.3.3)
+
+### 背景
+
+社区有大量 SillyTavern 角色卡 (PNG/JSON), 用户希望能直接导入而非从零编写人格 prompt。
+
+### 决策
+
+1. **支持 SillyTavern V1/V2**: V1 (IEND 后 JSON), V2 (tEXt chunk, key="chara")
+2. **安全校验**: 文件大小 ≤ 10MB, JSON 深度 ≤ 10, 字符串长度 ≤ 10000, 丢弃可执行字段
+3. **字段映射**: `description` → `personality`, `personality` → `speaking_style`, `scenario` → `context`, `system_prompt` → 附加到 `personality`
+4. **人工确认**: 导入后生成 PersonaDraft, 需人工确认才能激活
+
+---
+
+## 内部工具注册表 (v0.3.3)
+
+### 背景
+
+跨平台身份绑定需要模型在对话中自然判断意图并调用工具, 但这些工具不应暴露给客户端。
+
+### 决策
+
+1. **InternalToolRegistry**: 全局注册表, lifespan 初始化时加载
+2. **注入与拦截**: forward 路径把内部 tools 合并进 tools 列表; 出站 tool_calls 中属于内部 tool 的, 执行 handler, 不返回给客户端
+3. **重调**: 内部 tool 执行完毕后, 把 tool_result 加入 messages, 再调一轮 LLM 生成自然回复
+4. **双触发模式**: 指令触发 (可靠, 不调 LLM) + 自然语言触发 (增强, 模型调内部 tool)
+
+---
+
+## 多人格 profile (v0.3.4)
+
+### 背景
+
+v0.3.0 实现了单人格多用户, 但一个实例只能有一个人格。用户希望能在面板切换不同人格。
+
+### 决策
+
+1. **personas 表**: 人格 profile 注册表, 管理多个人格共存
+2. **persona_id 关联**: `persona_versions` 表通过 `persona_id` 列关联到 personas 表
+3. **切换 API**: `POST /panel/admin/personas/{id}/activate` 设置 `is_active=1`
+4. **初始迁移**: 自动将已有版本关联到新创建的默认人格
+5. **删除级联**: 删除人格级联删除其所有版本
+
+---
+
 ## 待补充
 
 后续遇到的新决策会追加到本文档.

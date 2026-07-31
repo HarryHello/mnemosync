@@ -3,7 +3,7 @@
 > **系统版本**: v0.3.4
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
-> **最后更新**: 2026-07-28
+> **最后更新**: 2026-08-01
 > **作者**: HarryHelloo
 
 ---
@@ -333,4 +333,6 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 | v0.2.10 | 2026-07-19 | 关系称呼动态演化: `relationships` 加 3 个 nullable 列 + `relationship_audit_log` 表; 关系分析 Agent 获 `update_addressing` 工具; 面板 `RelationshipsPage` 加编辑对话框 + 变更历史 + 回退按钮 |
 | v0.2.11 | 2026-07-19 | 人格面板编辑: `GET/PUT/DELETE /panel/admin/persona` + `data/persona_override.toml` (优先级最高); 面板 `MemoriesPage` 全列 sortable + filter (含 `source_frontend` 枚举筛选); 亲密度 / 信任度进度条按数值分档着色; 全局品牌图标改为 SVG favicon; 文档批量对齐 |
 | v0.3.0 | 2026-07-26 | **单人格多用户**: 身份模型 (Actor / UserGroup / effective_user_id) + 四种身份策略绑定 API Key + 非归属模式; 空间事件流 (space_id / committed_sequence / late_arrival / list_for_space); 幂等重放 (idempotency.db); 受众过滤检索 (AudienceFilter 两级过滤); 关系按 effective_user_id 分区; 移除全部 `"default"` 用户硬编码; 新增 `src/core/identity/`、identity_store / idempotency_store; 面板「身份管理」页 + `mnemosync identity` CLI |
+| v0.3.3 | 2026-07-28 | **结构化人格 + 插件 + 工具协议**: PersonaDefinition 结构化人格定义 (身份/风格/空间覆盖); SillyTavern V1/V2 角色卡导入; 身份解析插件 (plugin 策略类型); 内部 tool 注册表 (InternalToolRegistry) + 跨平台身份绑定; Expressor 表达改写层; 空间级串行锁; SocialPolicy; Lorebook; persona_store / lorebook_store / space_policy_store |
+| v0.3.4 | 2026-07-30 | **多人格 profile**: personas 表 + 切换 API; PersonaIdentity 移除 per-user 字段; 用户自助跨平台绑定; 人格改名 |
 | v0.3.3 | 2026-07-28 | **工具协议完整闭环**: Expressor 表达改写层; 工具事务桥接 + 幂等重放; API Key 工具策略 (白名单/黑名单/冷却/全局频率); 工具参数隐私检查; 模型候选工具能力声明; 平台能力提示 + 选择性参与指南; 表达习惯学习; **调试与可观测性**: 管线事件 (6 类) + 前端渲染; 交互事务聚合; 评估维度统计; **并发与身份**: 空间级串行锁; 跨平台身份绑定 (指令 + 内部 tool); 内部 tool 注册表; **人格系统**: 结构化人格定义 (PersonaDefinition + SQLite 存储 + 版本化); 按空间覆盖表达倾向; 角色卡导入 (SillyTavern V1/V2); Lorebook 关键词匹配 + 注入; 记忆纠正 (supersede 软替代); SocialPolicy 空间社交策略 |

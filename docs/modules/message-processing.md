@@ -1,9 +1,9 @@
 # 消息处理流程 | Message Processing Flow
 
-> **系统版本**: v0.3.0
+> **系统版本**: v0.3.4
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-26
+> **最后更新**: 2026-08-01
 > **作者**: HarryHelloo
 
 ---
@@ -218,9 +218,9 @@ relationship_analysis   memory_analysis (ReAct)
                                     └─► SQLite INSERT MemoryEntry
 ```
 
-**记忆分析** (ReAct, max_iterations=6): 用 `vector_search / emotion_analyzer / time_decay_calculator` 三个工具, 输出 `{new_memories, decay_evaluations}`。写入由节点内的 `MemoryLifecycle` 顺手完成——**没有独立的 vector_index 节点**。
+**记忆分析** (ReAct, max_iterations=4): 用 `vector_search` 工具, 输出 `{new_memories, decay_evaluations}` (v0.3.0 起 `decay_evaluations` 恒空, 衰减由确定性公式处理)。写入由节点内的 `MemoryLifecycle` 顺手完成——**没有独立的 vector_index 节点**。非归属模式 (source_user 为空) 时节点直接返回空结果。
 
-**关系分析** (ReAct, max_iterations=3): 用 `emotion_analyzer`, 输出 `{intimacy_delta, trust_delta, new_relationship_type}`。
+**关系分析** (ReAct, max_iterations=2): 用 `update_addressing` 工具, 输出 `{intimacy_delta, trust_delta, new_relationship_type}`。非归属模式时节点直接返回空结果。
 
 详见 [agents.md](agents.md) §3/§5。
 

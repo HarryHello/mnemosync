@@ -1,9 +1,9 @@
 # 部署指南 | Deployment
 
-> **系统版本**: v0.3.0
+> **系统版本**: v0.3.4
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
-> **最后更新**: 2026-07-26
+> **最后更新**: 2026-08-01
 > **作者**: HarryHelloo
 
 ---
@@ -57,6 +57,9 @@ Mnemosync/
 - `notifications.db` — v0.2.13 通知中心
 - `identity.db` — **v0.3.0** 身份四表 (actors / user_groups / actor_group_memberships / identity_strategies)
 - `idempotency.db` — **v0.3.0** 幂等重放缓存 (平台重发消息时原样返回首次响应)
+- `persona.db` — **v0.3.3** 结构化人格版本存储 (personas + persona_versions)
+- `lorebook.db` — **v0.3.3** Lorebook 关键词知识条目
+- `space_policy.db` — **v0.3.3** 空间社交策略
 - `chroma/` — ChromaDB 向量库 (含 v0.2.4 embedding lock metadata)
 - `prompts/` — v0.2.1 用户提示词覆盖层 (可选; 无覆盖时读默认层)
 - `prompts/.history/` — 提示词覆盖备份 (每个 name 保留最近 10 份)
@@ -378,4 +381,5 @@ Actions 的具体动作:
 | v0.2.11 | 2026-07-19 | 与发布流程对齐: 补 §3.2 管理面板构建 (Release 预编译 tarball 优先 / 本地 npm build 兜底); §2 Docker 改由多阶段自动 build UI, 不再挂载 `./ui`; §8 `mnemosync upgrade` 默认分支改 `main`; 新增 §11 发布流程 (GitHub Actions 自动打 Release + 上传 ui-dist.tar.gz) |
 | v0.2.12 | 2026-07-20 | 面板首次登录强制改账号密码: 新增 `POST /panel/auth/setup-credentials` 与 `require_password_settled` dependency (面板非 auth 路由 include 时统一注入); `must_change_password=True` 时所有 `/panel/*` (除 `/panel/auth/*`) 返回 `403 password_change_required`; 面板新增 `/setup` 页面 (BlankLayout, 无侧栏), 全局路由守卫强制跳转; `/settings` 简化为改密, 用户名只读展示; CLI `mnemosync login` 仍是唯一修改用户名的入口 |
 | v0.3.0 | 2026-07-26 | data 列表补 `identity.db` / `idempotency.db` (多用户身份 + 幂等重放) 与 `notifications.db`; 备份清单同步; 目录树补 `src/core/identity/` 与 persistence 新库; CLI 模型命令名修正为 `model add` |
+| v0.3.3 | 2026-08-01 | data 列表补 `persona.db` / `lorebook.db` / `space_policy.db` (结构化人格 / Lorebook / 空间策略); 目录树补 `src/core/persona/` / `src/core/tools/` / `src/infra/space_lock.py` / `src/infra/character_card.py`; plugins/ 目录说明 |
 | v0.3.4 | 2026-07-30 | 人格系统重构: 多人格 profile 支持 (`personas` 表 + 切换 API); `PersonaIdentity` 移除 per-user 字段 (`user_addressing`/`context`, 由 `Relationship` 维护); 人格改名支持; 默认提示词结构化; 前端人格编辑器重构 |

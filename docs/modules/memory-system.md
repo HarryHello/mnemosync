@@ -1,8 +1,8 @@
 # 记忆系统设计 | Memory System Design
 
-> **文档版本**: v0.3.0
+> **文档版本**: v0.3.4
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-07-26
+> **最后更新**: 2026-08-01
 > **状态**: 与代码同步
 
 **结构**: 短期记忆 (v0.2.6, 跨前端对话流水双窗装填) + 长期记忆 (向量库 + SQLite + 衰减模型)。两者独立存储、独立生命周期, 在装填时汇合成同一份主对话 messages。
@@ -686,6 +686,7 @@ CREATE INDEX idx_audit_user ON relationship_audit_log(persona_id, user_id, id DE
 
 | 模块 | 关系说明 |
 |------|----------|
+| **结构化人格** ([persona-definition.md](persona-definition.md)) | `to_legacy_prompt()` 生成 `__PERSONA_SECTION__` 注入主对话 system |
 | **forward.py** | 装填上下文: 调 `render_main_dialogue_system` + `build_short_term_history`, 组装成 messages 转发上游; 主对话完成后写 `conversation_turns` (v0.2.6) |
 | **主对话 Agent (装填后被上游模型执行)** | 直接消费装填好的 messages, 通过工具调用 `vector_search` 加载额外记忆 (可选) |
 | **记忆分析 Agent** | 后台图节点; 从 user turn 抽取事实性记忆, 设定 memory_type/importance/decay_rate; 也评估现有记忆更新 priority/is_forgotten |
