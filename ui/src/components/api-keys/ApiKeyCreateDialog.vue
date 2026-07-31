@@ -76,7 +76,7 @@ async function submit() {
           <template v-else>
             绑定后, 该 Key 的请求按所选策略解析参与者身份。
           </template>
-          策略可在「身份管理」页创建。
+          策略可在<a href="/identity">「关系状态/身份管理」</a>页创建。
         </p>
       </el-form-item>
     </el-form>
