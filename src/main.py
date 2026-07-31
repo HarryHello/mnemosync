@@ -8,6 +8,7 @@
 
 import os
 import sys
+from importlib.metadata import version as _get_version
 
 
 def serve() -> None:
@@ -17,10 +18,15 @@ def serve() -> None:
 
     from .api import api_router, forward_router
 
+    try:
+        pkg_version = _get_version("mnemosync")
+    except Exception:
+        pkg_version = "0.0.0+unknown"
+
     app = FastAPI(
         title="Mnemosync API",
         description="智能代理中间件 - LLM 上下文编排与人格记忆管理",
-        version="0.3.0",
+        version=pkg_version,
     )
 
     @app.get("/health", tags=["Health"])
