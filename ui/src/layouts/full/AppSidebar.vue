@@ -47,6 +47,8 @@ const items: MenuItem[] = [
   { path: '/logs', title: '请求日志', icon: 'Document' },
   { path: '/memories', title: '记忆管理', icon: 'Cpu' },
   { path: '/debug-chat', title: '调试聊天', icon: 'ChatDotRound' },
+  { path: "/plugins", title: "插件管理", icon: "Coin" },
+
   { path: '/settings', title: '设置', icon: 'Setting' },
 ]
 
