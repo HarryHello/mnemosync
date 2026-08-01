@@ -38,6 +38,7 @@ from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 from src.persistence.persona_store import SqlitePersonaStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
+from src.persistence.agent_run_store import AgentRunStore
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ async def _connect_stores(settings) -> dict:
     persona_store = SqlitePersonaStore(str(storage.identity_db_abs))
     lorebook_store = SqliteLorebookStore(str(storage.identity_db_abs))
     space_policy_store = SqliteSpacePolicyStore(str(storage.identity_db_abs))
+    agent_run_store = AgentRunStore(str(storage.agent_run_db_abs))
 
     instances = {
         "auth_store": auth_store,
@@ -107,6 +109,7 @@ async def _connect_stores(settings) -> dict:
         "persona_store": persona_store,
         "lorebook_store": lorebook_store,
         "space_policy_store": space_policy_store,
+        "agent_run_store": agent_run_store,
     }
 
     connect_order = [
@@ -117,7 +120,7 @@ async def _connect_stores(settings) -> dict:
     for key in connect_order:
         await instances[key].connect()
 
-    for key in ("llm_service_store", "persona_store", "lorebook_store", "space_policy_store"):
+    for key in ("llm_service_store", "persona_store", "lorebook_store", "space_policy_store", "agent_run_store"):
         await instances[key].init_db()
 
     return instances
@@ -215,6 +218,8 @@ async def app_lifespan(app: FastAPI):
         identity_plugins=identity_plugins,
         internal_tools=internal_tools,
         space_locks=SpaceLockManager(),
+        agent_run_store=instances["agent_run_store"],
+        active_bg_tasks={},
     )
     app.state = state
 

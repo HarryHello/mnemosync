@@ -165,9 +165,17 @@ async def _prepare_prompt(
     multi_forwarder = _get_multi_forwarder(http_request)
     try:
         from src.core.agents import run_prompt_cleaning
-        cleaning_out = await run_prompt_cleaning(
-            forwarder=multi_forwarder,
-            system_message=client_system_msg,
+        from src.core.agents.tracking import run_agent_tracked
+        from src.api.deps import _state as _get_state
+        _st = _get_state(http_request)
+        cleaning_out = await run_agent_tracked(
+            "prompt_cleaning",
+            run_prompt_cleaning(
+                forwarder=multi_forwarder,
+                system_message=client_system_msg,
+            ),
+            store=_st.agent_run_store,
+            debug_bus=_st.debug_bus,
         )
         result = {
             "clean_prompt": cleaning_out.clean_prompt,

@@ -26,6 +26,7 @@ from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 from src.persistence.persona_store import SqlitePersonaStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
+from src.persistence.agent_run_store import AgentRunStore
 
 
 def _state(request: Request) -> AppState:
@@ -115,3 +116,7 @@ def get_space_policy_store(request: Request) -> SqliteSpacePolicyStore:
 
 def get_persona_store(request: Request) -> SqlitePersonaStore:
     return _require(_state(request), "persona_store", SqlitePersonaStore)
+
+
+def get_agent_run_store(request: Request) -> AgentRunStore:
+    return _require(_state(request), "agent_run_store", AgentRunStore)

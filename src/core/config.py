@@ -39,6 +39,7 @@ class StorageConfig:
     chroma_dir: str = "data/chroma"
     prompts_override_dir: str = "data/prompts"
     conversation_db_path: str = "data/conversation.db"
+    agent_run_db_path: str = "data/agent_runs.db"
     short_term_days: int = 7
 
     @property
@@ -84,6 +85,10 @@ class StorageConfig:
     @property
     def conversation_db_abs(self) -> Path:
         return PROJECT_ROOT / self.conversation_db_path
+
+    @property
+    def agent_run_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.agent_run_db_path
 
 
 @dataclass

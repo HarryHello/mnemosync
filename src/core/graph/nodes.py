@@ -22,6 +22,7 @@ from src.core.agents import (
     run_proxy_thinking,
     run_relationship_analysis,
 )
+from src.core.agents.tracking import run_agent_tracked
 from src.core.config import get_settings
 from src.core.memory import (
     MemoryLifecycle,
@@ -210,14 +211,20 @@ async def proxy_thinking_node(
         logger.debug("  💬 用户消息: %s", user_msg[:100] if user_msg else "(空)")
 
         logger.debug("  🚀 调用代理思考 Agent...")
-        result = await run_proxy_thinking(
-            forwarder=forwarder,
-            user_name=state.get("current_speaker") or "未知参与者",
-            relationship=format_relationship(rel),
-            memories=memories_text,
-            user_message=user_msg,
-            tools=None,
-            channel_type=state.get("channel_type"),
+        result = await run_agent_tracked(
+            "proxy_thinking",
+            run_proxy_thinking(
+                forwarder=forwarder,
+                user_name=state.get("current_speaker") or "未知参与者",
+                relationship=format_relationship(rel),
+                memories=memories_text,
+                user_message=user_msg,
+                tools=None,
+                channel_type=state.get("channel_type"),
+            ),
+            store=stores.get("agent_run_store"),
+            debug_bus=stores.get("debug_bus"),
+            parent_request_id=state.get("interaction_id"),
         )
         logger.debug("  ✅ 代理思考完成")
         logger.debug("  📤 思考结果: %s", result[:100] if result else "(空)")
@@ -631,19 +638,25 @@ async def memory_analysis_node(
         )
 
         logger.debug("  🚀 调用记忆分析 Agent...")
-        out = await run_memory_analysis(
-            forwarder=forwarder,
-            source_user=source_user,
-            conversation=conversation,
-            tools=tools,
-            max_iterations=4,
-            persona_name=settings.persona.name,
-            persona_addressing=persona_addr,
-            user_addressing=user_addr,
-            relation_context=rel_ctx,
-            emotion_analysis=emotion_text,
-            current_speaker=state.get("current_speaker") or "未知参与者",
-            channel_type=state.get("channel_type"),
+        out = await run_agent_tracked(
+            "memory_analysis",
+            run_memory_analysis(
+                forwarder=forwarder,
+                source_user=source_user,
+                conversation=conversation,
+                tools=tools,
+                max_iterations=4,
+                persona_name=settings.persona.name,
+                persona_addressing=persona_addr,
+                user_addressing=user_addr,
+                relation_context=rel_ctx,
+                emotion_analysis=emotion_text,
+                current_speaker=state.get("current_speaker") or "未知参与者",
+                channel_type=state.get("channel_type"),
+            ),
+            store=stores.get("agent_run_store"),
+            debug_bus=stores.get("debug_bus"),
+            parent_request_id=state.get("interaction_id"),
         )
 
         logger.debug("  ✅ 记忆分析完成: 新记忆 %d 条", len(out.new_memories))
@@ -723,24 +736,30 @@ async def relationship_analysis_node(
         )
 
         logger.debug("  🚀 调用关系分析 Agent...")
-        out = await run_relationship_analysis(
-            forwarder=forwarder,
-            current_relationship=current_rel_str,
-            conversation=conversation,
-            tools=[
-                make_update_addressing_tool(
-                    memory_store, state["persona_id"], source_user,
-                    actor_id=state.get("actor_id"),
-                ),
-            ],
-            max_iterations=2,
-            persona_name=settings.persona.name,
-            persona_addressing=persona_addr,
-            user_addressing=user_addr,
-            relation_context=rel_ctx,
-            emotion_analysis=emotion_text,
-            current_speaker=state.get("current_speaker") or "未知参与者",
-            channel_type=state.get("channel_type"),
+        out = await run_agent_tracked(
+            "relationship_analysis",
+            run_relationship_analysis(
+                forwarder=forwarder,
+                current_relationship=current_rel_str,
+                conversation=conversation,
+                tools=[
+                    make_update_addressing_tool(
+                        memory_store, state["persona_id"], source_user,
+                        actor_id=state.get("actor_id"),
+                    ),
+                ],
+                max_iterations=2,
+                persona_name=settings.persona.name,
+                persona_addressing=persona_addr,
+                user_addressing=user_addr,
+                relation_context=rel_ctx,
+                emotion_analysis=emotion_text,
+                current_speaker=state.get("current_speaker") or "未知参与者",
+                channel_type=state.get("channel_type"),
+            ),
+            store=stores.get("agent_run_store"),
+            debug_bus=stores.get("debug_bus"),
+            parent_request_id=state.get("interaction_id"),
         )
 
         logger.debug("  ✅ 关系分析完成: 亲密 %+.2f, 信任 %+.2f",

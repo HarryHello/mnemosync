@@ -19,6 +19,7 @@ from src.api.schemas.forward import ChatCompletionRequest
 from src.api.tool_policies import filter_tool_calls, validate_tool_arguments
 from src.api.tool_transactions import append_tool_transaction_context
 from src.core.agents import run_proxy_thinking
+from src.core.agents.tracking import run_agent_tracked
 from src.core.config import get_settings
 from src.core.constants import VIRTUAL_MODEL_ANY
 from src.core.memory import format_relationship
@@ -251,7 +252,26 @@ async def _dispatch_callbacks(
         logger.debug("  ⏭️ 工具中间轮 (finish_reason=tool_calls, 无文本), 跳过")
     else:
         graph_config = _build_graph_config(http_request)
-        asyncio.create_task(_run_memory_graph(initial_state, collected_chunks, graph_config))
+        task_key = f"memory_graph-{chatcmpl_id}"
+        task = asyncio.create_task(
+            _run_memory_graph(initial_state, collected_chunks, graph_config),
+            name=task_key,
+        )
+        bg_tasks: dict = getattr(http_request.app.state, "active_bg_tasks", {})
+        if bg_tasks is not None:
+            bg_tasks[task_key] = task
+
+            def _on_done(t: asyncio.Task, _key: str = task_key) -> None:
+                bg_tasks.pop(_key, None)
+                status = "ok" if not t.cancelled() and t.exception() is None else "failed"
+                emit_pipeline(
+                    getattr(http_request.app.state, "debug_bus", None),
+                    event_kind="bg_task_done",
+                    task_name=_key,
+                    status=status,
+                )
+
+            task.add_done_callback(_on_done)
 
 
 # ── Main stream entry point ─────────────────────────────────────
@@ -345,14 +365,21 @@ async def _handle_stream(
         logger.debug("🤔 [代理推理] 开始 (ASSIST role)")
         try:
             perms_text = "\n".join(f"- {e.content}" for e in perms) or "（无）"
-            reasoning_text = await run_proxy_thinking(
-                forwarder=multi_forwarder,
-                user_name=current_speaker,
-                relationship=format_relationship(rel) if rel else "新用户",
-                memories=perms_text,
-                user_message=new_user_content,
-                tools=None,
-                channel_type=initial_state.get("channel_type"),
+            _st = getattr(http_request.app, "state", None)
+            reasoning_text = await run_agent_tracked(
+                "proxy_thinking",
+                run_proxy_thinking(
+                    forwarder=multi_forwarder,
+                    user_name=current_speaker,
+                    relationship=format_relationship(rel) if rel else "新用户",
+                    memories=perms_text,
+                    user_message=new_user_content,
+                    tools=None,
+                    channel_type=initial_state.get("channel_type"),
+                ),
+                store=getattr(_st, "agent_run_store", None) if _st else None,
+                debug_bus=getattr(_st, "debug_bus", None) if _st else None,
+                parent_request_id=initial_state.get("interaction_id"),
             )
             logger.debug("  ✅ 代理推理完成, 长度: %d", len(reasoning_text) if reasoning_text else 0)
         except Exception as e:
@@ -487,12 +514,20 @@ async def _handle_stream(
             stream_result=stream_result,
         )
 
-    # 包装: 流结束后释放空间锁
+    # 包装: 流结束后释放空间锁 + 取消后台记忆图任务
     async def locked_stream():
         try:
             async for chunk in stream_generator():
                 yield chunk
         finally:
+            # 取消后台记忆图任务
+            _bg: dict = getattr(http_request.app.state, "active_bg_tasks", {})
+            _task_key = f"memory_graph-{chatcmpl_id}"
+            _bg_task = _bg.pop(_task_key, None) if _bg is not None else None
+            if _bg_task is not None and not _bg_task.done():
+                _bg_task.cancel()
+                logger.debug("⏹️ 取消后台记忆图任务: %s", _task_key)
+
             lock = initial_state.get("_space_lock")
             if lock is not None and lock.locked():
                 lock.release()

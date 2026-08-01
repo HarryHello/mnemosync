@@ -41,9 +41,6 @@ mnemosync/
 │   │   ├── character-card.md       # 角色卡导入 (v0.3.3) [新增]
 │   │   ├── internal-tools.md       # 内部工具与身份绑定 (v0.3.3) [新增]
 │   │   └── tools.md                # Agent 工具 (vector_search / update_addressing)
-│   ├── rfcs/
-│   │   ├── agent-run-contract.md
-│   │   └── structured-persona.md
 │   └── research/
 │       └── human-like-group-chat-research.md
 │
