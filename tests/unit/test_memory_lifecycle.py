@@ -11,10 +11,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 from src.core.memory.lifecycle import MemoryLifecycle
 from src.core.memory.models import (
     CandidateMemory,
@@ -22,12 +21,9 @@ from src.core.memory.models import (
     DecayState,
     MemoryEntry,
     MemoryType,
-    Relationship,
 )
-from src.infra.forwarder.forwarder import UpstreamError, UpstreamTimeout
-from src.persistence.identity_store import SqliteIdentityStore
+from src.infra.forwarder.forwarder import UpstreamError
 from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
-
 
 # ---------------------------------------------------------------------------
 # store_candidate

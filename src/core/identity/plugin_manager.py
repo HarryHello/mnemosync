@@ -91,7 +91,7 @@ async def list_available(source_url: str | None = None) -> list[AvailablePlugin]
             return_exceptions=True,
         )
 
-        for (name, url), metadata in zip(candidates, metadata_list):
+        for (name, url), metadata in zip(candidates, metadata_list, strict=False):
             if isinstance(metadata, Exception):
                 metadata = None
             plugins.append(AvailablePlugin(

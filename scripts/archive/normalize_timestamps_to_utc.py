@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
-from pathlib import Path
-
 import sqlite3
+from datetime import UTC, datetime
+from pathlib import Path
 
 _ISO_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)([+-]\d{2}:\d{2}|Z)?$"
@@ -19,7 +18,7 @@ def _to_utc_iso(value: str) -> str | None:
         return None
     try:
         dt = datetime.fromisoformat(match.group(1) + (match.group(2) or ""))
-        return dt.astimezone(timezone.utc).isoformat()
+        return dt.astimezone(UTC).isoformat()
     except (ValueError, OverflowError):
         return None
 

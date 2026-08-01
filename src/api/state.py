@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from src.infra.llm_service.store import LLMServiceStore
     from src.infra.space_lock import SpaceLockManager
     from src.infra.vector_store import VectorStore
+    from src.persistence.agent_run_store import AgentRunStore
     from src.persistence.api_key_store import SqliteApiKeyStore
     from src.persistence.auth_store import SqliteAuthStore
     from src.persistence.conversation_store import SqliteConversationStore
@@ -42,7 +43,6 @@ if TYPE_CHECKING:
     from src.persistence.notification_store import NotificationStore
     from src.persistence.persona_store import SqlitePersonaStore
     from src.persistence.space_policy_store import SqliteSpacePolicyStore
-    from src.persistence.agent_run_store import AgentRunStore
 
 
 @dataclass

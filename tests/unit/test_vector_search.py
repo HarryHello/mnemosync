@@ -14,7 +14,6 @@ from src.tools.vector_search import (
     make_vector_search_tool,
 )
 
-
 # ─── RetrievedMemory ───────────────────────────────────
 
 

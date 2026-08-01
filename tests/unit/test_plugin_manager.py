@@ -12,12 +12,10 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from src.core.identity.plugin_manager import (
     AvailablePlugin,
     InstalledPlugin,
@@ -28,7 +26,6 @@ from src.core.identity.plugin_manager import (
     _validate_file_name,
     remove_plugin,
 )
-
 
 # ---------------------------------------------------------------------------
 # PluginMetadata / AvailablePlugin / InstalledPlugin data classes
@@ -183,7 +180,7 @@ class P(IdentityPlugin):
 # _extract_class_attrs
 # ---------------------------------------------------------------------------
 
-import ast
+import ast  # noqa: E402
 
 
 class TestExtractClassAttrs:

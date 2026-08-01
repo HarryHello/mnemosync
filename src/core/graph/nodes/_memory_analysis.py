@@ -11,6 +11,7 @@ from src.core.agents import run_memory_analysis
 from src.core.agents.spec import get_spec
 from src.core.agents.tracking import run_agent_tracked
 from src.core.config import get_settings
+from src.core.graph.state import AgentState
 from src.core.memory import MemoryLifecycle
 from src.core.models.resolver import RoleResolver
 from src.infra.forwarder.multi import MultiForwarder
@@ -20,7 +21,6 @@ from src.persistence.notification_store import NotificationStore
 from src.tools import MemoryRetriever, make_vector_search_tool
 
 from ._helpers import _format_emotion_text, _resolve_addressing, _retrieval_context
-from src.core.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 

@@ -13,11 +13,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from src.api.routes.forward import _handle_non_stream, _handle_stream
 from src.api.schemas.forward import ChatCompletionRequest, ChatMessage
 from src.api.state import AppState
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -776,8 +774,8 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_stream_all_candidates_failed_yields_error_frame(self):
         """Upstream raises UpstreamAllCandidatesFailed; verify SSE error frame."""
-        from src.infra.forwarder.multi import UpstreamAllCandidatesFailed
         from src.infra.forwarder import UpstreamError
+        from src.infra.forwarder.multi import UpstreamAllCandidatesFailed
         from src.infra.llm_service.models import ModelType
 
         conversation_store = AsyncMock(append=AsyncMock())

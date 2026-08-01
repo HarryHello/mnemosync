@@ -1,11 +1,19 @@
 """测试记忆分析 Agent 的 ReAct 循环（真实 API）."""
-import asyncio, os, tempfile
+import asyncio
+import os
+import tempfile
+
+from src.core.agents import run_memory_analysis, run_proxy_thinking, run_relationship_analysis
 from src.core.config import get_settings
+from src.core.memory import MemoryEntry, MemoryType
 from src.infra import Forwarder, ForwarderConfig, VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
-from src.tools import MemoryRetriever, make_vector_search_tool, make_emotion_analyzer_tool, make_time_decay_calculator_tool
-from src.core.agents import run_memory_analysis, run_relationship_analysis, run_proxy_thinking
-from src.core.memory import MemoryEntry, MemoryType
+from src.tools import (
+    MemoryRetriever,
+    make_emotion_analyzer_tool,
+    make_time_decay_calculator_tool,
+    make_vector_search_tool,
+)
 
 s = get_settings()
 

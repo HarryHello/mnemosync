@@ -13,10 +13,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import aiosqlite
-
 from src.persistence.notification_store import NotificationStore
 
 DB_PATH = "data/notifications.db"
@@ -117,7 +116,7 @@ async def clear(db_path: str) -> int:
 async def seed(store: NotificationStore, count: int, mark_some_read: bool) -> list[int]:
     """按时间倒推随机分布地插入 count 条; 前 1/3 自动置为已读, 便于观察灰化样式."""
     ids: list[int] = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     samples = [dict(s) for s in SAMPLES]
     random.shuffle(samples)
     for i in range(count):

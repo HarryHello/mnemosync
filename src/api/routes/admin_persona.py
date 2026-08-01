@@ -14,8 +14,8 @@ from src.api.deps import (
     get_conversation_store,
     get_memory_store,
     get_persona_store,
-    get_relationship_store,
     get_reindex_progress,
+    get_relationship_store,
     get_space_policy_store,
     get_vector_store,
 )

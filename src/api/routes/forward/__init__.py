@@ -7,7 +7,6 @@
 
 import logging
 import uuid
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -27,7 +26,7 @@ from src.infra.space_lock import SpaceLockManager
 
 # Accessor 单例 (独立模块, 避免循环导入)
 from . import _accessors as _acc  # noqa: F401  (re-exported for backward compat)
-from ._accessors import (
+from ._accessors import (  # noqa: F401 – re-exported for backward compat
     _build_graph_config,
     _get_api_key_store,
     _get_compiled_graph,

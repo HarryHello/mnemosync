@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
 from pathlib import Path
 
 import pytest
-
 from src.core.agents.spec import AGENT_SPECS, AgentSpec, get_spec
 from src.core.agents.tracking import run_agent_tracked
-from src.persistence.agent_run_store import AgentRunRecord, AgentRunStore
-
+from src.persistence.agent_run_store import AgentRunStore
 
 # ── AgentSpec registry ──────────────────────────────────────────────
 

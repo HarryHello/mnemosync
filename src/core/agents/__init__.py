@@ -6,7 +6,6 @@ from .base import (
     run_react_loop,
     run_simple_completion,
 )
-from .spec import AgentSpec, AGENT_SPECS, get_spec
 from .factory import (
     ExpressorConfig,
     MainDialogueResult,
@@ -20,6 +19,7 @@ from .factory import (
     run_proxy_thinking,
     run_relationship_analysis,
 )
+from .spec import AGENT_SPECS, AgentSpec, get_spec
 
 __all__ = [
     "AgentSpec",

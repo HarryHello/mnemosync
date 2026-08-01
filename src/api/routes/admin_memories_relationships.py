@@ -6,10 +6,10 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from src.api.deps import get_identity_store, get_memory_store, get_relationship_store
+from src.api.deps import get_identity_store, get_relationship_store
 from src.api.routes.auth import get_current_user
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteRelationshipStore
 
 from .admin_mem_shared import (
     RelationshipAuditItem,

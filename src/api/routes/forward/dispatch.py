@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from src.api.schemas.forward import ChatCompletionRequest
 from src.api.tool_policies import ToolPolicy, load_tool_policy
@@ -165,9 +166,9 @@ async def _prepare_prompt(
     logger.debug("  cleaning client system message (length: %d)", len(client_system_msg))
     multi_forwarder = _get_multi_forwarder(http_request)
     try:
+        from src.api.deps import _state as _get_state
         from src.core.agents import run_prompt_cleaning
         from src.core.agents.tracking import run_agent_tracked
-        from src.api.deps import _state as _get_state
         _st = _get_state(http_request)
         cleaning_out = await run_agent_tracked(
             "prompt_cleaning",
@@ -208,7 +209,6 @@ async def _handle_identity_binding(
 
     如果当前请求是绑定指令, 返回 JSONResponse; 否则返回 None 继续正常流程.
     """
-    from fastapi.responses import JSONResponse
 
     settings = get_settings()
     bind_cmd = settings.runtime.identity_bind_command
@@ -242,6 +242,7 @@ async def _bind_initiate(
 ):
     """发起跨平台绑定: 生成验证码."""
     from src.core.tools.identity_binding import get_binding_code_store
+
     from .identity import _resolve_main_model
 
     code_store = get_binding_code_store()

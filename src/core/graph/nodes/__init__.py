@@ -131,26 +131,24 @@ def _get_stores(config: RunnableConfig | None) -> StoresDict:
 
 # ── Re-export all node implementations ───────────────────────────
 
-from ._parse_request import parse_request_node
-from ._proxy_thinking import proxy_thinking_node
-from ._main_dialogue import (  # noqa: F401 – re-exported for backward compat
+# ── Re-export helper utilities ───────────────────────────────────
+from ._helpers import (  # noqa: F401, E402 – re-exported for backward compat & test patching
+    _compute_emotion,
+    _format_emotion_text,
+    _resolve_addressing,
+    _retrieval_context,
+)
+from ._main_dialogue import (  # noqa: F401, E402 – re-exported for backward compat
     _extract_metadata,
     _invoke_llm,
     _prepare_context,
     _process_response,
     main_dialogue_node,
 )
-from ._memory_analysis import memory_analysis_node
-from ._relationship_analysis import relationship_analysis_node
-
-# ── Re-export helper utilities ───────────────────────────────────
-
-from ._helpers import (  # noqa: F401 – re-exported for backward compat & test patching
-    _compute_emotion,
-    _format_emotion_text,
-    _resolve_addressing,
-    _retrieval_context,
-)
+from ._memory_analysis import memory_analysis_node  # noqa: E402
+from ._parse_request import parse_request_node  # noqa: E402
+from ._proxy_thinking import proxy_thinking_node  # noqa: E402
+from ._relationship_analysis import relationship_analysis_node  # noqa: E402
 
 __all__ = [
     # Node implementations
@@ -164,6 +162,7 @@ __all__ = [
     "_make_multi_forwarder",
     "_make_multi_forwarder_with_resolver",
     "StoresDict",
+    "AgentState",
     # Helpers
     "_compute_emotion",
     "_format_emotion_text",

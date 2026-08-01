@@ -13,10 +13,7 @@
 from __future__ import annotations
 
 import pytest
-
-from src.core.identity.models import Actor, IdentityStrategy, UserGroup
 from src.persistence.identity_store import SqliteIdentityStore
-
 
 # ---------------------------------------------------------------------------
 # Actor CRUD

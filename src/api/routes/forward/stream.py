@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
+from src.api.deps import _state
 from src.api.reasoning_control import (
     build_reasoning_stream_frames,
     chunk_has_native_reasoning,
@@ -29,12 +30,11 @@ from src.core.memory.context import (
 )
 from src.core.memory.short_term import build_short_term_history, token_count_for_storage
 from src.core.models.resolver import NoCandidateForRoleError
+from src.core.utils import last_user_message
 from src.infra.debug_context import emit_pipeline, use_agent
 from src.infra.forwarder import UpstreamError, UpstreamTimeout, parse_sse_stream_full
 from src.infra.forwarder.multi import UpstreamAllCandidatesFailed
 from src.infra.llm_service.models import ModelType
-from src.api.deps import _state
-from src.core.utils import last_user_message
 from src.tools import MemoryRetriever
 
 from ._accessors import _build_graph_config, _get_conversation_store, _get_multi_forwarder
@@ -564,7 +564,7 @@ async def _handle_stream(
                 # Memory graph still running — wait for it to finish.
                 try:
                     await asyncio.wait_for(asyncio.shield(bg_task), timeout=120)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
+                except (TimeoutError, asyncio.CancelledError):
                     bg_task.cancel()
                     logger.debug("⏹️ 记忆图任务超时/取消: %s", chatcmpl_id)
 

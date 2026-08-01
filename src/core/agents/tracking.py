@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-async def run_agent_tracked(
+async def run_agent_tracked[T](
     spec_name: str,
     coro: Awaitable[T],
     *,
@@ -71,7 +71,7 @@ async def run_agent_tracked(
 
     try:
         result = await asyncio.wait_for(coro, timeout=spec.timeout_seconds)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         status = "timeout"
         error_msg = f"Agent {spec.name} timed out after {spec.timeout_seconds}s"
         logger.warning(error_msg)
