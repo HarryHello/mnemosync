@@ -6,7 +6,7 @@ relationships 表. 判断维度 (是否玩笑/是否场景扮演/是否引用/�
 指导, 代码层只做兜底: reason 非空 + persona_id/user_id 通过闭包 bind (Agent 看不见)
 + 三字段全 None 拒绝.
 
-审计日志 (relationship_audit_log) 由 SqliteMemoryStore.update_relationship_addressing
+审计日志 (relationship_audit_log) 由 SqliteRelationshipStore.update_relationship_addressing
 统一写入.
 """
 
@@ -16,13 +16,13 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteRelationshipStore
 
 _MIN_REASON_LEN = 10
 
 
 def make_update_addressing_tool(
-    memory_store: SqliteMemoryStore,
+    relationship_store: SqliteRelationshipStore,
     persona_id: str,
     user_id: str,
     actor_id: str | None = None,
@@ -71,13 +71,13 @@ def make_update_addressing_tool(
         if persona_addressing is None and user_addressing is None and context is None:
             raise ValueError("至少需要传入一个字段 (persona_addressing / user_addressing / context)")
 
-        prev_rel = await memory_store.get_relationship(persona_id, user_id)
+        prev_rel = await relationship_store.get_relationship(persona_id, user_id)
         prev = {
             "persona_addressing": prev_rel.persona_addressing if prev_rel else None,
             "user_addressing": prev_rel.user_addressing if prev_rel else None,
             "context": prev_rel.context if prev_rel else None,
         }
-        entries = await memory_store.update_relationship_addressing(
+        entries = await relationship_store.update_relationship_addressing(
             persona_id, user_id,
             persona_addressing=persona_addressing,
             user_addressing=user_addressing,
@@ -85,7 +85,7 @@ def make_update_addressing_tool(
             source="agent",
             reason=r,
         )
-        new_rel = await memory_store.get_relationship(persona_id, user_id)
+        new_rel = await relationship_store.get_relationship(persona_id, user_id)
         current = {
             "persona_addressing": new_rel.persona_addressing if new_rel else None,
             "user_addressing": new_rel.user_addressing if new_rel else None,

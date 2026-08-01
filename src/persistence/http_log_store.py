@@ -12,37 +12,32 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
+from src.persistence.base import SqliteStore
+
 logger = logging.getLogger(__name__)
 
 
-class HttpLogStore:
+class HttpLogStore(SqliteStore):
     """HTTP 日志的异步批量写盘 store."""
+
+    _enable_foreign_keys = False
 
     _BATCH_SIZE = 50
     _FLUSH_INTERVAL_S = 0.5
 
     def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._db: aiosqlite.Connection | None = None
+        super().__init__(db_path)
         self._queue: asyncio.Queue[dict[str, Any]] | None = None
         self._writer_task: asyncio.Task | None = None
+        self._writer_conn: aiosqlite.Connection | None = None
         self._stopping = False
 
     async def connect(self) -> None:
-        if self._db is not None:
-            return
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        await self._init_schema(self._db)
-        await self._db.commit()
-
+        await super().connect()
         self._queue = asyncio.Queue(maxsize=10000)
         self._stopping = False
         self._writer_task = asyncio.create_task(self._writer_loop(), name="http-log-writer")
@@ -61,10 +56,15 @@ class HttpLogStore:
             except (TimeoutError, asyncio.CancelledError):
                 self._writer_task.cancel()
             self._writer_task = None
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
+        # 关闭 writer 专用连接
+        if self._writer_conn is not None:
+            try:
+                await self._writer_conn.close()
+            except Exception:
+                pass
+            self._writer_conn = None
         self._queue = None
+        await super().close()
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
@@ -99,15 +99,24 @@ class HttpLogStore:
         except asyncio.QueueFull:
             logger.warning("http_log queue full, dropping entry")
 
+    async def _get_writer_conn(self) -> aiosqlite.Connection:
+        """Return a long-lived writer connection, creating it on first use."""
+        if self._writer_conn is None or self._writer_conn.is_closed():
+            self._writer_conn = await aiosqlite.connect(self.db_path)
+            await self._writer_conn.execute("PRAGMA journal_mode=WAL")
+            await self._writer_conn.execute("PRAGMA synchronous=NORMAL")
+        return self._writer_conn
+
     async def _writer_loop(self) -> None:
-        assert self._queue is not None
-        assert self._db is not None
         batch: list[dict[str, Any]] = []
         while True:
             try:
+                queue = self._queue
+                if queue is None:
+                    return
                 # 至少等一条
                 first = await asyncio.wait_for(
-                    self._queue.get(), timeout=self._FLUSH_INTERVAL_S
+                    queue.get(), timeout=self._FLUSH_INTERVAL_S
                 )
                 if first.get("__sentinel__"):
                     await self._flush(batch)
@@ -116,7 +125,7 @@ class HttpLogStore:
                 # 尽量凑齐一批
                 while len(batch) < self._BATCH_SIZE:
                     try:
-                        item = self._queue.get_nowait()
+                        item = queue.get_nowait()
                     except asyncio.QueueEmpty:
                         break
                     if item.get("__sentinel__"):
@@ -139,10 +148,11 @@ class HttpLogStore:
                 await asyncio.sleep(0.5)
 
     async def _flush(self, batch: list[dict[str, Any]]) -> None:
-        if not batch or self._db is None:
+        if not batch:
             return
+        db = await self._get_writer_conn()
         try:
-            await self._db.executemany(
+            await db.executemany(
                 """
                 INSERT INTO http_logs
                 (method, path, query_params, request_headers, request_body,
@@ -167,7 +177,7 @@ class HttpLogStore:
                     for e in batch
                 ],
             )
-            await self._db.commit()
+            await db.commit()
         except Exception as e:
             logger.warning("Failed to flush %d http_logs: %s", len(batch), e)
 
@@ -181,14 +191,14 @@ class HttpLogStore:
         since: str | None = None,
         until: str | None = None,
     ) -> int:
-        assert self._db is not None
         conditions, params = self._build_filter(method, path, status, since, until)
         where = " AND ".join(conditions) if conditions else "1=1"
-        async with self._db.execute(
-            f"SELECT COUNT(*) FROM http_logs WHERE {where}", params
-        ) as cur:
-            row = await cur.fetchone()
-            return row[0] if row else 0
+        async with self._conn() as db:
+            async with db.execute(
+                f"SELECT COUNT(*) FROM http_logs WHERE {where}", params
+            ) as cur:
+                row = await cur.fetchone()
+                return row[0] if row else 0
 
     async def list_paginated(
         self,
@@ -200,41 +210,41 @@ class HttpLogStore:
         since: str | None = None,
         until: str | None = None,
     ) -> list[tuple]:
-        assert self._db is not None
         conditions, params = self._build_filter(method, path, status, since, until)
         where = " AND ".join(conditions) if conditions else "1=1"
         offset = (page - 1) * page_size
-        async with self._db.execute(
-            f"SELECT * FROM http_logs WHERE {where} "
-            f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [page_size, offset],
-        ) as cur:
-            return await cur.fetchall()
+        async with self._conn() as db:
+            async with db.execute(
+                f"SELECT * FROM http_logs WHERE {where} "
+                f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                params + [page_size, offset],
+            ) as cur:
+                return await cur.fetchall()
 
     async def get_by_id(self, log_id: int) -> tuple | None:
-        assert self._db is not None
-        async with self._db.execute(
-            "SELECT * FROM http_logs WHERE id = ?", (log_id,)
-        ) as cur:
-            return await cur.fetchone()
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT * FROM http_logs WHERE id = ?", (log_id,)
+            ) as cur:
+                return await cur.fetchone()
 
     async def clear_all(self) -> None:
-        assert self._db is not None
-        await self._db.execute("DELETE FROM http_logs")
-        await self._db.commit()
+        async with self._conn() as db:
+            await db.execute("DELETE FROM http_logs")
+            await db.commit()
 
     async def cleanup(self, retention_days: int, max_records: int) -> None:
-        assert self._db is not None
-        await self._db.execute(
-            "DELETE FROM http_logs WHERE created_at < datetime('now', ? || ' days')",
-            (-retention_days,),
-        )
-        await self._db.execute(
-            "DELETE FROM http_logs WHERE id NOT IN ("
-            "SELECT id FROM http_logs ORDER BY created_at DESC LIMIT ?)",
-            (max_records,),
-        )
-        await self._db.commit()
+        async with self._conn() as db:
+            await db.execute(
+                "DELETE FROM http_logs WHERE created_at < datetime('now', ? || ' days')",
+                (-retention_days,),
+            )
+            await db.execute(
+                "DELETE FROM http_logs WHERE id NOT IN ("
+                "SELECT id FROM http_logs ORDER BY created_at DESC LIMIT ?)",
+                (max_records,),
+            )
+            await db.commit()
 
     @staticmethod
     def _build_filter(

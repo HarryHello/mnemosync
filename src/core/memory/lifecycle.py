@@ -32,7 +32,7 @@ from src.infra.llm_service.models import ModelType
 if TYPE_CHECKING:
     from src.core.memory.reindex import ReindexProgress
     from src.infra.vector_store import VectorStore
-    from src.persistence.memory_store import SqliteMemoryStore
+    from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
     from src.persistence.notification_store import NotificationStore
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ class MemoryLifecycle:
         resolver: RoleResolver | None = None,
         reindex_progress: ReindexProgress | None = None,
         notification_store: NotificationStore | None = None,
+        relationship_store: SqliteRelationshipStore | None = None,
     ):
         self.memory_store = memory_store
         self.vector_store = vector_store
@@ -69,6 +70,7 @@ class MemoryLifecycle:
         self.resolver = resolver
         self.reindex_progress = reindex_progress
         self.notification_store = notification_store
+        self.relationship_store = relationship_store
 
     async def store_candidate(
         self,
@@ -261,11 +263,11 @@ class MemoryLifecycle:
         notes: str | None,
     ) -> Relationship:
         """应用关系分析 Agent 的结果."""
-        rel = await self.memory_store.get_relationship(persona_id, user_id)
+        rel = await self.relationship_store.get_relationship(persona_id, user_id)
         if rel is None:
             rel = Relationship.create(persona_id, user_id)
         rel.apply_delta(intimacy_delta, trust_delta, new_type=new_type, notes=notes)
-        await self.memory_store.save_relationship(rel)
+        await self.relationship_store.save_relationship(rel)
         return rel
 
     async def mark_memories_accessed(self, memory_ids: list[str]) -> None:

@@ -18,7 +18,7 @@ from src.api.routes.auth import get_current_user
 from src.api.state import AppState
 from src.persistence.auth_store import User
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
 
 
 def _user(must_change: bool) -> User:
@@ -42,17 +42,24 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     asyncio.set_event_loop(loop)
 
     memory_store = SqliteMemoryStore(str(tmp_path / "mem.db"))
+    relationship_store = SqliteRelationshipStore(str(tmp_path / "mem.db"))
     identity_store = SqliteIdentityStore(str(tmp_path / "identity.db"))
     loop.run_until_complete(memory_store.connect())
+    loop.run_until_complete(relationship_store.connect())
     loop.run_until_complete(identity_store.connect())
 
     app = FastAPI()
     app.include_router(api_router)
-    app.state = AppState(memory_store=memory_store, identity_store=identity_store)
+    app.state = AppState(
+        memory_store=memory_store,
+        relationship_store=relationship_store,
+        identity_store=identity_store,
+    )
 
     yield app
 
     loop.run_until_complete(memory_store.close())
+    loop.run_until_complete(relationship_store.close())
     loop.run_until_complete(identity_store.close())
     loop.close()
 

@@ -13,7 +13,8 @@ from datetime import UTC, datetime
 
 import aiosqlite
 
-from src.persistence.base import SqliteStore
+from src.core.constants import DEFAULT_LIST_LIMIT
+from src.persistence.base import SqliteStore, resolve_sort_params
 
 
 @dataclass
@@ -494,7 +495,7 @@ class SqliteConversationStore(SqliteStore):
         self,
         space_id: str,
         since: datetime | None = None,
-        limit: int = 5000,
+        limit: int = DEFAULT_LIST_LIMIT,
     ) -> list[ConversationTurn]:
         where = "space_id = ?"
         params: list = [space_id]
@@ -545,12 +546,20 @@ class SqliteConversationStore(SqliteStore):
         sort_by: str = "ts",
         sort_order: str = "desc",
     ) -> tuple[list[ConversationTurn], int]:
-        allowed_sort = {
-            "ts", "role", "token_count", "source_frontend", "id",
-            "origin", "display_name_snapshot", "committed_sequence",
-        }
-        sort_col = sort_by if sort_by in allowed_sort else "ts"
-        direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+        sort_col, direction = resolve_sort_params(
+            sort_by, sort_order,
+            {
+                "ts": "ts",
+                "role": "role",
+                "token_count": "token_count",
+                "source_frontend": "source_frontend",
+                "id": "id",
+                "origin": "origin",
+                "display_name_snapshot": "display_name_snapshot",
+                "committed_sequence": "committed_sequence",
+            },
+            default_col="ts",
+        )
         where: list[str] = []
         params: list = []
         filters = (

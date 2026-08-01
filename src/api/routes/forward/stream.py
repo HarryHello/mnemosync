@@ -33,11 +33,11 @@ from src.infra.debug_context import emit_pipeline, use_agent
 from src.infra.forwarder import UpstreamError, UpstreamTimeout, parse_sse_stream_full
 from src.infra.forwarder.multi import UpstreamAllCandidatesFailed
 from src.infra.llm_service.models import ModelType
-from src.infra.vector_store import VectorStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.api.deps import _state
+from src.core.utils import last_user_message
 from src.tools import MemoryRetriever
 
-from . import _build_graph_config, _get_conversation_store, _get_multi_forwarder
+from ._accessors import _build_graph_config, _get_conversation_store, _get_multi_forwarder
 from .idempotency import _record_idempotency
 from .identity import _resolve_main_candidate
 from .memory_graph import _run_memory_graph
@@ -305,13 +305,13 @@ async def _handle_stream(
     conversation_store = _get_conversation_store(http_request)
 
     logger.debug("🧠 加载记忆上下文...")
-    memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-    await memory_store.init_db()
-    vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
+    _st = _state(http_request)
+    memory_store = _st.memory_store
+    vector_store = _st.vector_store
 
     from src.core.memory.audience import AudienceFilter, RetrievalContext
 
-    rel = await memory_store.get_relationship(
+    rel = await _st.relationship_store.get_relationship(
         initial_state["persona_id"], source_user,
     ) if source_user else None
     logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
@@ -337,10 +337,7 @@ async def _handle_stream(
     tool_transaction = initial_state.get("tool_transaction")
     new_user_content = ""
     if not tool_transaction:
-        for m in reversed(client_messages):
-            if m.get("role") == "user":
-                new_user_content = m.get("content", "")
-                break
+        new_user_content = last_user_message(client_messages)
 
     retrieval_query = (
         tool_transaction.root_user_content if tool_transaction else new_user_content

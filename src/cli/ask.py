@@ -102,12 +102,14 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
     from src.infra.llm_service.models import ModelType
     from src.infra.llm_service.store import LLMServiceStore
     from src.infra.vector_store import VectorStore
-    from src.persistence.memory_store import SqliteMemoryStore
+    from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
     from src.tools import MemoryRetriever
 
     settings = get_settings()
     memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
     await memory_store.init_db()
+    relationship_store = SqliteRelationshipStore(str(settings.storage.memory_db_abs))
+    await relationship_store.init_db()
     vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
 
     perms = await memory_store.list_permanent(source_user, limit=settings.memory.permanent_load_top)
@@ -129,7 +131,7 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
                 retrieved_entries.append(entry)
 
         from src.core.constants import DEFAULT_PERSONA_ID
-        rel = await memory_store.get_relationship(DEFAULT_PERSONA_ID, source_user) if source_user else None
+        rel = await relationship_store.get_relationship(DEFAULT_PERSONA_ID, source_user) if source_user else None
         print(
             f"🧠 记忆: 永久 {len(perms)} 条 · 检索 {len(retrieved_entries)} 条 · 关系 "
             f"{format_relationship(rel) if rel else '(无)'}",

@@ -28,7 +28,7 @@ async def test_main_dialogue_node_returns_early_when_response_present():
     }
 
     with (
-        patch("src.core.graph.nodes.run_main_dialogue", new=AsyncMock()) as mock_run_main,
+        patch("src.core.graph.nodes._main_dialogue.run_main_dialogue", new=AsyncMock()) as mock_run_main,
         patch("src.core.graph.nodes._make_multi_forwarder") as mock_make_forwarder,
     ):
         result = await main_dialogue_node(state)
@@ -47,7 +47,7 @@ async def test_main_dialogue_node_preserves_upstream_usage_when_present():
     }
 
     with patch(
-        "src.core.graph.nodes.run_main_dialogue",
+        "src.core.graph.nodes._main_dialogue.run_main_dialogue",
         new=AsyncMock(),
     ):
         result = await main_dialogue_node(state)
@@ -72,7 +72,8 @@ async def test_main_dialogue_node_generates_when_response_missing():
     memory_store = MagicMock()
     memory_store.init_db = AsyncMock()
     memory_store.list_permanent = AsyncMock(return_value=[])
-    memory_store.get_relationship = AsyncMock(return_value=None)
+    relationship_store = MagicMock()
+    relationship_store.get_relationship = AsyncMock(return_value=None)
     run_main = AsyncMock(
         return_value=MainDialogueResult(
             message={
@@ -85,12 +86,13 @@ async def test_main_dialogue_node_generates_when_response_missing():
     )
 
     with (
-        patch("src.core.graph.nodes.get_settings", return_value=settings),
+        patch("src.core.graph.nodes._main_dialogue.get_settings", return_value=settings),
         patch("src.core.graph.nodes._make_multi_forwarder", return_value=forwarder),
         patch("src.core.graph.nodes.SqliteMemoryStore", return_value=memory_store),
+        patch("src.core.graph.nodes.SqliteRelationshipStore", return_value=relationship_store),
         patch("src.core.graph.nodes.VectorStore"),
-        patch("src.core.graph.nodes.build_main_dialogue_messages", return_value=[]) as build,
-        patch("src.core.graph.nodes.run_main_dialogue", new=run_main),
+        patch("src.core.graph.nodes._main_dialogue.build_main_dialogue_messages", return_value=[]) as build,
+        patch("src.core.graph.nodes._main_dialogue.run_main_dialogue", new=run_main),
     ):
         result = await main_dialogue_node(
             {
@@ -137,7 +139,8 @@ async def test_main_dialogue_node_forwards_client_tools_to_main_only():
     memory_store = MagicMock()
     memory_store.init_db = AsyncMock()
     memory_store.list_permanent = AsyncMock(return_value=[])
-    memory_store.get_relationship = AsyncMock(return_value=None)
+    relationship_store = MagicMock()
+    relationship_store.get_relationship = AsyncMock(return_value=None)
     tools = [
         {
             "type": "function",
@@ -163,12 +166,13 @@ async def test_main_dialogue_node_forwards_client_tools_to_main_only():
     )
 
     with (
-        patch("src.core.graph.nodes.get_settings", return_value=settings),
+        patch("src.core.graph.nodes._main_dialogue.get_settings", return_value=settings),
         patch("src.core.graph.nodes._make_multi_forwarder", return_value=forwarder),
         patch("src.core.graph.nodes.SqliteMemoryStore", return_value=memory_store),
+        patch("src.core.graph.nodes.SqliteRelationshipStore", return_value=relationship_store),
         patch("src.core.graph.nodes.VectorStore"),
-        patch("src.core.graph.nodes.build_main_dialogue_messages", return_value=[]),
-        patch("src.core.graph.nodes.run_main_dialogue", new=run_main),
+        patch("src.core.graph.nodes._main_dialogue.build_main_dialogue_messages", return_value=[]),
+        patch("src.core.graph.nodes._main_dialogue.run_main_dialogue", new=run_main),
     ):
         result = await main_dialogue_node(
             {

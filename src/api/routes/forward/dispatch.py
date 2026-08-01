@@ -14,9 +14,10 @@ from src.api.tool_transactions import (
 )
 from src.core.config import get_settings
 from src.core.constants import VIRTUAL_MODEL_ANY
+from src.core.utils import last_user_message
 from src.infra.debug_context import emit_pipeline
 
-from . import (
+from ._accessors import (
     _get_conversation_store,
     _get_debug_bus,
     _get_identity_store,
@@ -216,11 +217,7 @@ async def _handle_identity_binding(
     if not actor_id:
         return None
 
-    last_user_msg = ""
-    for m in reversed(messages_dict):
-        if m.get("role") == "user":
-            last_user_msg = m.get("content", "").strip()
-            break
+    last_user_msg = last_user_message(messages_dict).strip()
 
     if last_user_msg == bind_cmd:
         return await _bind_initiate(
@@ -307,10 +304,10 @@ async def _migrate_relationships(http_request: Request, actor_id: str, group_id:
     from src.core.constants import DEFAULT_PERSONA_ID
 
     state = _state_or_none(http_request)
-    memory_store = state.memory_store if state else None
-    if not memory_store:
+    relationship_store = state.relationship_store if state else None
+    if not relationship_store:
         return 0
-    return await memory_store.migrate_relationships_to_group(
+    return await relationship_store.migrate_relationships_to_group(
         DEFAULT_PERSONA_ID, actor_id, group_id,
     )
 

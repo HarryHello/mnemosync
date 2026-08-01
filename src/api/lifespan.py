@@ -34,7 +34,7 @@ from src.persistence.http_log_store import HttpLogStore
 from src.persistence.idempotency_store import SqliteIdempotencyStore
 from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.lorebook_store import SqliteLorebookStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
 from src.persistence.notification_store import NotificationStore
 from src.persistence.persona_store import SqlitePersonaStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
@@ -85,6 +85,7 @@ async def _connect_stores(settings) -> dict:
     auth_store = SqliteAuthStore(str(storage.auth_db_abs))
     api_key_store = SqliteApiKeyStore(str(storage.api_key_db_abs))
     memory_store = SqliteMemoryStore(str(storage.memory_db_abs))
+    relationship_store = SqliteRelationshipStore(str(storage.memory_db_abs))
     http_log_store = HttpLogStore(str(storage.http_log_db_abs))
     llm_service_store = LLMServiceStore(str(storage.llm_db_abs))
     conversation_store = SqliteConversationStore(str(storage.conversation_db_abs))
@@ -100,6 +101,7 @@ async def _connect_stores(settings) -> dict:
         "auth_store": auth_store,
         "api_key_store": api_key_store,
         "memory_store": memory_store,
+        "relationship_store": relationship_store,
         "http_log_store": http_log_store,
         "llm_service_store": llm_service_store,
         "conversation_store": conversation_store,
@@ -113,7 +115,7 @@ async def _connect_stores(settings) -> dict:
     }
 
     connect_order = [
-        "auth_store", "api_key_store", "memory_store", "http_log_store",
+        "auth_store", "api_key_store", "memory_store", "relationship_store", "http_log_store",
         "conversation_store", "notification_store",
         "identity_store", "idempotency_store",
     ]
@@ -130,7 +132,7 @@ async def _close_all(instances: dict) -> None:
     """关闭所有已初始化的 Store, 每个独立 try/except 保证互不影响."""
     close_order = [
         "conversation_store", "notification_store", "identity_store",
-        "idempotency_store", "http_log_store", "memory_store",
+        "idempotency_store", "http_log_store", "relationship_store", "memory_store",
         "api_key_store", "auth_store",
     ]
     for key in close_order:
@@ -201,6 +203,7 @@ async def app_lifespan(app: FastAPI):
         auth_store=instances["auth_store"],
         api_key_store=instances["api_key_store"],
         memory_store=instances["memory_store"],
+        relationship_store=instances["relationship_store"],
         http_log_store=instances["http_log_store"],
         llm_service_store=instances["llm_service_store"],
         conversation_store=instances["conversation_store"],
@@ -255,7 +258,7 @@ async def app_lifespan(app: FastAPI):
         if actor_ids_with_groups:
             fixed = 0
             for actor_id, group_id in actor_ids_with_groups:
-                n = await instances["memory_store"].migrate_relationships_to_group(
+                n = await instances["relationship_store"].migrate_relationships_to_group(
                     DEFAULT_PERSONA_ID, actor_id, group_id,
                 )
                 fixed += n

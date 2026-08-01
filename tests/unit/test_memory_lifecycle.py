@@ -26,7 +26,7 @@ from src.core.memory.models import (
 )
 from src.infra.forwarder.forwarder import UpstreamError, UpstreamTimeout
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +263,7 @@ class TestApplyRelationshipUpdate:
     async def test_create_new_relationship(
         self,
         memory_store: SqliteMemoryStore,
+        relationship_store: SqliteRelationshipStore,
         mock_vector_store,
         mock_multi_forwarder,
     ) -> None:
@@ -270,6 +271,7 @@ class TestApplyRelationshipUpdate:
             memory_store=memory_store,
             vector_store=mock_vector_store,
             forwarder=mock_multi_forwarder,
+            relationship_store=relationship_store,
         )
         rel = await lc.apply_relationship_update(
             persona_id="persona_1", user_id="user_1",
@@ -286,6 +288,7 @@ class TestApplyRelationshipUpdate:
     async def test_update_existing_relationship(
         self,
         memory_store: SqliteMemoryStore,
+        relationship_store: SqliteRelationshipStore,
         mock_vector_store,
         mock_multi_forwarder,
     ) -> None:
@@ -293,6 +296,7 @@ class TestApplyRelationshipUpdate:
             memory_store=memory_store,
             vector_store=mock_vector_store,
             forwarder=mock_multi_forwarder,
+            relationship_store=relationship_store,
         )
         await lc.apply_relationship_update(
             "p1", "u1", 0.1, 0.1, "acquaintance", "note1",

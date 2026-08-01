@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 
 import aiosqlite
 
-from src.persistence.base import SqliteStore
+from src.persistence.base import SqliteStore, _parse_dt as _parse_dt_base
 
 
 @dataclass
@@ -143,6 +143,5 @@ class SqliteIdempotencyStore(SqliteStore):
 
 
 def _parse_dt(v: str | None) -> datetime:
-    if not v:
-        return datetime.now(UTC)
-    return datetime.fromisoformat(v)
+    """Parse ISO datetime, falling back to now() instead of None."""
+    return _parse_dt_base(v) or datetime.now(UTC)

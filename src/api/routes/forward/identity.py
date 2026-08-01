@@ -9,7 +9,7 @@ from src.core.models.resolver import NoCandidateForRoleError
 from src.infra.llm_service.models import ModelType
 from src.persistence.api_key_store import ApiKey
 
-from . import _get_api_key_store, _get_identity_store, _get_multi_forwarder, _get_plugins
+from ._accessors import _get_api_key_store, _get_identity_store, _get_multi_forwarder, _get_plugins
 
 # VIRTUAL_MODEL_ANY 来自 core.constants, 避免与 __init__.py 产生循环依赖,
 # 在函数内部延迟导入。

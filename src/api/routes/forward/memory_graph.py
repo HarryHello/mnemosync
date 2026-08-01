@@ -4,7 +4,7 @@ from typing import Any
 
 from src.infra.forwarder import parse_sse_stream_full
 
-from . import _get_compiled_graph
+from ._accessors import _get_compiled_graph
 
 logger = logging.getLogger(__name__)
 

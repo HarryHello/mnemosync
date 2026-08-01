@@ -15,7 +15,7 @@ from src.api.schemas.forward import (
 )
 from src.persistence.idempotency_store import IdempotencyRecord
 
-from . import _get_idempotency_store
+from ._accessors import _get_idempotency_store
 
 logger = logging.getLogger(__name__)
 

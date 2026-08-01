@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteRelationshipStore
 from src.tools import make_update_addressing_tool
 
 
 @pytest.fixture
 async def store(tmp_path):
-    s = SqliteMemoryStore(str(tmp_path / "memory.db"))
+    s = SqliteRelationshipStore(str(tmp_path / "memory.db"))
     await s.init_db()
     return s
 

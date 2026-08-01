@@ -15,7 +15,7 @@ from src.core.identity.models import (
     IdentityStrategy,
     UserGroup,
 )
-from src.persistence.base import SqliteStore
+from src.persistence.base import SqliteStore, _parse_dt
 
 
 class SqliteIdentityStore(SqliteStore):
@@ -469,8 +469,3 @@ class SqliteIdentityStore(SqliteStore):
             await db.commit()
             return (cur.rowcount or 0) > 0
 
-
-def _parse_dt(v: str | None) -> datetime | None:
-    if not v:
-        return None
-    return datetime.fromisoformat(v)

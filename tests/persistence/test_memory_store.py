@@ -15,7 +15,7 @@ from src.core.memory.models import (
     Relationship,
     Visibility,
 )
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
 
 
 @pytest.fixture
@@ -23,6 +23,14 @@ async def store(tmp_path):
     s = SqliteMemoryStore(str(tmp_path / "memory.db"))
     await s.init_db()
     return s
+
+
+@pytest.fixture
+async def rel_store(store):
+    """Relationship store sharing the same DB file as the memory store."""
+    rs = SqliteRelationshipStore(store.db_path)
+    await rs.init_db()
+    return rs
 
 
 # ─── 记忆 CRUD ────────────────────────────────────────────
@@ -186,15 +194,15 @@ async def test_count_permanent(store):
 # ─── 关系状态 ────────────────────────────────────────────
 
 
-async def test_relationship_roundtrip(store):
-    assert await store.get_relationship("default", "alice") is None
+async def test_relationship_roundtrip(rel_store):
+    assert await rel_store.get_relationship("default", "alice") is None
 
     rel = Relationship.create("default", "alice")
     rel.apply_delta(intimacy_delta=0.15, trust_delta=0.10, new_type="friend",
                     notes="首次见面, 分享了一些个人信息")
-    await store.save_relationship(rel)
+    await rel_store.save_relationship(rel)
 
-    loaded = await store.get_relationship("default", "alice")
+    loaded = await rel_store.get_relationship("default", "alice")
     assert loaded is not None
     assert loaded.intimacy_score == pytest.approx(0.15)
     assert loaded.trust_level == pytest.approx(0.10)
@@ -203,12 +211,12 @@ async def test_relationship_roundtrip(store):
     assert "分享" in loaded.notes
 
 
-async def test_relationship_upsert_overwrites(store):
+async def test_relationship_upsert_overwrites(rel_store):
     rel = Relationship.create("default", "alice")
-    await store.save_relationship(rel)
+    await rel_store.save_relationship(rel)
     rel.apply_delta(intimacy_delta=0.5, trust_delta=0.5)
-    await store.save_relationship(rel)
-    loaded = await store.get_relationship("default", "alice")
+    await rel_store.save_relationship(rel)
+    loaded = await rel_store.get_relationship("default", "alice")
     assert loaded.intimacy_score == pytest.approx(0.5)
     assert loaded.interaction_count == 1
 
@@ -216,9 +224,9 @@ async def test_relationship_upsert_overwrites(store):
 # ─── 关系称呼动态演化 (v0.2.10) ─────────────────────────
 
 
-async def test_update_addressing_writes_row_and_audit(store):
+async def test_update_addressing_writes_row_and_audit(rel_store):
     """首次调用: 建 relationship 行 + 写 audit 日志."""
-    entries = await store.update_relationship_addressing(
+    entries = await rel_store.update_relationship_addressing(
         "default", "alice",
         user_addressing="小哥",
         source="agent",
@@ -230,15 +238,15 @@ async def test_update_addressing_writes_row_and_audit(store):
     assert entries[0].new_value == "小哥"
     assert entries[0].source == "agent"
 
-    rel = await store.get_relationship("default", "alice")
+    rel = await rel_store.get_relationship("default", "alice")
     assert rel is not None
     assert rel.user_addressing == "小哥"
     assert rel.persona_addressing is None  # 未改的字段保持 NULL
     assert rel.context is None
 
 
-async def test_update_addressing_two_fields_writes_two_audit_rows(store):
-    entries = await store.update_relationship_addressing(
+async def test_update_addressing_two_fields_writes_two_audit_rows(rel_store):
+    entries = await rel_store.update_relationship_addressing(
         "default", "alice",
         persona_addressing="人家",
         context="恋人",
@@ -249,41 +257,41 @@ async def test_update_addressing_two_fields_writes_two_audit_rows(store):
     fields = {e.field_name for e in entries}
     assert fields == {"persona_addressing", "context"}
 
-    audit = await store.list_relationship_audit("default", "alice")
+    audit = await rel_store.list_relationship_audit("default", "alice")
     assert len(audit) == 2
 
 
-async def test_update_addressing_no_change_skips_audit(store):
+async def test_update_addressing_no_change_skips_audit(rel_store):
     """相同值不写 audit 也不 UPDATE."""
-    await store.update_relationship_addressing(
+    await rel_store.update_relationship_addressing(
         "default", "alice",
         user_addressing="哥",
         source="manual",
         reason="人工设置初始称呼",
     )
-    entries = await store.update_relationship_addressing(
+    entries = await rel_store.update_relationship_addressing(
         "default", "alice",
         user_addressing="哥",  # 与现值相同
         source="agent",
         reason="重复设置应被跳过",
     )
     assert entries == []
-    audit = await store.list_relationship_audit("default", "alice")
+    audit = await rel_store.list_relationship_audit("default", "alice")
     assert len(audit) == 1  # 只有首次那条
 
 
-async def test_update_addressing_all_none_raises(store):
+async def test_update_addressing_all_none_raises(rel_store):
     with pytest.raises(ValueError):
-        await store.update_relationship_addressing(
+        await rel_store.update_relationship_addressing(
             "default", "alice",
             source="agent",
             reason="没传字段应该报错",
         )
 
 
-async def test_update_addressing_invalid_source_raises(store):
+async def test_update_addressing_invalid_source_raises(rel_store):
     with pytest.raises(ValueError):
-        await store.update_relationship_addressing(
+        await rel_store.update_relationship_addressing(
             "default", "alice",
             user_addressing="X",
             source="bogus",
@@ -291,32 +299,32 @@ async def test_update_addressing_invalid_source_raises(store):
         )
 
 
-async def test_list_audit_orders_by_id_desc(store):
-    await store.update_relationship_addressing(
+async def test_list_audit_orders_by_id_desc(rel_store):
+    await rel_store.update_relationship_addressing(
         "default", "alice",
         user_addressing="v1", source="agent", reason="first update xxxx",
     )
-    await store.update_relationship_addressing(
+    await rel_store.update_relationship_addressing(
         "default", "alice",
         user_addressing="v2", source="manual", reason="second update xxxx",
     )
-    audit = await store.list_relationship_audit("default", "alice")
+    audit = await rel_store.list_relationship_audit("default", "alice")
     assert len(audit) == 2
     assert audit[0].new_value == "v2"
     assert audit[1].new_value == "v1"
 
 
-async def test_relationship_addressing_survives_save_relationship(store):
+async def test_relationship_addressing_survives_save_relationship(rel_store):
     """save_relationship 后 addressing 列被序列化 (不被清空)."""
-    await store.update_relationship_addressing(
+    await rel_store.update_relationship_addressing(
         "default", "alice",
         user_addressing="小哥",
         source="agent", reason="设置初值",
     )
-    rel = await store.get_relationship("default", "alice")
+    rel = await rel_store.get_relationship("default", "alice")
     rel.apply_delta(intimacy_delta=0.2, trust_delta=0.1)
-    await store.save_relationship(rel)
+    await rel_store.save_relationship(rel)
 
-    loaded = await store.get_relationship("default", "alice")
+    loaded = await rel_store.get_relationship("default", "alice")
     assert loaded.user_addressing == "小哥"
     assert loaded.intimacy_score == pytest.approx(0.2)

@@ -13,7 +13,7 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from src.persistence.base import SqliteStore
+from src.persistence.base import SqliteStore, resolve_sort_params
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +119,15 @@ class SqliteLorebookStore(SqliteStore):
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> tuple[list[LorebookEntry], int]:
-        allowed_sort = {"created_at", "priority", "content"}
-        sort_col = sort_by if sort_by in allowed_sort else "created_at"
-        direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+        sort_col, direction = resolve_sort_params(
+            sort_by, sort_order,
+            {
+                "created_at": "created_at",
+                "priority": "priority",
+                "content": "content",
+            },
+            default_col="created_at",
+        )
         where = []
         params = []
         if space_id is not None:

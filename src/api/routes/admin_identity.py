@@ -14,6 +14,7 @@ from src.api.deps import (
     get_identity_store,
     get_memory_store,
     get_multi_forwarder,
+    get_relationship_store,
 )
 from src.api.routes.auth import get_current_user
 from src.api.schemas.admin import (
@@ -40,7 +41,7 @@ from src.api.schemas.admin import (
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
 
 logger = logging.getLogger(__name__)
 
@@ -350,7 +351,7 @@ async def bind_actor_to_group(
     actor_id: str,
     group_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
-    memory_store: SqliteMemoryStore = Depends(get_memory_store),
+    relationship_store: SqliteRelationshipStore = Depends(get_relationship_store),
 ):
     """绑定 Actor 到 UserGroup.
 
@@ -361,7 +362,7 @@ async def bind_actor_to_group(
     if not ok:
         raise HTTPException(409, detail="绑定已存在或 Actor/Group 不存在")
     from src.core.constants import DEFAULT_PERSONA_ID
-    migrated = await memory_store.migrate_relationships_to_group(
+    migrated = await relationship_store.migrate_relationships_to_group(
         DEFAULT_PERSONA_ID, actor_id, group_id,
     )
     if migrated:
