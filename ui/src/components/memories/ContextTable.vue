@@ -197,7 +197,7 @@ function contentPreview(content: string): string {
       sortable="custom"
     >
       <template #default="{ row }">
-        <span class="mono muted">{{ fmtDate(row.ts) }}</span>
+        <span class="mono muted">{{ formatDate(row.ts) }}</span>
       </template>
     </el-table-column>
     <el-table-column

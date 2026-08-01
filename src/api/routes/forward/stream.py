@@ -263,12 +263,25 @@ async def _dispatch_callbacks(
 
             def _on_done(t: asyncio.Task, _key: str = task_key) -> None:
                 bg_tasks.pop(_key, None)
-                status = "ok" if not t.cancelled() and t.exception() is None else "failed"
+                status = "ok"
+                err_msg: str | None = None
+                if t.cancelled():
+                    status = "cancelled"
+                else:
+                    try:
+                        err = t.exception()
+                        if err is not None:
+                            status = "failed"
+                            err_msg = f"{type(err).__name__}: {err}"
+                            logger.warning("后台记忆图任务失败: %s", err_msg)
+                    except asyncio.CancelledError:
+                        status = "cancelled"
                 emit_pipeline(
                     getattr(http_request.app.state, "debug_bus", None),
                     event_kind="bg_task_done",
                     task_name=_key,
                     status=status,
+                    error=err_msg,
                 )
 
             task.add_done_callback(_on_done)

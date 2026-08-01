@@ -101,7 +101,7 @@ function identityDetail(row: Relationship): string {
       </el-table-column>
       <el-table-column label="最近活跃" width="170">
         <template #default="{ row }: { row: Relationship }">
-          <span class="mono">{{ fmtDate(row.updated_at) }}</span>
+          <span class="mono">{{ formatDate(row.updated_at) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="备注" min-width="160" show-overflow-tooltip>

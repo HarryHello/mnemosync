@@ -35,7 +35,7 @@ function sourceTagType(src: string): 'primary' | 'success' | 'info' {
     <el-table v-else :data="items" size="small" stripe>
       <el-table-column label="时间" width="170">
         <template #default="{ row }">
-          <span class="mono">{{ fmtDate(row.changed_at) }}</span>
+          <span class="mono">{{ formatDate(row.changed_at) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="来源" width="80">

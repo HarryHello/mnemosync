@@ -394,7 +394,7 @@ watch(() => props.active, (active) => {
               <span v-else class="muted">未定义</span>
             </el-descriptions-item>
             <el-descriptions-item label="最近活跃">
-              <span class="mono">{{ fmtDate(rel.updated_at) }}</span>
+              <span class="mono">{{ formatDate(rel.updated_at) }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="备注">
               <span v-if="rel.notes" class="notes">{{ rel.notes }}</span>

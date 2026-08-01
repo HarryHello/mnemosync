@@ -57,10 +57,10 @@ function typeLabel(t: string): string {
             {{ item.access_count }}
           </el-descriptions-item>
           <el-descriptions-item label="创建时间">
-            <span class="mono muted">{{ fmtDate(item.created_at) }}</span>
+            <span class="mono muted">{{ formatDate(item.created_at) }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="最近访问" :span="2">
-            <span class="mono muted">{{ fmtDate(item.last_accessed_at) }}</span>
+            <span class="mono muted">{{ formatDate(item.last_accessed_at) }}</span>
           </el-descriptions-item>
         </el-descriptions>
       </div>

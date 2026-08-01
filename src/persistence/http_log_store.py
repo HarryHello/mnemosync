@@ -101,7 +101,7 @@ class HttpLogStore(SqliteStore):
 
     async def _get_writer_conn(self) -> aiosqlite.Connection:
         """Return a long-lived writer connection, creating it on first use."""
-        if self._writer_conn is None or self._writer_conn.is_closed():
+        if self._writer_conn is None:
             self._writer_conn = await aiosqlite.connect(self.db_path)
             await self._writer_conn.execute("PRAGMA journal_mode=WAL")
             await self._writer_conn.execute("PRAGMA synchronous=NORMAL")
@@ -144,6 +144,7 @@ class HttpLogStore(SqliteStore):
                 raise
             except Exception as e:
                 logger.exception("http_log writer_loop error: %s", e)
+                self._writer_conn = None  # 重建连接
                 batch.clear()
                 await asyncio.sleep(0.5)
 

@@ -140,6 +140,23 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
 
         store = getattr(request.app.state, "http_log_store", None)
 
+        # SSE 长连接: 不消费 body_iterator, 直接透传, 仅记录请求头
+        content_type = response.headers.get("content-type", "")
+        if "text/event-stream" in content_type:
+            if store is not None:
+                store.enqueue({
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query_params": str(request.query_params) if request.query_params else None,
+                    "request_headers": request_headers,
+                    "request_body": request_body,
+                    "response_status": response.status_code,
+                    "response_body": None,
+                    "duration_ms": duration_ms,
+                    "client_ip": request.client.host if request.client else None,
+                })
+            return response
+
         def _log(response_body):
             if self.debug:
                 _log_debug(
@@ -204,7 +221,6 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
 
         # 兜底: 普通 Response (如直接返回的 JSONResponse, 但 call_next 不会走这里)
         response_body = None
-        content_type = response.headers.get("content-type", "")
         if "json" in content_type:
             try:
                 body = response.body

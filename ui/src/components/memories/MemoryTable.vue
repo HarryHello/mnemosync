@@ -139,7 +139,7 @@ function contentPreview(content: string): string {
       sortable="custom"
     >
       <template #default="{ row }">
-        <span class="mono muted">{{ fmtDate(row.created_at) }}</span>
+        <span class="mono muted">{{ formatDate(row.created_at) }}</span>
       </template>
     </el-table-column>
     <el-table-column
@@ -149,7 +149,7 @@ function contentPreview(content: string): string {
       sortable="custom"
     >
       <template #default="{ row }">
-        <span class="mono muted">{{ fmtDate(row.last_accessed_at) }}</span>
+        <span class="mono muted">{{ formatDate(row.last_accessed_at) }}</span>
       </template>
     </el-table-column>
     <el-table-column label="操作" width="90" align="right" fixed="right">
