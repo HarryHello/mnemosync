@@ -243,48 +243,8 @@ async def _dispatch_callbacks(
         finish_reason=assistant_finish_reason,
     )
 
-    # Trigger background memory graph (skip for tool-only intermediate rounds).
-    logger.debug("🔄 触发后台记忆图...")
-    initial_state["proxy_thinking_enabled"] = False
-    if reasoning_text:
-        initial_state["proxy_thinking_result"] = reasoning_text
-    if assistant_finish_reason == "tool_calls" and not assistant_text:
-        logger.debug("  ⏭️ 工具中间轮 (finish_reason=tool_calls, 无文本), 跳过")
-    else:
-        graph_config = _build_graph_config(http_request)
-        task_key = f"memory_graph-{chatcmpl_id}"
-        task = asyncio.create_task(
-            _run_memory_graph(initial_state, collected_chunks, graph_config),
-            name=task_key,
-        )
-        bg_tasks: dict = getattr(http_request.app.state, "active_bg_tasks", {})
-        if bg_tasks is not None:
-            bg_tasks[task_key] = task
-
-            def _on_done(t: asyncio.Task, _key: str = task_key) -> None:
-                bg_tasks.pop(_key, None)
-                status = "ok"
-                err_msg: str | None = None
-                if t.cancelled():
-                    status = "cancelled"
-                else:
-                    try:
-                        err = t.exception()
-                        if err is not None:
-                            status = "failed"
-                            err_msg = f"{type(err).__name__}: {err}"
-                            logger.warning("后台记忆图任务失败: %s", err_msg)
-                    except asyncio.CancelledError:
-                        status = "cancelled"
-                emit_pipeline(
-                    getattr(http_request.app.state, "debug_bus", None),
-                    event_kind="bg_task_done",
-                    task_name=_key,
-                    status=status,
-                    error=err_msg,
-                )
-
-            task.add_done_callback(_on_done)
+    # NOTE: memory graph task is created OUTSIDE the generator
+    # (in locked_stream) to avoid the finally block cancelling it immediately.
 
 
 # ── Main stream entry point ─────────────────────────────────────
@@ -487,6 +447,9 @@ async def _handle_stream(
     if passthrough:
         logger.debug("  🔗 透传上游可选字段: %s", list(passthrough.keys()))
 
+    # Shared container: generator populates, locked_stream reads after it finishes.
+    _gen_result: dict[str, Any] = {}
+
     async def stream_generator():
         result = _StreamAssemblyResult()
 
@@ -511,7 +474,7 @@ async def _handle_stream(
         # Phase 3: Parse SSE chunks into structured result.
         stream_result = _parse_sse_event(result.collected_chunks)
 
-        # Phase 4: Dispatch post-stream callbacks.
+        # Phase 4: Dispatch post-stream callbacks (persistence only, no bg task).
         await _dispatch_callbacks(
             http_request,
             initial_state,
@@ -524,19 +487,86 @@ async def _handle_stream(
             stream_result=stream_result,
         )
 
-    # 包装: 流结束后释放空间锁 + 取消后台记忆图任务
+        # Pass data out for memory graph task creation (after generator exits).
+        _gen_result["collected_chunks"] = result.collected_chunks
+        _gen_result["assistant_finish_reason"] = stream_result.finish_reason
+        _gen_result["assistant_text"] = stream_result.text or ""
+
+    async def _trigger_memory_graph() -> asyncio.Task | None:
+        """Create background memory graph task (called after stream ends).
+
+        Returns the task so the caller can wait for it, or None if skipped.
+        """
+        collected_chunks = _gen_result.get("collected_chunks")
+        if not collected_chunks:
+            return None
+        finish_reason = _gen_result.get("assistant_finish_reason")
+        assistant_text = _gen_result.get("assistant_text", "")
+
+        initial_state["proxy_thinking_enabled"] = False
+        if reasoning_text:
+            initial_state["proxy_thinking_result"] = reasoning_text
+
+        # Skip memory graph for tool-only intermediate rounds.
+        if finish_reason == "tool_calls" and not assistant_text:
+            logger.debug("  ⏭️ 工具中间轮, 跳过记忆图")
+            return None
+
+        logger.debug("🔄 触发后台记忆图...")
+        graph_config = _build_graph_config(http_request)
+        task_key = f"memory_graph-{chatcmpl_id}"
+        task = asyncio.create_task(
+            _run_memory_graph(initial_state, collected_chunks, graph_config),
+            name=task_key,
+        )
+        bg_tasks: dict = getattr(http_request.app.state, "active_bg_tasks", {})
+        if bg_tasks is not None:
+            bg_tasks[task_key] = task
+
+            def _on_done(t: asyncio.Task, _key: str = task_key) -> None:
+                bg_tasks.pop(_key, None)
+                status = "ok"
+                err_msg: str | None = None
+                if t.cancelled():
+                    status = "cancelled"
+                else:
+                    try:
+                        err = t.exception()
+                        if err is not None:
+                            status = "failed"
+                            err_msg = f"{type(err).__name__}: {err}"
+                            logger.warning("后台记忆图任务失败: %s", err_msg)
+                    except asyncio.CancelledError:
+                        status = "cancelled"
+                emit_pipeline(
+                    getattr(http_request.app.state, "debug_bus", None),
+                    event_kind="bg_task_done",
+                    task_name=_key,
+                    status=status,
+                    error=err_msg,
+                )
+
+            task.add_done_callback(_on_done)
+        return task
+
+    # 包装: 流结束后触发记忆图 + 等待完成 + 释放空间锁
     async def locked_stream():
+        bg_task: asyncio.Task | None = None
         try:
             async for chunk in stream_generator():
                 yield chunk
+            # Stream completed normally — trigger memory graph AFTER generator exits.
+            bg_task = await _trigger_memory_graph()
+        except Exception:
+            logger.warning("流式响应异常", exc_info=True)
         finally:
-            # 取消后台记忆图任务
-            _bg: dict = getattr(http_request.app.state, "active_bg_tasks", {})
-            _task_key = f"memory_graph-{chatcmpl_id}"
-            _bg_task = _bg.pop(_task_key, None) if _bg is not None else None
-            if _bg_task is not None and not _bg_task.done():
-                _bg_task.cancel()
-                logger.debug("⏹️ 取消后台记忆图任务: %s", _task_key)
+            if bg_task is not None and not bg_task.done():
+                # Memory graph still running — wait for it to finish.
+                try:
+                    await asyncio.wait_for(asyncio.shield(bg_task), timeout=120)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    bg_task.cancel()
+                    logger.debug("⏹️ 记忆图任务超时/取消: %s", chatcmpl_id)
 
             lock = initial_state.get("_space_lock")
             if lock is not None and lock.locked():
