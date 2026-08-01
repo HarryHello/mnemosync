@@ -40,9 +40,8 @@ dependencies = [
     "cryptography~=42.0",
     # 日志
     "structlog~=24.4",
-    # 认证
-    "passlib[bcrypt]~=1.7",
-    "python-jose[cryptography]~=3.3",
+    # 认证（密码哈希）
+    "bcrypt~=4.2",
 ]
 
 [project.optional-dependencies]

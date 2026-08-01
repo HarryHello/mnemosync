@@ -13,6 +13,8 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+import aiosqlite
+
 from src.persistence.base import SqliteStore, resolve_sort_params
 
 logger = logging.getLogger(__name__)
@@ -52,7 +54,7 @@ class SqliteLorebookStore(SqliteStore):
     """SQLite Lorebook 条目存储."""
 
     @staticmethod
-    async def _init_schema(db) -> None:
+    async def _init_schema(db: aiosqlite.Connection) -> None:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS lorebook_entries (
                 id TEXT PRIMARY KEY,

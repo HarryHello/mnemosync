@@ -7,7 +7,9 @@ Sub-modules should ``from ._accessors import ...`` rather than importing from
 the package ``__init__``.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from fastapi import Request
 
@@ -17,6 +19,10 @@ from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.idempotency_store import SqliteIdempotencyStore
 from src.persistence.identity_store import SqliteIdentityStore
+from src.persistence.persona_store import SqlitePersonaStore
+
+if TYPE_CHECKING:
+    from src.infra.debug_bus import DebugEventBus
 
 # 全局缓存
 _api_key_store: SqliteApiKeyStore | None = None
@@ -68,13 +74,13 @@ def _get_idempotency_store(http_request: Request) -> SqliteIdempotencyStore | No
     return _state(http_request).idempotency_store
 
 
-def _get_debug_bus(http_request: Request):
+def _get_debug_bus(http_request: Request) -> DebugEventBus | None:
     """从 AppState 取 DebugEventBus (可能为 None)."""
     from src.api.deps import _state
     return _state(http_request).debug_bus
 
 
-def _get_persona_store(http_request: Request):
+def _get_persona_store(http_request: Request) -> SqlitePersonaStore | None:
     """从 AppState 取 SqlitePersonaStore (可能为 None)."""
     from src.api.deps import _state
     return _state(http_request).persona_store
