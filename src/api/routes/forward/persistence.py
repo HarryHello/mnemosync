@@ -3,6 +3,7 @@ import json
 import logging
 from typing import Any
 
+from src.core.constants import TOOL_CALL_TOKEN_COUNT
 from src.core.identity.plugin import NormalizedEvent
 from src.core.memory.short_term import token_count_for_storage
 from src.persistence.conversation_store import (
@@ -84,7 +85,7 @@ async def _persist_assistant_event(
             await store.append(
                 role="assistant",
                 content=json.dumps(call, ensure_ascii=False),
-                token_count=8,
+                token_count=TOOL_CALL_TOKEN_COUNT,
                 source_frontend="mnemosync",
                 actor_id=None,
                 effective_user_id=initial_state.get("source_user"),

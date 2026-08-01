@@ -11,6 +11,7 @@ embedding_model, embedding_dim)`。首次写入时自动 lock; 之后每次写�
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import chromadb
@@ -60,6 +61,7 @@ class VectorStore:
 
     def __init__(self, persist_dir: str, collection_name: str = "mnemosync_memories"):
         self._collection_name = collection_name
+        self._logger = logging.getLogger(__name__)
         self._client = chromadb.PersistentClient(
             path=persist_dir,
             settings=Settings(anonymized_telemetry=False, allow_reset=True),
@@ -147,14 +149,14 @@ class VectorStore:
         try:
             self._collection.delete(ids=[entry.id])
         except Exception:
-            pass
+            self._logger.warning("vector_store.update: delete failed for %s", entry.id, exc_info=True)
         self.add(entry, vector)
 
     def delete(self, memory_id: str) -> None:
         try:
             self._collection.delete(ids=[memory_id])
         except Exception:
-            pass
+            self._logger.warning("vector_store.delete: failed for %s", memory_id, exc_info=True)
 
     def search(
         self,

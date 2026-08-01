@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { RelationshipAuditEntry } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   items: RelationshipAuditEntry[]
@@ -22,13 +23,6 @@ function sourceTagType(src: string): 'primary' | 'success' | 'info' {
   if (src === 'manual') return 'success'
   return 'info'
 }
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleString('zh-CN', { hour12: false })
-}
 </script>
 
 <template>
@@ -41,7 +35,7 @@ function fmtDate(s: string | null): string {
     <el-table v-else :data="items" size="small" stripe>
       <el-table-column label="时间" width="170">
         <template #default="{ row }">
-          <span class="mono">{{ fmtDate(row.changed_at) }}</span>
+          <span class="mono">{{ formatDate(row.changed_at) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="来源" width="80">

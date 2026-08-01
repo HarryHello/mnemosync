@@ -1,9 +1,9 @@
 # 身份管理模块
 
-> **模块版本**: v0.3.0
+> **模块版本**: v0.3.4
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-26
-> **最后更新**: 2026-07-26
+> **最后更新**: 2026-08-01
 > **作者**: HarryHelloo
 
 ---
@@ -145,6 +145,7 @@ class IdentityContext:
 | `api_key_bound` | ChatBox 等单用户本地应用, Key 即身份 | `external_key`, `frontend`, `display_name`, `channel_type`, `space_id` |
 | `regex` | AstrBot 等把身份信息塞进 prompt 文本的前台 | 见下 |
 | `llm` | 身份格式不固定、需要语义理解的前台 | `frontend`, `prompt_template` |
+| `plugin` | 复杂平台格式 (群聊快照等), 需要代码级解析 | `plugin_name`; 详见 [identity-plugin.md](identity-plugin.md) |
 
 ### 3.1 regex 策略 config
 
@@ -155,13 +156,13 @@ class IdentityContext:
   "name_pattern": "用户名[:：]\\s*(\\S+)",
   "space_pattern": "群号[:：]\\s*(\\d+)",
   "event_id_pattern": "消息ID[:：]\\s*(\\S+)",
-  "search_in": "system_or_first_user"
+  "search_in": "last_user"
 }
 ```
 
 - 各 `*_pattern` 取正则**第 1 个捕获组**; `actor_pattern` 未命中 → 非归属。
 - `space_pattern` 命中 → `channel_type = "group"`, 否则 `"direct"`。
-- `search_in`: `system_or_first_user` (默认) / `system` / `all`, 限定正则搜索的消息范围。
+- `search_in`: `system` (仅 system 消息) / `last_user` (默认, 最后一条 user 消息) / `all` (拼接所有消息), 限定正则搜索的消息范围。旧值 `system_or_first_user` 仍向后兼容。
 - `event_id_pattern` 命中的值进幂等表, 平台重发同一消息时原样重放首次响应。
 
 ### 3.2 llm 策略
@@ -328,9 +329,11 @@ mnemosync identity unbind <actor_id> <group_id>
 | 模块 | 关系 |
 |------|------|
 | [API Key](api-key.md) | Key 绑定 `strategy_id`; `note` 仍派生 `source_frontend` 元数据 |
+| [身份解析插件](identity-plugin.md) | `plugin` 策略类型的插件接口与开发指南 |
 | [消息处理](message-processing.md) | 身份解析是请求预处理的第一步, 先于提示词清洗与图编排 |
 | [记忆系统](memory-system.md) | effective_user_id 为隔离边界; space_id 参与受众过滤; 幂等保护记忆不被重复写入 |
 | [LangGraph 编排](langgraph.md) | AgentState 携带 actor_id / space_id / persona_id / channel_type |
+| [内部工具](internal-tools.md) | InternalToolRegistry + 跨平台身份绑定内部 tool |
 | [上游转发](forward.md) | 内部 tool 注入与拦截; 空间级串行锁; 身份绑定指令触发拦截 |
 
 ---
@@ -340,4 +343,6 @@ mnemosync identity unbind <actor_id> <group_id>
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v0.3.0 | 2026-07-26 | 初始版本: 身份模型 + 四策略 + 非归属模式 (Sub-Phase A); 空间事件流 + 幂等 (B); 受众过滤联动 (C); 关系按 Actor 解析 (D); 面板身份管理页 + CLI 命令组 |
-| v0.3.3 | 2026-07-28 | 用户自助跨平台绑定: 指令触发 + 内部 tool 自然语言触发; 内部 tool 注册表架构 |
+| v0.3.1 | 2026-07-27 | 第五种策略类型 `plugin`: 插件接口 + AstrBot 参考实现; 新增 `/identity/plugins` 端点 |
+| v0.3.1 | 2026-07-31 | regex 策略 search_in 重构: 新增 `last_user`，废弃 `system_or_first_user` (向后兼容); 插件 `preprocess()` 改为可选; 插件文档 |
+| v0.3.4 | 2026-07-28 | 用户自助跨平台绑定: 指令触发 + 内部 tool 自然语言触发; 内部 tool 注册表架构; 新增 cross-reference [内部工具](internal-tools.md) |

@@ -38,10 +38,11 @@ if TYPE_CHECKING:
     from src.persistence.idempotency_store import SqliteIdempotencyStore
     from src.persistence.identity_store import SqliteIdentityStore
     from src.persistence.lorebook_store import SqliteLorebookStore
-    from src.persistence.memory_store import SqliteMemoryStore
+    from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
     from src.persistence.notification_store import NotificationStore
     from src.persistence.persona_store import SqlitePersonaStore
     from src.persistence.space_policy_store import SqliteSpacePolicyStore
+    from src.persistence.agent_run_store import AgentRunStore
 
 
 @dataclass
@@ -55,6 +56,7 @@ class AppState:
     auth_store: SqliteAuthStore | None = None
     api_key_store: SqliteApiKeyStore | None = None
     memory_store: SqliteMemoryStore | None = None
+    relationship_store: SqliteRelationshipStore | None = None
     http_log_store: HttpLogStore | None = None
     llm_service_store: LLMServiceStore | None = None
     conversation_store: SqliteConversationStore | None = None
@@ -64,6 +66,8 @@ class AppState:
     persona_store: SqlitePersonaStore | None = None
     lorebook_store: SqliteLorebookStore | None = None
     space_policy_store: SqliteSpacePolicyStore | None = None
+    agent_run_store: AgentRunStore | None = None
+    active_bg_tasks: dict[str, asyncio.Task] | None = None
 
     # ── 服务 / 管理器 ──────────────────────────────────
     resolver: RoleResolver | None = None

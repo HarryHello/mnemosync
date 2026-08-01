@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Memory } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   modelValue: boolean
@@ -26,11 +27,6 @@ function typeLabel(t: string): string {
   if (t === 'permanent') return '永久'
   if (t === 'normal') return '普通'
   return t
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 </script>
 
@@ -61,10 +57,10 @@ function fmtDate(s: string | null): string {
             {{ item.access_count }}
           </el-descriptions-item>
           <el-descriptions-item label="创建时间">
-            <span class="mono muted">{{ fmtDate(item.created_at) }}</span>
+            <span class="mono muted">{{ formatDate(item.created_at) }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="最近访问" :span="2">
-            <span class="mono muted">{{ fmtDate(item.last_accessed_at) }}</span>
+            <span class="mono muted">{{ formatDate(item.last_accessed_at) }}</span>
           </el-descriptions-item>
         </el-descriptions>
       </div>

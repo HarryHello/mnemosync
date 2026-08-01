@@ -151,16 +151,19 @@ async def test_stream_tool_result_appends_validated_transaction_to_upstream_mess
         "channel_type": "group",
     }
     memory_store = SimpleNamespace(
-        init_db=AsyncMock(),
         get_relationship=AsyncMock(return_value=None),
         list_permanent=AsyncMock(return_value=[]),
+    )
+    vector_store = SimpleNamespace()
+    http_request.app.state.memory_store = memory_store
+    http_request.app.state.vector_store = vector_store
+    http_request.app.state.relationship_store = SimpleNamespace(
+        get_relationship=AsyncMock(return_value=None),
     )
 
     with (
         patch("src.api.routes.forward.stream.get_settings", return_value=_settings()),
         patch("src.api.routes.forward.stream._resolve_main_candidate", new=AsyncMock(return_value=None)),
-        patch("src.api.routes.forward.stream.SqliteMemoryStore", return_value=memory_store),
-        patch("src.api.routes.forward.stream.VectorStore"),
         patch("src.api.routes.forward.stream.MemoryRetriever") as retriever_cls,
         patch("src.api.routes.forward.stream.build_short_term_history", new=AsyncMock(return_value=_built())),
         patch("src.api.routes.forward.stream.build_main_dialogue_messages", return_value=[]) as build_messages,

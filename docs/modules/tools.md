@@ -1,9 +1,9 @@
 # 工具设计 | Tools
 
-> **模块版本**: v0.3.0
+> **模块版本**: v0.3.4
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-07-26
+> **最后更新**: 2026-08-01
 > **作者**: HarryHelloo
 
 ---
@@ -234,6 +234,7 @@ out = await run_relationship_analysis(
 |------|------|
 | [LangGraph 编排](langgraph.md) | 2 个工具工厂在 `memory_analysis_node` / `relationship_analysis_node` 内组装 |
 | [身份子系统](identity.md) | `vector_search` 的 `retrieval_ctx` 来自身份解析; `update_addressing` 闭包绑定 effective_user_id + actor_id |
+| [内部工具](internal-tools.md) | `InternalToolRegistry` 注册服务端内部工具 (身份绑定等), 与本节 Agent 工具分离 |
 | [Forwarder](forward.md) | 所有远端调用 (embed / rerank / chat) 的唯一出口 |
 | [消息处理](message-processing.md) | 主对话前置检索复用 `MemoryRetriever` (非工具形式) |
 | [记忆系统](memory-system.md) | `update_addressing` 写 `relationships` + `relationship_audit_log`, 面板 `GET/PUT /panel/admin/relationship` 与之共享数据 |
@@ -254,4 +255,4 @@ out = await run_relationship_analysis(
 | v0.2.11 | 2026-07-19 | 文档补齐: 与 v0.2.7–v0.2.11 面板/后端变更一致 |
 | v0.2.12 | 2026-07-25 | 移除 `time_decay_calculator` (衰减改确定性公式 `run_deterministic_decay`) 与 `sentence_classifier` (提示词清洗改单次重写); 情绪分析去重 |
 | v0.3.0 | 2026-07-26 | `make_vector_search_tool` 新增 `retrieval_ctx` 参数 (两级受众过滤); 情绪分析从 ReAct 工具改为 `main_dialogue_node` 预计算 + state 共享; `make_update_addressing_tool` 的 `persona_id` 改从 state 读取并新增 `actor_id` 溯源参数; 迭代上限 memory 6→4 / relationship 3→2 |
-| v0.3.3 | 2026-07-28 | 新增内部 tool 注册表 (`InternalToolRegistry`): 服务端内部工具注入主模型, 拦截执行, 不返回客户端; 首批内部 tool: `initiate_identity_binding` / `confirm_identity_binding` (跨平台身份绑定) |
+| v0.3.4 | 2026-07-28 | 新增内部 tool 注册表 (`InternalToolRegistry`): 服务端内部工具注入主模型, 拦截执行, 不返回客户端; 首批内部 tool: `initiate_identity_binding` / `confirm_identity_binding` (跨平台身份绑定); 新增 cross-reference [内部工具](internal-tools.md) |

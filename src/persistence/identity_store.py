@@ -15,7 +15,7 @@ from src.core.identity.models import (
     IdentityStrategy,
     UserGroup,
 )
-from src.persistence.base import SqliteStore
+from src.persistence.base import SqliteStore, _parse_dt
 
 
 class SqliteIdentityStore(SqliteStore):
@@ -96,15 +96,17 @@ class SqliteIdentityStore(SqliteStore):
                 # 存在则返回
                 now = datetime.now(UTC)
                 # 如果 display_name 更新了，写入
+                updated_name = row[3]
                 if display_name and row[3] != display_name:
                     await db.execute(
                         "UPDATE actors SET display_name = ?, updated_at = ? WHERE id = ?",
                         (display_name, now.isoformat(), row[0]),
                     )
                     await db.commit()
+                    updated_name = display_name
                 return Actor(
                     id=row[0], external_key=row[1], frontend=row[2],
-                    display_name=row[3] if row[3] else display_name,
+                    display_name=updated_name if updated_name else display_name,
                     metadata=row[4] if row[4] != "{}" else metadata,
                     created_at=_parse_dt(row[5]),
                     updated_at=_parse_dt(row[6]),
@@ -431,8 +433,39 @@ class SqliteIdentityStore(SqliteStore):
             ]
             return strategies, total
 
+    async def update_strategy(
+        self,
+        strategy_id: str,
+        *,
+        name: str | None = None,
+        config: str | None = None,
+        is_active: bool | None = None,
+    ) -> IdentityStrategy | None:
+        """更新策略字段，返回更新后的策略；不存在返回 None."""
+        existing = await self.get_strategy(strategy_id)
+        if existing is None:
+            return None
 
-def _parse_dt(v: str | None) -> datetime | None:
-    if not v:
-        return None
-    return datetime.fromisoformat(v)
+        new_name = name if name is not None else existing.name
+        new_config = config if config is not None else existing.config
+        new_active = is_active if is_active is not None else existing.is_active
+        now = datetime.now(UTC)
+
+        async with self._conn() as db:
+            await db.execute(
+                "UPDATE identity_strategies SET name=?, config=?, is_active=?, updated_at=? WHERE id=?",
+                (new_name, new_config, 1 if new_active else 0, now.isoformat(), strategy_id),
+            )
+            await db.commit()
+
+        return await self.get_strategy(strategy_id)
+
+    async def delete_strategy(self, strategy_id: str) -> bool:
+        """删除策略，返回是否成功."""
+        async with self._conn() as db:
+            cur = await db.execute(
+                "DELETE FROM identity_strategies WHERE id = ?", (strategy_id,),
+            )
+            await db.commit()
+            return (cur.rowcount or 0) > 0
+

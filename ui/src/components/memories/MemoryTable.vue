@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { Memory } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   items: Memory[]
@@ -22,12 +22,6 @@ const MEMORY_TYPE_FILTERS = [
   { text: '永久', value: 'permanent' },
 ]
 
-function normalizeOrder(order: string | null | undefined): 'asc' | 'desc' | null {
-  if (order === 'ascending') return 'asc'
-  if (order === 'descending') return 'desc'
-  return null
-}
-
 function toElOrder(o: 'asc' | 'desc'): 'ascending' | 'descending' {
   return o === 'asc' ? 'ascending' : 'descending'
 }
@@ -42,11 +36,6 @@ function typeLabel(t: string): string {
   if (t === 'permanent') return '永久'
   if (t === 'normal') return '普通'
   return t
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 
 function contentPreview(content: string): string {
@@ -150,7 +139,7 @@ function contentPreview(content: string): string {
       sortable="custom"
     >
       <template #default="{ row }">
-        <span class="mono muted">{{ fmtDate(row.created_at) }}</span>
+        <span class="mono muted">{{ formatDate(row.created_at) }}</span>
       </template>
     </el-table-column>
     <el-table-column
@@ -160,7 +149,7 @@ function contentPreview(content: string): string {
       sortable="custom"
     >
       <template #default="{ row }">
-        <span class="mono muted">{{ fmtDate(row.last_accessed_at) }}</span>
+        <span class="mono muted">{{ formatDate(row.last_accessed_at) }}</span>
       </template>
     </el-table-column>
     <el-table-column label="操作" width="90" align="right" fixed="right">

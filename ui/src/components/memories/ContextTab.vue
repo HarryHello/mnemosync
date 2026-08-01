@@ -9,7 +9,6 @@ import {
   deleteConversationTurns,
 } from '@/api/client'
 import type { ConversationTurn } from '@/types/api'
-import PageHeader from '@/components/common/PageHeader.vue'
 import ContextTable from './ContextTable.vue'
 import ContextDetailDrawer from './ContextDetailDrawer.vue'
 import InteractionList from './InteractionList.vue'
@@ -203,11 +202,12 @@ watch(() => props.active, (active) => {
 
 <template>
   <div class="context-tab">
-    <PageHeader
-      title="短期记忆（上下文）"
-      subtitle="按说话者拆分的结构化事件流，历史快照会去重并保留平台身份、空间与事件时间。"
-    >
-      <template #actions>
+    <div class="tab-head">
+      <div>
+        <h3 class="tab-title">短期记忆（上下文）</h3>
+        <p class="tab-subtitle">按说话者拆分的结构化事件流，历史快照会去重并保留平台身份、空间与事件时间。</p>
+      </div>
+      <div class="head-actions">
         <el-button
           :loading="loading"
           @click="() => { refreshSources(); refresh(); }"
@@ -215,8 +215,8 @@ watch(() => props.active, (active) => {
           <el-icon><Refresh /></el-icon>
           <span>刷新</span>
         </el-button>
-      </template>
-    </PageHeader>
+      </div>
+    </div>
 
     <el-card class="context-card">
       <template #header>
@@ -315,5 +315,32 @@ watch(() => props.active, (active) => {
 
 .context-card + .interaction-list {
   margin-top: $space-4;
+}
+
+.tab-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $space-4;
+  margin-bottom: $space-4;
+
+}
+
+.tab-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 $space-1;
+}
+
+.tab-subtitle {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin: 0;
+}
+
+.head-actions {
+  display: flex;
+  gap: $space-2;
+  align-items: center;
 }
 </style>

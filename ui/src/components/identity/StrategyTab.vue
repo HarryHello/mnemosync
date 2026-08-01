@@ -8,35 +8,36 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
+import { formatDate } from '@/utils/format'
 import {
   createIdentityStrategy,
   deleteIdentityStrategy,
-  generateStrategyConfig,
   listIdentityStrategies,
   updateIdentityStrategy,
 } from '@/api/client'
 import type { IdentityStrategy, IdentityStrategyType } from '@/types/api'
+import StrategyConfigForm from './StrategyConfigForm.vue'
 
 const STRATEGY_TYPES: Array<{ value: IdentityStrategyType; label: string; hint: string }> = [
   {
     value: 'direct',
     label: 'direct — 客户端 user 字段',
-    hint: '客户端正确使用 OpenAI request.user 字段 (Web / SDK)',
+    hint: '客户端通过 OpenAI request.user 字段传递用户标识 (Web / SDK)',
   },
   {
     value: 'api_key_bound',
     label: 'api_key_bound — Key 即身份',
-    hint: 'ChatBox 等单用户本地应用, 固定身份',
+    hint: '最简单: 每个 Key 对应一个固定用户, 适用于本地单用户应用 (ChatBox 等)',
   },
   {
     value: 'regex',
     label: 'regex — 正则提取',
-    hint: 'AstrBot 等把 QQ号/用户名/群号 塞进 prompt 文本的前台',
+    hint: '从消息文本中用正则匹配提取用户 ID、昵称、群号等 (AstrBot / 自定义 Bot)',
   },
   {
     value: 'llm',
     label: 'llm — 辅助模型提取',
-    hint: '身份格式不固定, 需要语义理解的前台',
+    hint: '身份格式不固定, 用辅助 LLM 从消息内容中语义提取',
   },
   {
     value: 'plugin',
@@ -50,7 +51,7 @@ const CONFIG_TEMPLATES: Record<IdentityStrategyType, string> = {
   api_key_bound: JSON.stringify(
     {
       external_key: 'local-user',
-      frontend: 'chatbox',
+      frontend: 'api_key_bound',
       display_name: '本地用户',
       channel_type: 'direct',
     },
@@ -61,10 +62,10 @@ const CONFIG_TEMPLATES: Record<IdentityStrategyType, string> = {
     {
       frontend: 'astrbot',
       actor_pattern: 'QQ号[:：]\\s*(\\d+)',
-      name_pattern: '用户名[:：]\\s*(\\S+)',
+      name_pattern: '昵称[:：]\\s*(\\S+)',
       space_pattern: '群号[:：]\\s*(\\d+)',
       event_id_pattern: '消息ID[:：]\\s*(\\S+)',
-      search_in: 'system_or_first_user',
+      search_in: 'last_user',
     },
     null,
     2,
@@ -103,6 +104,7 @@ const dialogMode = ref<'create' | 'edit'>('create')
 const submitting = ref(false)
 const formRef = ref<FormInstance | null>(null)
 const editingId = ref<string | null>(null)
+const configFormRef = ref<InstanceType<typeof StrategyConfigForm> | null>(null)
 
 const form = reactive({
   name: '',
@@ -118,16 +120,6 @@ const form = reactive({
     global_window_seconds: 60,
   },
 })
-
-interface ToolPolicyForm {
-  enabled: boolean
-  allowed_tools: string
-  denied_tools: string
-  max_calls_per_round: number
-  cooldown_seconds: number
-  global_max_per_window: number
-  global_window_seconds: number
-}
 
 const rules: FormRules = {
   name: [{ required: true, message: '请填写策略名称', trigger: 'blur' }],
@@ -157,42 +149,6 @@ const rules: FormRules = {
 
 const dialogTitle = computed(() => (dialogMode.value === 'create' ? '创建身份策略' : '编辑身份策略'))
 
-// ─── AI 辅助生成 ────────────────────────────────
-
-const aiGenerating = ref(false)
-const aiDescription = ref('')
-const aiSampleMessage = ref('')
-const aiError = ref<string | null>(null)
-
-async function aiGenerate() {
-  const desc = aiDescription.value.trim()
-  if (desc.length < 10) {
-    aiError.value = '请至少输入 10 字的描述, 说明身份信息在消息中的位置和格式'
-    return
-  }
-  aiGenerating.value = true
-  aiError.value = null
-  try {
-    const resp = await generateStrategyConfig({
-      strategy_type: form.strategy_type,
-      description: desc,
-      sample_message: aiSampleMessage.value.trim() || null,
-    })
-    form.config = resp.config
-    ElMessage.success('配置已生成, 请检查并调整后保存')
-  } catch (err) {
-    aiError.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    aiGenerating.value = false
-  }
-}
-
-function resetAiFields() {
-  aiDescription.value = ''
-  aiSampleMessage.value = ''
-  aiError.value = null
-}
-
 async function refresh() {
   loading.value = true
   try {
@@ -205,11 +161,52 @@ async function refresh() {
   }
 }
 
-function parseToolPolicy(config: string): ToolPolicyForm {
+function prettyConfig(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
+}
+
+function hasToolPolicy(config: string): boolean {
   try {
     const parsed = JSON.parse(config)
+    return !!parsed.tool_policy && Object.keys(parsed.tool_policy).length > 0
+  } catch {
+    return false
+  }
+}
+
+function openCreate() {
+  dialogMode.value = 'create'
+  editingId.value = null
+  form.name = ''
+  form.strategy_type = 'regex'
+  form.config = CONFIG_TEMPLATES.regex
+  form.tool_policy = {
+    enabled: false,
+    allowed_tools: '',
+    denied_tools: '',
+    max_calls_per_round: 5,
+    cooldown_seconds: 0,
+    global_max_per_window: 0,
+    global_window_seconds: 60,
+  }
+  dialogVisible.value = true
+}
+
+async function openEdit(row: IdentityStrategy) {
+  dialogMode.value = 'edit'
+  editingId.value = row.id
+  form.name = row.name
+  form.strategy_type = row.strategy_type
+
+  // 解析 tool_policy
+  try {
+    const parsed = JSON.parse(row.config)
     const tp = parsed.tool_policy || {}
-    return {
+    form.tool_policy = {
       enabled: !!tp && Object.keys(tp).length > 0,
       allowed_tools: (tp.allowed_tools || []).join(', '),
       denied_tools: (tp.denied_tools || []).join(', '),
@@ -219,83 +216,69 @@ function parseToolPolicy(config: string): ToolPolicyForm {
       global_window_seconds: tp.global_window_seconds ?? 60,
     }
   } catch {
-    return { enabled: false, allowed_tools: '', denied_tools: '', max_calls_per_round: 5, cooldown_seconds: 0, global_max_per_window: 0, global_window_seconds: 60 }
+    // ignore
   }
-}
 
-function buildConfigWithToolPolicy(): string {
-  const config = JSON.parse(form.config.trim() || '{}')
-  if (form.tool_policy.enabled) {
-    const policy: Record<string, unknown> = {}
-    if (form.tool_policy.allowed_tools.trim()) {
-      policy.allowed_tools = form.tool_policy.allowed_tools.split(',').map(s => s.trim()).filter(Boolean)
-    }
-    if (form.tool_policy.denied_tools.trim()) {
-      policy.denied_tools = form.tool_policy.denied_tools.split(',').map(s => s.trim()).filter(Boolean)
-    }
-    if (form.tool_policy.max_calls_per_round > 0 && form.tool_policy.max_calls_per_round !== 5) {
-      policy.max_calls_per_round = form.tool_policy.max_calls_per_round
-    }
-    if (form.tool_policy.cooldown_seconds > 0) {
-      policy.cooldown_seconds = form.tool_policy.cooldown_seconds
-    }
-    if (form.tool_policy.global_max_per_window > 0) {
-      policy.global_max_per_window = form.tool_policy.global_max_per_window
-      policy.global_window_seconds = form.tool_policy.global_window_seconds
-    }
-    if (Object.keys(policy).length > 0) {
-      config.tool_policy = policy
-    } else {
-      delete config.tool_policy
+  // 设置配置
+  form.config = prettyConfig(row.config)
+
+  // 加载插件列表（如果是 plugin 类型）
+  if (row.strategy_type === 'plugin') {
+    await configFormRef.value?.loadPlugins()
+    try {
+      const parsed = JSON.parse(row.config)
+      configFormRef.value!.pluginSelected = parsed.plugin_name || ''
+    } catch {
+      configFormRef.value!.pluginSelected = ''
     }
   } else {
-    delete config.tool_policy
+    configFormRef.value?.configToFields(row.config)
   }
-  return JSON.stringify(config, null, 2)
-}
 
-function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  form.name = ''
-  form.strategy_type = 'regex'
-  form.config = CONFIG_TEMPLATES.regex
-  form.tool_policy = { enabled: false, allowed_tools: '', denied_tools: '', max_calls_per_round: 5, cooldown_seconds: 0, global_max_per_window: 0, global_window_seconds: 60 }
-  resetAiFields()
   dialogVisible.value = true
   void nextTick(() => formRef.value?.clearValidate())
-}
-
-function openEdit(row: IdentityStrategy) {
-  dialogMode.value = 'edit'
-  editingId.value = row.id
-  form.name = row.name
-  form.strategy_type = row.strategy_type
-  form.config = prettyConfig(row.config)
-  form.tool_policy = parseToolPolicy(row.config)
-  resetAiFields()
-  dialogVisible.value = true
-  void nextTick(() => formRef.value?.clearValidate())
-}
-
-function prettyConfig(raw: string): string {
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
-  } catch {
-    return raw
-  }
 }
 
 function onTypeChange(value: IdentityStrategyType) {
-  // 切换类型时: 当前 config 还是旧模板 (未手动改过) → 换新模板; 否则保留手改内容
   const oldTemplates = Object.values(CONFIG_TEMPLATES)
   if (oldTemplates.includes(form.config.trim())) {
     form.config = CONFIG_TEMPLATES[value]
   }
+  configFormRef.value?.resetConfigFields(value)
+  if (value !== 'plugin') {
+    form.config = configFormRef.value
+      ? JSON.parse(form.config).frontend
+        ? form.config
+        : CONFIG_TEMPLATES[value]
+      : CONFIG_TEMPLATES[value]
+  }
 }
 
-function useTemplate() {
-  form.config = CONFIG_TEMPLATES[form.strategy_type]
+function buildConfigWithToolPolicy(): string {
+  const baseConfig = form.config
+  let config: Record<string, unknown>
+  try {
+    config = JSON.parse(baseConfig || '{}')
+  } catch {
+    config = {}
+  }
+  if (form.tool_policy.enabled) {
+    config.tool_policy = {
+      allowed_tools: form.tool_policy.allowed_tools
+        .split(',')
+        .map((t: string) => t.trim())
+        .filter(Boolean),
+      denied_tools: form.tool_policy.denied_tools
+        .split(',')
+        .map((t: string) => t.trim())
+        .filter(Boolean),
+      max_calls_per_round: form.tool_policy.max_calls_per_round,
+      cooldown_seconds: form.tool_policy.cooldown_seconds,
+      global_max_per_window: form.tool_policy.global_max_per_window,
+      global_window_seconds: form.tool_policy.global_window_seconds,
+    }
+  }
+  return JSON.stringify(config, null, 2)
 }
 
 async function submit() {
@@ -355,22 +338,11 @@ async function remove(row: IdentityStrategy) {
   }
 }
 
-function hasToolPolicy(config: string): boolean {
-  try {
-    const parsed = JSON.parse(config)
-    return !!parsed.tool_policy && Object.keys(parsed.tool_policy).length > 0
-  } catch {
-    return false
-  }
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return '—'
-  return new Date(value).toLocaleString('zh-CN', { hour12: false })
-}
-
 defineExpose({ refresh })
-onMounted(refresh)
+
+onMounted(() => {
+  refresh()
+})
 </script>
 
 <template>
@@ -452,7 +424,7 @@ onMounted(refresh)
           <el-select
             v-model="form.strategy_type"
             :disabled="dialogMode === 'edit'"
-            style="width: 100%"
+            class="full-width"
             @change="onTypeChange"
           >
             <el-option
@@ -465,143 +437,20 @@ onMounted(refresh)
               <span class="option-hint">{{ t.hint }}</span>
             </el-option>
           </el-select>
-          <p class="form-item-hint">
+          <p class="form-hint">
             {{ STRATEGY_TYPES.find((t) => t.value === form.strategy_type)?.hint }}
             <template v-if="dialogMode === 'edit'"> (类型创建后不可更改)</template>
           </p>
         </el-form-item>
-        <el-form-item label="配置" prop="config">
-          <div class="ai-generate-bar">
-            <el-button
-              link
-              type="warning"
-              size="small"
-              :disabled="aiGenerating"
-              @click="aiDescription = aiDescription || 'describe'"
-            >
-              <el-icon><MagicStick /></el-icon>
-              <span> AI 辅助生成</span>
-            </el-button>
-          </div>
 
-          <div v-if="aiDescription" class="ai-generate-panel">
-            <p class="ai-panel-hint">
-              用自然语言描述身份信息在消息中的格式, 模型会自动生成正则表达式 (或 LLM prompt)。
-            </p>
-            <el-form-item label="身份描述" label-width="80px" class="ai-field">
-              <el-input
-                v-model="aiDescription"
-                type="textarea"
-                :rows="3"
-                placeholder="例如: 每条消息的 system prompt 开头有一行格式为「用户: QQ号=123456, 昵称=小明, 群号=789012」, 请帮我提取 QQ号、昵称和群号"
-                :disabled="aiGenerating"
-              />
-            </el-form-item>
-            <el-form-item label="示例消息" label-width="80px" class="ai-field">
-              <el-input
-                v-model="aiSampleMessage"
-                type="textarea"
-                :rows="3"
-                placeholder="可选: 粘贴一条真实的消息文本, 帮助模型理解格式"
-                :disabled="aiGenerating"
-              />
-            </el-form-item>
-            <div class="ai-actions">
-              <el-button
-                type="primary"
-                size="small"
-                :loading="aiGenerating"
-                @click="aiGenerate"
-              >
-                生成配置
-              </el-button>
-              <el-button size="small" :disabled="aiGenerating" @click="resetAiFields">
-                收起
-              </el-button>
-            </div>
-            <el-alert
-              v-if="aiError"
-              :title="aiError"
-              type="error"
-              :closable="false"
-              show-icon
-              class="ai-error"
-            />
-          </div>
-
-          <el-input
-            v-model="form.config"
-            type="textarea"
-            :rows="12"
-            class="mono"
-            placeholder="JSON 对象"
-          />
-          <p class="form-item-hint">
-            策略特定的 JSON 配置。
-            <el-button link type="primary" size="small" @click="useTemplate">
-              填入当前类型模板
-            </el-button>
-          </p>
-        </el-form-item>
-        <el-divider content-position="left">工具策略（可选）</el-divider>
-        <el-form-item label="启用工具策略">
-          <el-switch v-model="form.tool_policy.enabled" />
-          <span class="form-item-hint">限制该策略绑定的 API Key 可用的工具</span>
-        </el-form-item>
-        <template v-if="form.tool_policy.enabled">
-          <el-form-item label="允许工具">
-            <el-input
-              v-model="form.tool_policy.allowed_tools"
-              placeholder="白名单: poke, react (逗号分隔, 留空=全部允许)"
-            />
-          </el-form-item>
-          <el-form-item label="禁止工具">
-            <el-input
-              v-model="form.tool_policy.denied_tools"
-              placeholder="黑名单: kick, ban, mute (逗号分隔)"
-            />
-          </el-form-item>
-          <el-form-item label="每轮上限">
-            <el-input-number
-              v-model="form.tool_policy.max_calls_per_round"
-              :min="1"
-              :max="10"
-              controls-position="right"
-            />
-            <span class="form-item-hint">单次请求最大工具调用数</span>
-          </el-form-item>
-          <el-form-item label="冷却秒数">
-            <el-input-number
-              v-model="form.tool_policy.cooldown_seconds"
-              :min="0"
-              :max="3600"
-              :step="10"
-              controls-position="right"
-            />
-            <span class="form-item-hint">同一工具两次调用间的最小间隔（0=不限制）</span>
-          </el-form-item>
-          <el-form-item label="全局频率限制">
-            <el-input-number
-              v-model="form.tool_policy.global_max_per_window"
-              :min="0"
-              :max="1000"
-              :step="5"
-              controls-position="right"
-            />
-            <span class="form-item-hint">窗口内最大工具调用总数（0=不限制）</span>
-          </el-form-item>
-          <el-form-item label="频率窗口(秒)">
-            <el-input-number
-              v-model="form.tool_policy.global_window_seconds"
-              :min="1"
-              :max="3600"
-              :step="10"
-              controls-position="right"
-              :disabled="form.tool_policy.global_max_per_window === 0"
-            />
-            <span class="form-item-hint">全局频率限制的统计窗口</span>
-          </el-form-item>
-        </template>
+        <StrategyConfigForm
+          ref="configFormRef"
+          :strategy-type="form.strategy_type"
+          :config="form.config"
+          :tool-policy="form.tool_policy"
+          @update:config="(v: string) => (form.config = v)"
+          @update:tool-policy="(v: typeof form.tool_policy) => (form.tool_policy = v)"
+        />
       </el-form>
       <template #footer>
         <el-button :disabled="submitting" @click="dialogVisible = false">取消</el-button>
@@ -639,8 +488,12 @@ onMounted(refresh)
   cursor: help;
 }
 
-.form-item-hint {
-  margin: $space-1 0 0;
+.full-width {
+  width: 100%;
+}
+
+.form-hint {
+  margin: 4px 0 0;
   font-size: 12px;
   color: var(--el-text-color-secondary);
   line-height: 1.5;
@@ -651,40 +504,6 @@ onMounted(refresh)
   font-size: 12px;
   color: var(--el-text-color-secondary);
   margin-left: $space-3;
-}
-
-.ai-generate-bar {
-  margin-bottom: $space-2;
-  text-align: right;
-}
-
-.ai-generate-panel {
-  background: var(--el-fill-color-lighter);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: $radius-md;
-  padding: $space-3;
-  margin-bottom: $space-3;
-}
-
-.ai-panel-hint {
-  margin: 0 0 $space-2;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.5;
-}
-
-.ai-field {
-  margin-bottom: $space-2;
-}
-
-.ai-actions {
-  display: flex;
-  gap: $space-2;
-  margin-bottom: $space-2;
-}
-
-.ai-error {
-  margin-top: $space-2;
 }
 </style>
 

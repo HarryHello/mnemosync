@@ -6,10 +6,10 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from src.api.deps import get_identity_store, get_memory_store
+from src.api.deps import get_identity_store, get_memory_store, get_relationship_store
 from src.api.routes.auth import get_current_user
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
 
 from .admin_mem_shared import (
     RelationshipAuditItem,
@@ -37,7 +37,7 @@ async def get_relationship(
     request: Request,
     user_id: str | None = Query(None, min_length=1, description="用户标识 (effective_user_id)"),
     actor_id: str | None = Query(None, min_length=1, description="Actor ID, 自动解析为 effective_user_id"),
-    store: SqliteMemoryStore = Depends(get_memory_store),
+    store: SqliteRelationshipStore = Depends(get_relationship_store),
     identity_store: SqliteIdentityStore = Depends(get_identity_store),
 ):
     """获取关系状态."""
@@ -56,7 +56,7 @@ async def list_relationships(
         description="intimacy_score | trust_level | interaction_count | last_active | user_id | type",
     ),
     sort_order: str = Query("desc", description="asc | desc"),
-    store: SqliteMemoryStore = Depends(get_memory_store),
+    store: SqliteRelationshipStore = Depends(get_relationship_store),
     identity_store: SqliteIdentityStore = Depends(get_identity_store),
 ):
     """分页列出当前人格的所有关系."""
@@ -88,7 +88,7 @@ async def list_relationships(
 async def update_relationship_addressing(
     body: RelationshipUpdateBody,
     request: Request,
-    store: SqliteMemoryStore = Depends(get_memory_store),
+    store: SqliteRelationshipStore = Depends(get_relationship_store),
 ):
     """人工 override 关系称呼/背景 (source='manual')."""
     provided = {
@@ -124,7 +124,7 @@ async def list_relationship_audit(
     user_id: str | None = Query(None, min_length=1, description="用户标识 (effective_user_id)"),
     actor_id: str | None = Query(None, min_length=1, description="Actor ID, 自动解析为 effective_user_id"),
     limit: int = Query(20, ge=1, le=200),
-    store: SqliteMemoryStore = Depends(get_memory_store),
+    store: SqliteRelationshipStore = Depends(get_relationship_store),
 ):
     """按时间倒序返回关系称呼字段的审计条目."""
     target = await _resolve_relationship_target(request, user_id, actor_id)

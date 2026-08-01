@@ -2,6 +2,8 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,6 +19,7 @@ from src.api.schemas.forward import ChatCompletionRequest
 from src.api.tool_policies import filter_tool_calls, validate_tool_arguments
 from src.api.tool_transactions import append_tool_transaction_context
 from src.core.agents import run_proxy_thinking
+from src.core.agents.tracking import run_agent_tracked
 from src.core.config import get_settings
 from src.core.constants import VIRTUAL_MODEL_ANY
 from src.core.memory import format_relationship
@@ -30,17 +33,221 @@ from src.infra.debug_context import emit_pipeline, use_agent
 from src.infra.forwarder import UpstreamError, UpstreamTimeout, parse_sse_stream_full
 from src.infra.forwarder.multi import UpstreamAllCandidatesFailed
 from src.infra.llm_service.models import ModelType
-from src.infra.vector_store import VectorStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.api.deps import _state
+from src.core.utils import last_user_message
 from src.tools import MemoryRetriever
 
-from . import _build_graph_config, _get_conversation_store, _get_multi_forwarder
+from ._accessors import _build_graph_config, _get_conversation_store, _get_multi_forwarder
 from .idempotency import _record_idempotency
 from .identity import _resolve_main_candidate
 from .memory_graph import _run_memory_graph
 from .persistence import _persist_assistant_event, _persist_plugin_events
 
 logger = logging.getLogger(__name__)
+
+
+# ── SSE delta helpers ────────────────────────────────────────────
+
+
+@dataclass
+class _StreamAssemblyResult:
+    """Mutable container shared between ``_assemble_deltas`` and its caller.
+
+    Because ``_assemble_deltas`` is an async generator it cannot return a
+    value; instead the caller passes in a result object and reads it back
+    after the generator is exhausted.
+    """
+
+    collected_chunks: list[bytes] = field(default_factory=list)
+    saw_native: bool = False
+    errored: bool = False
+
+
+def _parse_sse_event(collected_chunks: list[bytes]):
+    """Parse accumulated SSE byte-chunks into a structured ``StreamResult``.
+
+    Thin wrapper around ``parse_sse_stream_full`` that gives the streaming
+    pipeline a single, named call-site for the parsing concern.
+    """
+    return parse_sse_stream_full(collected_chunks)
+
+
+def _handle_stream_errors(exc: Exception) -> bytes:
+    """Format an upstream error as an SSE ``data:`` frame.
+
+    Returns the encoded frame so the caller can ``yield`` it.  Unknown
+    exception types are re-raised because they indicate a bug rather than
+    an upstream failure.
+    """
+    if isinstance(exc, UpstreamTimeout):
+        logger.debug("⏰ 流式超时: %s", exc)
+        return f'data: {{"error": "{exc}"}}\n\n'.encode()
+    if isinstance(exc, UpstreamError):
+        logger.debug("❌ 流式错误: %s", exc.message)
+        return f'data: {{"error": "{exc.message}"}}\n\n'.encode()
+    if isinstance(exc, UpstreamAllCandidatesFailed):
+        logger.debug("❌ 所有候选失败: %s", exc)
+        return f'data: {{"error": "all candidates failed: {exc}"}}\n\n'.encode()
+    if isinstance(exc, NoCandidateForRoleError):
+        logger.debug("❌ 无候选: %s", exc)
+        return f'data: {{"error": "no candidate: {exc}"}}\n\n'.encode()
+    raise exc
+
+
+async def _assemble_deltas(
+    result: _StreamAssemblyResult,
+    *,
+    multi_forwarder,
+    messages_with_memory,
+    temperature,
+    max_tokens,
+    passthrough,
+    reasoning_text,
+    chatcmpl_id,
+    main_model,
+) -> AsyncGenerator[bytes, None]:
+    """Yield SSE frames: proxy-reasoning deltas followed by upstream content.
+
+    Collects every raw upstream chunk in *result* so the caller can
+    post-process them after the stream ends.  On upstream errors an SSE
+    error frame is yielded and the generator stops (no exception escapes).
+    """
+    if reasoning_text:
+        for frame in build_reasoning_stream_frames(
+            reasoning_text, chatcmpl_id=chatcmpl_id, model=main_model,
+        ):
+            yield frame
+
+    try:
+        logger.debug("🚀 开始流式转发 (带记忆上下文)...")
+        with use_agent("main_dialogue_stream"):
+            async for chunk in multi_forwarder.chat_stream(
+                ModelType.MAIN,
+                messages=messages_with_memory,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **passthrough,
+            ):
+                result.collected_chunks.append(chunk)
+                if not result.saw_native and chunk_has_native_reasoning(chunk):
+                    result.saw_native = True
+                yield chunk
+        logger.debug("✅ 流式转发完成, chunks: %d", len(result.collected_chunks))
+    except (UpstreamTimeout, UpstreamError, UpstreamAllCandidatesFailed,
+            NoCandidateForRoleError) as exc:
+        result.errored = True
+        yield _handle_stream_errors(exc)
+        return
+
+    if result.saw_native:
+        mark_native_reasoning(main_model)
+
+
+async def _dispatch_callbacks(
+    http_request: Request,
+    initial_state: dict[str, Any],
+    *,
+    chatcmpl_id: str,
+    main_model: str,
+    new_user_content: str,
+    conversation_store,
+    collected_chunks: list[bytes],
+    reasoning_text: str | None,
+    stream_result,
+) -> None:
+    """Post-stream: filter tool calls, persist events, record idempotency,
+    and trigger the background memory graph.
+
+    This runs after ``_assemble_deltas`` has finished yielding.  Errors in
+    persistence are logged but never raised so the client always receives
+    its response.
+    """
+    source_user = initial_state.get("source_user") or ""
+    source_frontend = initial_state.get("source_frontend")
+    actor_id = initial_state.get("actor_id")
+    space_id = initial_state.get("space_id")
+    external_event_id = initial_state.get("external_event_id")
+    api_key_id = initial_state.get("api_key_id")
+
+    assistant_text = stream_result.text or ""
+    assistant_finish_reason = stream_result.finish_reason
+    assistant_tool_calls = stream_result.tool_calls
+
+    # Build response_message with outbound tool-call filtering for persistence.
+    response_message: dict[str, Any] | None = None
+    if assistant_tool_calls:
+        valid_calls = assistant_tool_calls
+        removed: list[str] = []
+        policy = initial_state.get("tool_policy")
+        tools = initial_state.get("tools")
+        valid_calls, issues = validate_tool_arguments(valid_calls, tools)
+        removed.extend(issues)
+        if policy:
+            valid_calls, pol_removed = filter_tool_calls(valid_calls, policy)
+            removed.extend(pol_removed)
+        if removed:
+            logger.debug("  🔧 流式出站过滤 (持久化层): 移除 %s", removed)
+        kept_names = [
+            c.get("function", {}).get("name", "") for c in valid_calls
+        ] if valid_calls else []
+        emit_pipeline(
+            getattr(http_request.app.state, "debug_bus", None),
+            event_kind="tool_call_decision",
+            stage="outbound_stream",
+            kept_calls=kept_names or None,
+            removed_calls=removed or None,
+            finish_reason=assistant_finish_reason,
+        )
+        response_message = {
+            "role": "assistant",
+            "content": assistant_text or None,
+            "tool_calls": valid_calls or None,
+        }
+
+    # Persist structured event stream.
+    try:
+        normalized_events = initial_state.get("normalized_events") or []
+        if normalized_events:
+            await _persist_plugin_events(
+                conversation_store,
+                normalized_events,
+                chatcmpl_id,
+            )
+        elif new_user_content:
+            await conversation_store.append(
+                role="user",
+                content=new_user_content,
+                token_count=token_count_for_storage(new_user_content),
+                source_frontend=source_frontend,
+                actor_id=actor_id,
+                effective_user_id=source_user or None,
+                space_id=space_id,
+                external_event_id=external_event_id,
+                origin="current",
+                request_id=chatcmpl_id,
+            )
+        await _persist_assistant_event(
+            conversation_store,
+            assistant_text,
+            initial_state,
+            chatcmpl_id,
+            response_message=response_message,
+        )
+    except Exception as e:
+        logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
+
+    # Record idempotency cache for first successful response.
+    await _record_idempotency(
+        http_request, api_key_id, external_event_id, chatcmpl_id, assistant_text,
+        response_message=response_message,
+        finish_reason=assistant_finish_reason,
+    )
+
+    # NOTE: memory graph task is created OUTSIDE the generator
+    # (in locked_stream) to avoid the finally block cancelling it immediately.
+
+
+# ── Main stream entry point ─────────────────────────────────────
 
 
 async def _handle_stream(
@@ -58,11 +265,8 @@ async def _handle_stream(
     settings = get_settings()
     source_user = initial_state.get("source_user") or ""
     current_speaker = initial_state.get("current_speaker") or "未知参与者"
-    source_frontend = initial_state.get("source_frontend")
-    actor_id = initial_state.get("actor_id")
     space_id = initial_state.get("space_id")
-    external_event_id = initial_state.get("external_event_id")
-    api_key_id = initial_state.get("api_key_id")
+    actor_id = initial_state.get("actor_id")
     main_candidate = await _resolve_main_candidate(
         http_request,
         require_tools=bool(initial_state.get("tools")),
@@ -74,13 +278,13 @@ async def _handle_stream(
     conversation_store = _get_conversation_store(http_request)
 
     logger.debug("🧠 加载记忆上下文...")
-    memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
-    await memory_store.init_db()
-    vector_store = VectorStore(str(settings.storage.chroma_dir_abs))
+    _st = _state(http_request)
+    memory_store = _st.memory_store
+    vector_store = _st.vector_store
 
     from src.core.memory.audience import AudienceFilter, RetrievalContext
 
-    rel = await memory_store.get_relationship(
+    rel = await _st.relationship_store.get_relationship(
         initial_state["persona_id"], source_user,
     ) if source_user else None
     logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
@@ -106,10 +310,7 @@ async def _handle_stream(
     tool_transaction = initial_state.get("tool_transaction")
     new_user_content = ""
     if not tool_transaction:
-        for m in reversed(client_messages):
-            if m.get("role") == "user":
-                new_user_content = m.get("content", "")
-                break
+        new_user_content = last_user_message(client_messages)
 
     retrieval_query = (
         tool_transaction.root_user_content if tool_transaction else new_user_content
@@ -134,14 +335,21 @@ async def _handle_stream(
         logger.debug("🤔 [代理推理] 开始 (ASSIST role)")
         try:
             perms_text = "\n".join(f"- {e.content}" for e in perms) or "（无）"
-            reasoning_text = await run_proxy_thinking(
-                forwarder=multi_forwarder,
-                user_name=current_speaker,
-                relationship=format_relationship(rel) if rel else "新用户",
-                memories=perms_text,
-                user_message=new_user_content,
-                tools=None,
-                channel_type=initial_state.get("channel_type"),
+            _st = getattr(http_request.app, "state", None)
+            reasoning_text = await run_agent_tracked(
+                "proxy_thinking",
+                run_proxy_thinking(
+                    forwarder=multi_forwarder,
+                    user_name=current_speaker,
+                    relationship=format_relationship(rel) if rel else "新用户",
+                    memories=perms_text,
+                    user_message=new_user_content,
+                    tools=None,
+                    channel_type=initial_state.get("channel_type"),
+                ),
+                store=getattr(_st, "agent_run_store", None) if _st else None,
+                debug_bus=getattr(_st, "debug_bus", None) if _st else None,
+                parent_request_id=initial_state.get("interaction_id"),
             )
             logger.debug("  ✅ 代理推理完成, 长度: %d", len(reasoning_text) if reasoning_text else 0)
         except Exception as e:
@@ -239,145 +447,127 @@ async def _handle_stream(
     if passthrough:
         logger.debug("  🔗 透传上游可选字段: %s", list(passthrough.keys()))
 
+    # Shared container: generator populates, locked_stream reads after it finishes.
+    _gen_result: dict[str, Any] = {}
+
     async def stream_generator():
-        if reasoning_text:
-            for frame in build_reasoning_stream_frames(
-                reasoning_text, chatcmpl_id=chatcmpl_id, model=main_model,
-            ):
-                yield frame
+        result = _StreamAssemblyResult()
 
-        collected_chunks: list[bytes] = []
-        saw_native = False
-        try:
-            logger.debug("🚀 开始流式转发 (带记忆上下文)...")
-            with use_agent("main_dialogue_stream"):
-                async for chunk in multi_forwarder.chat_stream(
-                    ModelType.MAIN,
-                    messages=messages_with_memory,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    **passthrough,
-                ):
-                    collected_chunks.append(chunk)
-                    if not saw_native and chunk_has_native_reasoning(chunk):
-                        saw_native = True
-                    yield chunk
-            logger.debug("✅ 流式转发完成, chunks: %d", len(collected_chunks))
-        except UpstreamTimeout as e:
-            logger.debug("⏰ 流式超时: %s", e)
-            yield f'data: {{"error": "{e}"}}\n\n'.encode()
-            return
-        except UpstreamError as e:
-            logger.debug("❌ 流式错误: %s", e.message)
-            yield f'data: {{"error": "{e.message}"}}\n\n'.encode()
-            return
-        except UpstreamAllCandidatesFailed as e:
-            logger.debug("❌ 所有候选失败: %s", e)
-            yield f'data: {{"error": "all candidates failed: {e}"}}\n\n'.encode()
-            return
-        except NoCandidateForRoleError as e:
-            logger.debug("❌ 无候选: %s", e)
-            yield f'data: {{"error": "no candidate: {e}"}}\n\n'.encode()
+        # Phase 1-2: Assemble deltas (reasoning frames + upstream content).
+        async for chunk in _assemble_deltas(
+            result,
+            multi_forwarder=multi_forwarder,
+            messages_with_memory=messages_with_memory,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            passthrough=passthrough,
+            reasoning_text=reasoning_text,
+            chatcmpl_id=chatcmpl_id,
+            main_model=main_model,
+        ):
+            yield chunk
+
+        # Early exit on error (error frame already yielded).
+        if result.errored:
             return
 
-        if saw_native:
-            mark_native_reasoning(main_model)
+        # Phase 3: Parse SSE chunks into structured result.
+        stream_result = _parse_sse_event(result.collected_chunks)
 
-        # 组装 assistant 回复 (从 SSE chunks 反解)
-        stream_result = parse_sse_stream_full(collected_chunks)
-        assistant_text = stream_result.text or ""
-        assistant_finish_reason = stream_result.finish_reason
-        assistant_tool_calls = stream_result.tool_calls
-
-        # 构造 response_message 以支持 tool_calls 持久化; 流式路径出站过滤
-        response_message: dict[str, Any] | None = None
-        if assistant_tool_calls:
-            valid_calls = assistant_tool_calls
-            removed: list[str] = []
-            policy = initial_state.get("tool_policy")
-            tools = initial_state.get("tools")
-            # 隐私检查 + 策略过滤 (SSE 帧已发出, 但确保持久化时过滤)
-            valid_calls, issues = validate_tool_arguments(valid_calls, tools)
-            removed.extend(issues)
-            if policy:
-                valid_calls, pol_removed = filter_tool_calls(valid_calls, policy)
-                removed.extend(pol_removed)
-            if removed:
-                logger.debug("  🔧 流式出站过滤 (持久化层): 移除 %s", removed)
-            # 调试事件: 工具调用出站决策 (流式)
-            kept_names = [
-                c.get("function", {}).get("name", "") for c in valid_calls
-            ] if valid_calls else []
-            emit_pipeline(
-                getattr(http_request.app.state, "debug_bus", None),
-                event_kind="tool_call_decision",
-                stage="outbound_stream",
-                kept_calls=kept_names or None,
-                removed_calls=removed or None,
-                finish_reason=assistant_finish_reason,
-            )
-            response_message = {
-                "role": "assistant",
-                "content": assistant_text or None,
-                "tool_calls": valid_calls or None,
-            }
-
-        # 回写结构化事件流
-        try:
-            normalized_events = initial_state.get("normalized_events") or []
-            if normalized_events:
-                await _persist_plugin_events(
-                    conversation_store,
-                    normalized_events,
-                    chatcmpl_id,
-                )
-            elif new_user_content:
-                await conversation_store.append(
-                    role="user",
-                    content=new_user_content,
-                    token_count=token_count_for_storage(new_user_content),
-                    source_frontend=source_frontend,
-                    actor_id=actor_id,
-                    effective_user_id=source_user or None,
-                    space_id=space_id,
-                    external_event_id=external_event_id,
-                    origin="current",
-                    request_id=chatcmpl_id,
-                )
-            await _persist_assistant_event(
-                conversation_store,
-                assistant_text,
-                initial_state,
-                chatcmpl_id,
-                response_message=response_message,
-            )
-        except Exception as e:
-            logger.warning("回写 conversation_turns 失败 (不影响响应): %s", e)
-
-        # 幂等缓存: 首次成功响应落库
-        await _record_idempotency(
-            http_request, api_key_id, external_event_id, chatcmpl_id, assistant_text,
-            response_message=response_message,
-            finish_reason=assistant_finish_reason,
+        # Phase 4: Dispatch post-stream callbacks (persistence only, no bg task).
+        await _dispatch_callbacks(
+            http_request,
+            initial_state,
+            chatcmpl_id=chatcmpl_id,
+            main_model=main_model,
+            new_user_content=new_user_content,
+            conversation_store=conversation_store,
+            collected_chunks=result.collected_chunks,
+            reasoning_text=reasoning_text,
+            stream_result=stream_result,
         )
 
-        logger.debug("🔄 触发后台记忆图...")
+        # Pass data out for memory graph task creation (after generator exits).
+        _gen_result["collected_chunks"] = result.collected_chunks
+        _gen_result["assistant_finish_reason"] = stream_result.finish_reason
+        _gen_result["assistant_text"] = stream_result.text or ""
+
+    async def _trigger_memory_graph() -> asyncio.Task | None:
+        """Create background memory graph task (called after stream ends).
+
+        Returns the task so the caller can wait for it, or None if skipped.
+        """
+        collected_chunks = _gen_result.get("collected_chunks")
+        if not collected_chunks:
+            return None
+        finish_reason = _gen_result.get("assistant_finish_reason")
+        assistant_text = _gen_result.get("assistant_text", "")
+
         initial_state["proxy_thinking_enabled"] = False
         if reasoning_text:
             initial_state["proxy_thinking_result"] = reasoning_text
-        # 工具调用轮次不触发记忆/关系分析
-        if assistant_finish_reason == "tool_calls" and not assistant_text:
-            logger.debug("  ⏭️ 工具中间轮 (finish_reason=tool_calls, 无文本), 跳过")
-        else:
-            graph_config = _build_graph_config(http_request)
-            asyncio.create_task(_run_memory_graph(initial_state, collected_chunks, graph_config))
 
-    # 包装: 流结束后释放空间锁
+        # Skip memory graph for tool-only intermediate rounds.
+        if finish_reason == "tool_calls" and not assistant_text:
+            logger.debug("  ⏭️ 工具中间轮, 跳过记忆图")
+            return None
+
+        logger.debug("🔄 触发后台记忆图...")
+        graph_config = _build_graph_config(http_request)
+        task_key = f"memory_graph-{chatcmpl_id}"
+        task = asyncio.create_task(
+            _run_memory_graph(initial_state, collected_chunks, graph_config),
+            name=task_key,
+        )
+        bg_tasks: dict = getattr(http_request.app.state, "active_bg_tasks", {})
+        if bg_tasks is not None:
+            bg_tasks[task_key] = task
+
+            def _on_done(t: asyncio.Task, _key: str = task_key) -> None:
+                bg_tasks.pop(_key, None)
+                status = "ok"
+                err_msg: str | None = None
+                if t.cancelled():
+                    status = "cancelled"
+                else:
+                    try:
+                        err = t.exception()
+                        if err is not None:
+                            status = "failed"
+                            err_msg = f"{type(err).__name__}: {err}"
+                            logger.warning("后台记忆图任务失败: %s", err_msg)
+                    except asyncio.CancelledError:
+                        status = "cancelled"
+                emit_pipeline(
+                    getattr(http_request.app.state, "debug_bus", None),
+                    event_kind="bg_task_done",
+                    task_name=_key,
+                    status=status,
+                    error=err_msg,
+                )
+
+            task.add_done_callback(_on_done)
+        return task
+
+    # 包装: 流结束后触发记忆图 + 等待完成 + 释放空间锁
     async def locked_stream():
+        bg_task: asyncio.Task | None = None
         try:
             async for chunk in stream_generator():
                 yield chunk
+            # Stream completed normally — trigger memory graph AFTER generator exits.
+            bg_task = await _trigger_memory_graph()
+        except Exception:
+            logger.warning("流式响应异常", exc_info=True)
         finally:
+            if bg_task is not None and not bg_task.done():
+                # Memory graph still running — wait for it to finish.
+                try:
+                    await asyncio.wait_for(asyncio.shield(bg_task), timeout=120)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    bg_task.cancel()
+                    logger.debug("⏹️ 记忆图任务超时/取消: %s", chatcmpl_id)
+
             lock = initial_state.get("_space_lock")
             if lock is not None and lock.locked():
                 lock.release()

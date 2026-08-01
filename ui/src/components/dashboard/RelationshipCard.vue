@@ -2,6 +2,12 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Relationship } from '@/types/api'
+import { formatDateOnly } from '@/utils/format'
+import {
+  RELATIONSHIP_LEVEL_HIGH,
+  RELATIONSHIP_LEVEL_MEDIUM,
+  RELATIONSHIP_LEVEL_LOW,
+} from '@/utils/constants'
 
 const props = defineProps<{
   relationships?: Relationship[]
@@ -16,9 +22,9 @@ function goToRelationships() {
 
 // 根据值返回进度条颜色
 function getProgressType(value: number): '' | 'success' | 'warning' | 'exception' {
-  if (value >= 0.65) return 'success'
-  if (value >= 0.4) return ''
-  if (value >= 0.2) return 'warning'
+  if (value >= RELATIONSHIP_LEVEL_HIGH) return 'success'
+  if (value >= RELATIONSHIP_LEVEL_MEDIUM) return ''
+  if (value >= RELATIONSHIP_LEVEL_LOW) return 'warning'
   return 'exception'
 }
 
@@ -39,13 +45,6 @@ function identityDetail(rel: Relationship): string {
 }
 
 const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleDateString('zh-CN')
-}
 </script>
 
 <template>

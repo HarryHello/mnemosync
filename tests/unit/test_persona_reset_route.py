@@ -30,7 +30,7 @@ from src.core.memory.reindex import ReindexProgress, ReindexState
 from src.infra.vector_store import VectorStore
 from src.persistence.auth_store import User
 from src.persistence.conversation_store import SqliteConversationStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
 
 NOW = datetime(2026, 7, 18, tzinfo=UTC)
 
@@ -65,6 +65,8 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
     memory_store = SqliteMemoryStore(str(tmp_path / "mem.db"))
     loop.run_until_complete(memory_store.connect())
+    relationship_store = SqliteRelationshipStore(str(tmp_path / "mem.db"))
+    loop.run_until_complete(relationship_store.connect())
 
     conversation_store = SqliteConversationStore(str(tmp_path / "conv.db"))
     loop.run_until_complete(conversation_store.connect())
@@ -86,6 +88,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
     app.state = AppState(
         memory_store=memory_store,
+        relationship_store=relationship_store,
         vector_store=vector_store,
         conversation_store=conversation_store,
         reindex_progress=progress,
@@ -97,7 +100,7 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     loop.run_until_complete(memory_store.save(_mk_entry(2)))
     loop.run_until_complete(memory_store.save(_mk_entry(3)))
     loop.run_until_complete(
-        memory_store.save_relationship(Relationship.create("default", "default"))
+        relationship_store.save_relationship(Relationship.create("default", "default"))
     )
     for i, role in enumerate(["user", "assistant", "user"]):
         loop.run_until_complete(
@@ -149,11 +152,12 @@ def test_reset_wipes_all_including_permanent(app: FastAPI) -> None:
     import asyncio
     loop = asyncio.new_event_loop()
     memory_store: SqliteMemoryStore = app.state.memory_store
+    relationship_store: SqliteRelationshipStore = app.state.relationship_store
     conversation_store: SqliteConversationStore = app.state.conversation_store
     vector_store: VectorStore = app.state.vector_store
     try:
         assert loop.run_until_complete(memory_store.count_all()) == 0
-        assert loop.run_until_complete(memory_store.count_relationships()) == 0
+        assert loop.run_until_complete(relationship_store.count_relationships()) == 0
         assert loop.run_until_complete(conversation_store.count()) == 0
     finally:
         loop.close()
@@ -200,9 +204,9 @@ def test_reset_leaves_relationship_absent_for_lifecycle_to_recreate(app: FastAPI
 
     import asyncio
     loop = asyncio.new_event_loop()
-    memory_store: SqliteMemoryStore = app.state.memory_store
+    relationship_store: SqliteRelationshipStore = app.state.relationship_store
     try:
-        rel = loop.run_until_complete(memory_store.get_relationship("default", "default"))
+        rel = loop.run_until_complete(relationship_store.get_relationship("default", "default"))
     finally:
         loop.close()
     assert rel is None

@@ -16,6 +16,7 @@
 
 from fastapi import APIRouter, Depends
 
+from src.api.routes.admin_agent_runs import router as agent_runs_router
 from src.api.routes.admin_conversation import router as conversation_router
 from src.api.routes.admin_core import router as core_router
 from src.api.routes.admin_identity import router as identity_router
@@ -41,3 +42,4 @@ router.include_router(conversation_router)
 router.include_router(notifications_router)
 router.include_router(identity_router)
 router.include_router(persona_router)
+router.include_router(agent_runs_router)

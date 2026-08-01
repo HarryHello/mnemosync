@@ -6,6 +6,7 @@ from .base import (
     run_react_loop,
     run_simple_completion,
 )
+from .spec import AgentSpec, AGENT_SPECS, get_spec
 from .factory import (
     ExpressorConfig,
     MainDialogueResult,
@@ -21,6 +22,9 @@ from .factory import (
 )
 
 __all__ = [
+    "AgentSpec",
+    "AGENT_SPECS",
+    "get_spec",
     "ReActResult",
     "ReActStep",
     "run_react_loop",

@@ -1,9 +1,9 @@
 # 配置文档 | Configuration
 
-> **系统版本**: v0.3.0
+> **系统版本**: v0.3.4
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
-> **最后更新**: 2026-07-26
+> **最后更新**: 2026-08-01
 > **作者**: HarryHelloo
 
 ---
@@ -52,7 +52,7 @@ prompt = "你是 Alice, 27 岁, 语气温和, 记得用户告诉你的每一件�
 
 **默认人格**: v0.2.9 起默认人格改为 "宅家内向的妹妹" (以和泉纱雾为原型), 用户身份为哥哥. 想换回中立助手风格请自行覆盖 `[persona]` 段.
 
-**设计原则**: 人格由服务器权威定义, 客户端 system 消息中的角色扮演会被 `prompt_cleaning` Agent 剥离, 只保留功能性指令 (格式要求、工具约束等)。见 [dev-decisions.md](dev-decisions.md) v0.2.1 相关章节。
+**设计原则**: 人格由服务器权威定义, 客户端 system 消息中的角色扮演会被 `prompt_cleaning` Agent 剥离, 只保留功能性指令 (格式要求、工具约束等)。见 [dev-decisions.md](dev-decisions.md) v0.2.1 相关章节。v0.3.3 起支持结构化人格定义 (PersonaDefinition), 详见 [modules/persona-definition.md](modules/persona-definition.md)。支持 SillyTavern V1/V2 角色卡导入, 详见 [modules/character-card.md](modules/character-card.md)。
 
 **v0.2.11 面板覆盖层**: 面板 `设置 → 人格` 页 (`PUT /panel/admin/persona`) 会把编辑结果写入 `data/persona_override.toml`, 优先级 **override > config.local.toml [persona] > 资源默认值** (见 [§6 加载流程](#6-加载流程))。`data/persona_override.toml` 由代码机械生成 (每次 PUT 全量覆写), 结构固定:
 
@@ -85,7 +85,7 @@ context            = "..."
 | `conversation_db_path` | `data/conversation.db` | v0.2.6: 跨前端对话流水 (`conversation_turns` 表) |
 | `short_term_days` | `7` | v0.2.6: 短期记忆时间窗宽度, 后台清理任务的删除阈值 |
 
-路径相对项目根目录。API Key 数据库路径当前**在代码中硬编码**为 `data/api_keys.db` ([lifespan.py](../src/api/lifespan.py)), v0.2.x 暂未纳入 storage 段。v0.3.0 新增的 `data/identity.db` (身份四表) 与 `data/idempotency.db` (幂等重放缓存) 同样在 lifespan 中硬编码, 暂不可配。
+路径相对项目根目录。API Key 数据库路径当前**在代码中硬编码**为 `data/api_keys.db` ([lifespan.py](../src/api/lifespan.py)), v0.2.x 暂未纳入 storage 段。v0.3.0 新增的 `data/identity.db` (身份四表) 与 `data/idempotency.db` (幂等重放缓存) 同样在 lifespan 中硬编码, 暂不可配。v0.3.3 新增的 `data/persona.db` (结构化人格版本) 与 `data/lorebook.db` (Lorebook)、`data/space_policy.db` (空间社交策略) 同样在 lifespan 中硬编码。
 
 **注意**: `short_term_days` 是硬边界 — 超过此时长的对话流水会被 lifespan 起的每 24h 后台任务清理; 主装填路径也不再考虑窗外的记录。想扩大保留可以调大此值, 但要注意 SQLite 表体积增长与向量记忆的分工。v0.3.0 起群聊按 `space_id` 分区装填 (时间窗同样适用于空间流水), 详见 [modules/identity.md §5](modules/identity.md#5-空间事件流与幂等)。
 
@@ -231,3 +231,4 @@ mnemosync login
 | v0.2.10 | 2026-07-19 | `[persona.relation]` 三字段变为**运行时可演化** — Agent 通过 `update_addressing` tool 落库到 `relationships` 表, TOML 值降级为"新装基线" |
 | v0.2.11 | 2026-07-19 | 新增 `data/persona_override.toml` 覆盖层 (面板 `PUT /panel/admin/persona` 写入, 优先级高于 `config.local.toml`) |
 | v0.3.0 | 2026-07-26 | 注明 `data/identity.db` / `data/idempotency.db` 两个新库 (lifespan 硬编码, 暂不可配); 短期记忆时间窗说明补充空间分区装填 |
+| v0.3.3 | 2026-08-01 | 注明 `data/persona.db` / `data/lorebook.db` / `data/space_policy.db` 三个新库; 补充结构化人格与角色卡导入引用 |

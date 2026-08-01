@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ConversationTurn } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   modelValue: boolean
@@ -26,11 +27,6 @@ function roleLabel(r: string): string {
   if (r === 'user') return '用户'
   if (r === 'assistant') return '助手'
   return r
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 </script>
 
@@ -58,10 +54,10 @@ function fmtDate(s: string | null): string {
             </span>
           </el-descriptions-item>
           <el-descriptions-item label="事件时间">
-            <span class="mono muted">{{ fmtDate(item.ts) }}</span>
+            <span class="mono muted">{{ formatDate(item.ts) }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="观察时间">
-            <span class="mono muted">{{ fmtDate(item.observed_at) }}</span>
+            <span class="mono muted">{{ formatDate(item.observed_at) }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="空间">
             <span class="mono muted">{{ item.space_id || '私聊 / 全局' }}</span>

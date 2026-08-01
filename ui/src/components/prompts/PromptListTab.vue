@@ -155,7 +155,7 @@ defineExpose({ refresh })
   justify-content: space-between;
   gap: $space-4;
   margin-bottom: $space-4;
-  flex-wrap: wrap;
+
 }
 
 .tab-title {

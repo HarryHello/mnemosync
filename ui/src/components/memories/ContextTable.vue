@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { ConversationTurn } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   items: ConversationTurn[]
@@ -76,12 +76,6 @@ function speakerDetail(row: ConversationTurn): string {
   return `${row.source_frontend || 'unknown'} · ${row.external_key}`
 }
 
-function normalizeOrder(order: string | null | undefined): 'asc' | 'desc' | null {
-  if (order === 'ascending') return 'asc'
-  if (order === 'descending') return 'desc'
-  return null
-}
-
 function toElOrder(o: 'asc' | 'desc'): 'ascending' | 'descending' {
   return o === 'asc' ? 'ascending' : 'descending'
 }
@@ -96,11 +90,6 @@ function roleLabel(r: string): string {
   if (r === 'user') return '用户'
   if (r === 'assistant') return '助手'
   return r
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 
 function contentPreview(content: string): string {
@@ -208,7 +197,7 @@ function contentPreview(content: string): string {
       sortable="custom"
     >
       <template #default="{ row }">
-        <span class="mono muted">{{ fmtDate(row.ts) }}</span>
+        <span class="mono muted">{{ formatDate(row.ts) }}</span>
       </template>
     </el-table-column>
     <el-table-column

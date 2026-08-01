@@ -56,7 +56,7 @@ class DecayState(StrEnum):
     @classmethod
     def from_priority(cls, priority: float) -> "DecayState":
         """根据有效优先级推断衰减状态."""
-        if priority > 0.3:
+        if priority > ACTIVE_THRESHOLD:
             return cls.ACTIVE
         elif priority > 0.1:
             return cls.DORMANT

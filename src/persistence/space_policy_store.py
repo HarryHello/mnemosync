@@ -16,6 +16,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+import aiosqlite
+
 from src.persistence.base import SqliteStore
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,7 @@ class SqliteSpacePolicyStore(SqliteStore):
     """SQLite 空间社交策略存储."""
 
     @staticmethod
-    async def _init_schema(db) -> None:
+    async def _init_schema(db: aiosqlite.Connection) -> None:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS space_policies (
                 space_id TEXT PRIMARY KEY,

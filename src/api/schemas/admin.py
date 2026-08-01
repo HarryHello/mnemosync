@@ -496,6 +496,59 @@ class GenerateConfigResponse(BaseModel):
     config: str = Field(..., description="生成的 JSON 配置字符串")
 
 
+
+# ============================================================================ 
+# Plugins
+# ============================================================================
+
+
+class PluginInfo(BaseModel):
+    """已发现的身份解析插件信息."""
+    name: str
+    description: str
+
+
+class PluginListResponse(BaseModel):
+    items: list[PluginInfo]
+    total: int
+
+
+class AvailablePluginInfo(BaseModel):
+    """远程可用插件信息."""
+    file_name: str
+    download_url: str
+    name: str = ""
+    description: str = ""
+    version: str = ""
+    author: str = ""
+    installed: bool = False
+
+
+class AvailablePluginListResponse(BaseModel):
+    items: list[AvailablePluginInfo]
+    total: int
+
+
+class InstalledPluginInfo(BaseModel):
+    """本地已安装插件信息."""
+    file_name: str
+    name: str = ""
+    description: str = ""
+    version: str = ""
+    author: str = ""
+
+
+class InstalledPluginListResponse(BaseModel):
+    items: list[InstalledPluginInfo]
+    total: int
+
+
+class PluginInstallBody(BaseModel):
+    """安装插件请求."""
+    file_name: str
+    download_url: str
+ 
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",
@@ -542,4 +595,12 @@ __all__ = [
     "IdentityStrategyListResponse",
     "IdentityStrategyCreateBody",
     "IdentityStrategyUpdateBody",
+    "PluginInfo",
+    "PluginListResponse",
+    "AvailablePluginInfo",
+    "AvailablePluginListResponse",
+    "InstalledPluginInfo",
+    "InstalledPluginListResponse",
+    "PluginInstallBody",
+
 ]

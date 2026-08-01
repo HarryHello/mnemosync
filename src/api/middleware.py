@@ -123,14 +123,14 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                         if ak is not None:
                             inbound_key_note = ak.note
                     except Exception:
-                        pass
+                        logger.debug("Failed to lookup API key for debug event", exc_info=True)
             debug_bus.emit(
                 direction="inbound_request",
                 correlation_id=cid,
                 url=str(request.url),
                 method=request.method,
                 port=request.url.port,
-                headers=dict(request.headers),
+                headers=request_headers,
                 body=request_body,
                 key_note=inbound_key_note,
             )
@@ -139,6 +139,23 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         duration_ms = (time.time() - start_time) * 1000
 
         store = getattr(request.app.state, "http_log_store", None)
+
+        # SSE 长连接: 不消费 body_iterator, 直接透传, 仅记录请求头
+        content_type = response.headers.get("content-type", "")
+        if "text/event-stream" in content_type:
+            if store is not None:
+                store.enqueue({
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query_params": str(request.query_params) if request.query_params else None,
+                    "request_headers": request_headers,
+                    "request_body": request_body,
+                    "response_status": response.status_code,
+                    "response_body": None,
+                    "duration_ms": duration_ms,
+                    "client_ip": request.client.host if request.client else None,
+                })
+            return response
 
         def _log(response_body):
             if self.debug:
@@ -204,14 +221,13 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
 
         # 兜底: 普通 Response (如直接返回的 JSONResponse, 但 call_next 不会走这里)
         response_body = None
-        content_type = response.headers.get("content-type", "")
         if "json" in content_type:
             try:
                 body = response.body
                 if body:
                     response_body = json.loads(body.decode("utf-8", errors="replace"))
             except Exception:
-                pass
+                logger.debug("Failed to parse response body for logging", exc_info=True)
 
         _log(response_body)
         return response

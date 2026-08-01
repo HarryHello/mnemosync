@@ -14,6 +14,7 @@ from src.api.deps import (
     get_conversation_store,
     get_memory_store,
     get_persona_store,
+    get_relationship_store,
     get_reindex_progress,
     get_space_policy_store,
     get_vector_store,
@@ -35,11 +36,11 @@ from src.core.config import (
     get_settings,
 )
 from src.persistence.conversation_store import SqliteConversationStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 # ============================================================================
-# Structured Persona API (v0.3.3, SQLite-based)
+# Structured Persona API (v0.3.4, SQLite-based)
 # ============================================================================
 
 
@@ -165,6 +166,7 @@ def _build_persona_read() -> PersonaConfigRead:
 async def reset_persona(
     body: PersonaResetBody,
     memory_store: SqliteMemoryStore = Depends(get_memory_store),
+    relationship_store: SqliteRelationshipStore = Depends(get_relationship_store),
     vector_store=Depends(get_vector_store),
     conversation_store: SqliteConversationStore = Depends(get_conversation_store),
     progress=Depends(get_reindex_progress),
@@ -191,7 +193,7 @@ async def reset_persona(
         )
 
     mem_count = await memory_store.count_all()
-    rel_count = await memory_store.count_relationships()
+    rel_count = await relationship_store.count_relationships()
     turn_count = await conversation_store.count()
 
     if body.dry_run:
@@ -226,7 +228,7 @@ async def reset_persona(
 
     # 3. relationships
     try:
-        deleted_relationships = await memory_store.delete_all_relationships()
+        deleted_relationships = await relationship_store.delete_all_relationships()
     except Exception as e:
         logger.exception("persona reset: relationships 清空失败")
         errors.append(f"relationships: {e}")
@@ -302,7 +304,7 @@ async def reset_persona_config():
 
 
 # ============================================================================
-# Structured Persona (v0.3.3, SQLite-based)
+# Structured Persona (v0.3.4, SQLite-based)
 # ============================================================================
 
 
@@ -622,7 +624,7 @@ async def delete_persona_profile(
 
 
 # ============================================================================
-# Space Policy (v0.3.3, per-space social behavior)
+# Space Policy (v0.3.4, per-space social behavior)
 # ============================================================================
 
 
@@ -724,7 +726,7 @@ async def delete_space_policy(
 
 
 # ============================================================================
-# Character Card Import (v0.3.3, SillyTavern V1/V2)
+# Character Card Import (v0.3.4, SillyTavern V1/V2)
 # ============================================================================
 
 

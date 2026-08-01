@@ -8,6 +8,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
+import { formatDate } from '@/utils/format'
 import {
   bindActorToGroup,
   createUserGroup,
@@ -159,11 +160,6 @@ async function removeMember(actor: Actor) {
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   }
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return '—'
-  return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
 defineExpose({ refresh })

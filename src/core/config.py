@@ -39,6 +39,7 @@ class StorageConfig:
     chroma_dir: str = "data/chroma"
     prompts_override_dir: str = "data/prompts"
     conversation_db_path: str = "data/conversation.db"
+    agent_run_db_path: str = "data/agent_runs.db"
     short_term_days: int = 7
 
     @property
@@ -84,6 +85,10 @@ class StorageConfig:
     @property
     def conversation_db_abs(self) -> Path:
         return PROJECT_ROOT / self.conversation_db_path
+
+    @property
+    def agent_run_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.agent_run_db_path
 
 
 @dataclass
@@ -181,7 +186,7 @@ def _load_default_persona() -> dict[str, Any]:
         "context": str(raw_rel.get("context") or fallback_rel["context"]),
     }
     result: dict[str, Any] = {"name": name, "prompt": prompt, "relation": relation}
-    # v0.3.3+: 资源 TOML 可选携带 [identity] 段, 供结构化定义初始化
+    # v0.3.4+: 资源 TOML 可选携带 [identity] 段, 供结构化定义初始化
     raw_identity = data.get("identity")
     if isinstance(raw_identity, dict):
         identity: dict[str, Any] = {}

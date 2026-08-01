@@ -57,6 +57,11 @@ const MainRoutes: RouteRecordRaw = {
       component: () => import('@/views/DebugChatPage.vue'),
     },
     {
+      path: "plugins",
+      name: "plugins",
+      component: () => import("@/views/PluginsPage.vue"),
+    },
+    {
       path: 'settings',
       name: 'settings',
       component: () => import('@/views/SettingsPage.vue'),

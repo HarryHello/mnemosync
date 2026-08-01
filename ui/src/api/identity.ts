@@ -1,6 +1,10 @@
 /**Identity API: 身份识别策略、Actor、UserGroup 管理. */
 
 import type {
+  AvailablePluginListResponse,
+  InstalledPluginListResponse,
+  PluginListResponse,
+
   Actor,
   ActorListResponse,
   IdentityStrategy,
@@ -141,4 +145,34 @@ export async function unbindActorFromGroup(
   await apiDelete(
     `/admin/identity/actors/${encodeURIComponent(actorId)}/groups/${encodeURIComponent(groupId)}`,
   )
+}
+
+// ============================================================================
+// Identity Plugins
+// ============================================================================
+
+export async function listPlugins(): Promise<PluginListResponse> {
+  return apiGet<PluginListResponse>('/admin/identity/plugins')
+}
+
+export async function listAvailablePlugins(): Promise<AvailablePluginListResponse> {
+  return apiGet<AvailablePluginListResponse>('/admin/identity/plugins/available')
+}
+
+export async function listInstalledPlugins(): Promise<InstalledPluginListResponse> {
+  return apiGet<InstalledPluginListResponse>('/admin/identity/plugins/installed')
+}
+
+export async function installPlugin(
+  fileName: string,
+  downloadUrl: string,
+): Promise<{ success: boolean; file_name: string; path: string }> {
+  return apiPost('/admin/identity/plugins/install', {
+    file_name: fileName,
+    download_url: downloadUrl,
+  })
+}
+
+export async function removePlugin(fileName: string): Promise<void> {
+  await apiDelete(`/admin/identity/plugins/${encodeURIComponent(fileName)}`)
 }

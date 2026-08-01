@@ -503,7 +503,7 @@ export interface PersonaConfigUpdateBody {
 }
 
 // ============================================================================
-// Structured Persona (v0.3.3, SQLite-based)
+// Structured Persona (v0.3.4, SQLite-based)
 // ============================================================================
 
 export interface PersonaIdentityBody {
@@ -609,6 +609,49 @@ export interface MarkReadResponse {
   marked: number
 }
 // ============================================================================
+// ============================================================================ 
+// Plugins (v0.3.4)
+// ============================================================================
+
+export interface PluginInfo {
+  name: string
+  description: string
+}
+
+export interface PluginListResponse {
+  items: PluginInfo[]
+  total: number
+}
+
+export interface AvailablePluginInfo {
+  file_name: string
+  download_url: string
+  name: string
+  description: string
+  version: string
+  author: string
+  installed: boolean
+}
+
+export interface AvailablePluginListResponse {
+  items: AvailablePluginInfo[]
+  total: number
+}
+
+export interface InstalledPluginInfo {
+  file_name: string
+  name: string
+  description: string
+  version: string
+  author: string
+}
+
+export interface InstalledPluginListResponse {
+  items: InstalledPluginInfo[]
+  total: number
+}
+ 
+
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'

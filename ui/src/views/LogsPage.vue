@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listLogs, getLog, clearLogs } from '@/api/client'
 import type { HttpLog } from '@/types/api'
@@ -82,6 +82,9 @@ async function onClearAll() {
 }
 
 onMounted(refresh)
+
+watch(page, () => refresh())
+watch(pageSize, () => { page.value = 1; refresh() })
 </script>
 
 <template>

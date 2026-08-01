@@ -8,6 +8,7 @@
 
 import os
 import sys
+from importlib.metadata import version as _get_version
 
 
 def serve() -> None:
@@ -17,10 +18,19 @@ def serve() -> None:
 
     from .api import api_router, forward_router
 
+    try:
+        pkg_version = _get_version("mnemosync")
+    except Exception:
+        import logging
+        logging.getLogger(__name__).debug(
+            "Failed to read package version, using fallback", exc_info=True,
+        )
+        pkg_version = "0.0.0+unknown"
+
     app = FastAPI(
         title="Mnemosync API",
         description="智能代理中间件 - LLM 上下文编排与人格记忆管理",
-        version="0.3.0",
+        version=pkg_version,
     )
 
     @app.get("/health", tags=["Health"])
@@ -47,7 +57,7 @@ def main() -> int:
         elif cmd == "cli-internal":
             import asyncio
 
-            from src.cli.cli_interactive import main as cli_main
+            from src.cli.interactive import main as cli_main
             asyncio.run(cli_main())
             return 0
         elif cmd == "init-internal":
@@ -66,7 +76,11 @@ def main() -> int:
                 try:
                     await auth_db.create_default_user("mnemosync")
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).debug(
+                        "create_default_user skipped (user may already exist)",
+                        exc_info=True,
+                    )
 
                 print("Success!")
 

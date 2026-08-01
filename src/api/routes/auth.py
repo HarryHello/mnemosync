@@ -238,26 +238,3 @@ async def setup_credentials(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-
-
-@router.post(
-    "/init-default-user",
-    response_model=MessageResponse,
-    summary="初始化默认用户",
-    description="创建默认管理员用户 (用户名和密码都是 mnemosync)",
-)
-async def init_default_user(
-    auth_store: SqliteAuthStore = Depends(get_auth_store),
-) -> MessageResponse:
-    """初始化默认用户."""
-    try:
-        await auth_store.create_default_user("mnemosync")
-        return MessageResponse(
-            success=True,
-            message="默认用户已创建，用户名和密码都是 mnemosync，首次登录请修改密码",
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"创建失败：{str(e)}",
-        )

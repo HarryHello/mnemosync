@@ -8,6 +8,7 @@ import {
   updateUpstreamService,
   deleteUpstreamService,
 } from '@/api/client'
+import { formatDate } from '@/utils/format'
 import type { UpstreamService } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
 
@@ -125,10 +126,6 @@ async function onDelete(row: UpstreamService) {
   }
 }
 
-function fmtDate(s: string): string {
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
-}
-
 onMounted(refresh)
 </script>
 
@@ -172,7 +169,7 @@ onMounted(refresh)
           </el-table-column>
           <el-table-column label="创建时间" min-width="180">
             <template #default="{ row }: { row: UpstreamService }">
-              <span class="mono muted">{{ fmtDate(row.created_at) }}</span>
+              <span class="mono muted">{{ formatDate(row.created_at) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="180" fixed="right">

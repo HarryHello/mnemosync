@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ApiKeyInfo } from '@/types/api'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{
   items: ApiKeyInfo[]
@@ -27,11 +28,6 @@ function maskKey(item: ApiKeyInfo): string {
     return `${item.key.slice(0, 4)}******${item.key.slice(-4)}`
   }
   return `${item.key_prefix}…`
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return '—'
-  return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 </script>
 

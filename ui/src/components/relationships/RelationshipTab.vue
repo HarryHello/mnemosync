@@ -7,6 +7,13 @@ import {
   listRelationships,
   updateRelationship,
 } from '@/api/client'
+import { formatDate } from '@/utils/format'
+import {
+  RELATIONSHIP_LEVEL_EXCELLENT,
+  RELATIONSHIP_LEVEL_HIGH,
+  RELATIONSHIP_LEVEL_MEDIUM,
+  RELATIONSHIP_LEVEL_LOW,
+} from '@/utils/constants'
 import type {
   ListRelationshipsParams,
 } from '@/api/client'
@@ -64,36 +71,29 @@ function clamp01(v: number): number {
 
 function levelText(v: number): string {
   const p = clamp01(v)
-  if (p >= 0.85) return '极高'
-  if (p >= 0.65) return '高'
-  if (p >= 0.4) return '中等'
-  if (p >= 0.2) return '低'
+  if (p >= RELATIONSHIP_LEVEL_EXCELLENT) return '极高'
+  if (p >= RELATIONSHIP_LEVEL_HIGH) return '高'
+  if (p >= RELATIONSHIP_LEVEL_MEDIUM) return '中等'
+  if (p >= RELATIONSHIP_LEVEL_LOW) return '低'
   return '陌生'
 }
 
 type TagType = 'primary' | 'success' | 'warning' | 'danger' | 'info'
 function levelType(v: number): TagType {
   const p = clamp01(v)
-  if (p >= 0.65) return 'success'
-  if (p >= 0.4) return 'primary'
-  if (p >= 0.2) return 'warning'
+  if (p >= RELATIONSHIP_LEVEL_HIGH) return 'success'
+  if (p >= RELATIONSHIP_LEVEL_MEDIUM) return 'primary'
+  if (p >= RELATIONSHIP_LEVEL_LOW) return 'warning'
   return 'danger'
 }
 
 type ProgressStatus = '' | 'success' | 'warning' | 'exception'
 function levelStatus(v: number): ProgressStatus {
   const p = clamp01(v)
-  if (p >= 0.65) return 'success'
-  if (p >= 0.4) return ''
-  if (p >= 0.2) return 'warning'
+  if (p >= RELATIONSHIP_LEVEL_HIGH) return 'success'
+  if (p >= RELATIONSHIP_LEVEL_MEDIUM) return ''
+  if (p >= RELATIONSHIP_LEVEL_LOW) return 'warning'
   return 'exception'
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleString('zh-CN', { hour12: false })
 }
 
 const fieldLabels: Record<string, string> = {
@@ -175,7 +175,7 @@ function openEditDialog() {
   editDialogVisible.value = true
 }
 
-async function submitEdit(payload: any) {
+async function submitEdit(payload: { persona_addressing?: string; user_addressing?: string; context?: string; reason: string }) {
   if (!rel.value || !selectedUserId.value) return
   const body: RelationshipUpdateBody = { ...payload, user_id: selectedUserId.value }
   editSaving.value = true
@@ -394,7 +394,7 @@ watch(() => props.active, (active) => {
               <span v-else class="muted">未定义</span>
             </el-descriptions-item>
             <el-descriptions-item label="最近活跃">
-              <span class="mono">{{ fmtDate(rel.updated_at) }}</span>
+              <span class="mono">{{ formatDate(rel.updated_at) }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="备注">
               <span v-if="rel.notes" class="notes">{{ rel.notes }}</span>

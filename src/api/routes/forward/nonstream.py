@@ -23,9 +23,10 @@ from src.api.tool_policies import (
 from src.api.tool_transactions import append_tool_transaction_context
 from src.core.config import get_settings
 from src.core.memory.short_term import build_short_term_history, token_count_for_storage
+from src.core.utils import last_user_message
 from src.infra.debug_context import emit_pipeline
 
-from . import _build_graph_config, _get_compiled_graph, _get_conversation_store
+from ._accessors import _build_graph_config, _get_compiled_graph, _get_conversation_store
 from .idempotency import _record_idempotency
 from .identity import _resolve_main_candidate, _resolve_main_model
 from .persistence import _persist_assistant_event, _persist_plugin_events
@@ -65,10 +66,7 @@ async def _handle_non_stream(
     tool_transaction = initial_state.get("tool_transaction")
     new_user_content = ""
     if not tool_transaction:
-        for m in reversed(client_messages):
-            if m.get("role") == "user":
-                new_user_content = m.get("content", "")
-                break
+        new_user_content = last_user_message(client_messages)
 
     # 简化: 非流式的 system 内容无法在装填前精确算 (需要 perms + retrieved),
     # 这些又是 graph 内节点做的. 保守估算: 用 persona + 一个"典型 system 长度"

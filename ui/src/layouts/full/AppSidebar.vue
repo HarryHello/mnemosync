@@ -47,6 +47,8 @@ const items: MenuItem[] = [
   { path: '/logs', title: '请求日志', icon: 'Document' },
   { path: '/memories', title: '记忆管理', icon: 'Cpu' },
   { path: '/debug-chat', title: '调试聊天', icon: 'ChatDotRound' },
+  { path: "/plugins", title: "插件管理", icon: "Coin" },
+
   { path: '/settings', title: '设置', icon: 'Setting' },
 ]
 
@@ -115,48 +117,55 @@ function handleUserCommand(cmd: string) {
     </el-menu>
 
     <div class="footer">
-      <el-dropdown trigger="hover" placement="top-start" popper-class="sidebar-user-popper" @command="handleUserCommand">
-        <span class="user-trigger">
-          <el-badge
-            :value="notificationsStore.unreadCount"
-            :hidden="notificationsStore.unreadCount === 0"
-            :max="99"
-            class="avatar-badge"
-          >
-            <el-avatar :size="28" class="avatar">{{ username.slice(0, 1).toUpperCase() }}</el-avatar>
-          </el-badge>
-          <span class="user-name">{{ username }}</span>
-          <el-icon><ArrowDown /></el-icon>
-        </span>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="notifications">
-              <el-icon><Bell /></el-icon>
-              <span>显示通知</span>
-              <el-badge
-                v-if="notificationsStore.unreadCount > 0"
-                :value="notificationsStore.unreadCount"
-                :max="99"
-                class="dropdown-badge"
-              />
-            </el-dropdown-item>
-            <el-dropdown-item command="toggle-theme">
-              <el-icon>
-                <component :is="isDark ? 'Sunny' : 'Moon'" />
-              </el-icon>
-              切换主题
-            </el-dropdown-item>
-            <el-dropdown-item command="change-password">
-              <el-icon><EditPen /></el-icon>
-              修改密码
-            </el-dropdown-item>
-            <el-dropdown-item command="logout">
-              <el-icon color="var(--el-color-danger)"><SwitchButton /></el-icon>
-              <span style="color: var(--el-color-danger);">退出登录</span>
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      <div class="footer-top">
+        <el-dropdown trigger="hover" placement="top-start" popper-class="sidebar-user-popper" @command="handleUserCommand">
+          <span class="user-trigger">
+            <el-badge
+              :value="notificationsStore.unreadCount"
+              :hidden="notificationsStore.unreadCount === 0"
+              :max="99"
+              class="avatar-badge"
+            >
+              <el-avatar :size="28" class="avatar">{{ username.slice(0, 1).toUpperCase() }}</el-avatar>
+            </el-badge>
+            <span class="user-name">{{ username }}</span>
+            <el-icon><ArrowDown /></el-icon>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="notifications">
+                <el-icon><Bell /></el-icon>
+                <span>显示通知</span>
+                <el-badge
+                  v-if="notificationsStore.unreadCount > 0"
+                  :value="notificationsStore.unreadCount"
+                  :max="99"
+                  class="dropdown-badge"
+                />
+              </el-dropdown-item>
+              <el-dropdown-item command="toggle-theme">
+                <el-icon>
+                  <component :is="isDark ? 'Sunny' : 'Moon'" />
+                </el-icon>
+                切换主题
+              </el-dropdown-item>
+              <el-dropdown-item command="change-password">
+                <el-icon><EditPen /></el-icon>
+                修改密码
+              </el-dropdown-item>
+              <el-dropdown-item command="logout">
+                <el-icon color="var(--el-color-danger)"><SwitchButton /></el-icon>
+                <span style="color: var(--el-color-danger);">退出登录</span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <a href="https://github.com/HarryHello/mnemosync" target="_blank" rel="noopener noreferrer" class="github-link" title="GitHub">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+      </div>
     </div>
 
     <NotificationDrawer v-model="notificationsOpen" />
@@ -190,6 +199,10 @@ function handleUserCommand(cmd: string) {
   display: block;
   object-fit: contain;
   background: transparent;
+}
+
+.brand-text {
+  user-select: none;
 }
 
 .menu {
@@ -227,6 +240,28 @@ function handleUserCommand(cmd: string) {
   display: flex;
   flex-direction: column;
   gap: $space-1;
+}
+
+.footer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.github-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: $radius-round;
+  color: var(--el-text-color-secondary);
+  transition: all 0.2s;
+
+  &:hover {
+    color: var(--el-text-color-primary);
+    background: rgba(66, 133, 244, 0.08);
+  }
 }
 
 .user-trigger {

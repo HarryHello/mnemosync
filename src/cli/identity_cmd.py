@@ -24,7 +24,7 @@ from src.cli.cli import get_project_root
 from src.core.config import get_settings
 from src.core.constants import DEFAULT_PERSONA_ID
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.memory_store import SqliteRelationshipStore
 
 _IDENTITY_DB_PATH = "data/identity.db"
 
@@ -406,7 +406,7 @@ def _cmd_bind(args: argparse.Namespace) -> int:
         # 迁移既有关系到 group, 防止关系行分裂
         try:
             settings = get_settings()
-            memory_store = SqliteMemoryStore(str(settings.storage.memory_db_abs))
+            memory_store = SqliteRelationshipStore(str(settings.storage.memory_db_abs))
             await memory_store.connect()
             try:
                 migrated = await memory_store.migrate_relationships_to_group(

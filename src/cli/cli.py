@@ -9,6 +9,7 @@ import argparse
 import os
 import subprocess
 import sys
+from importlib.metadata import version as _get_version
 
 # ============================================================================
 # 工具函数
@@ -97,17 +98,22 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print("请运行: uv sync")
         return 1
 
+    try:
+        pkg_version = _get_version("mnemosync")
+    except Exception:
+        pkg_version = "0.0.0+unknown"
+
     app = FastAPI(
         title="Mnemosync API",
         description="智能代理中间件 - LLM 上下文编排与人格记忆管理",
-        version="0.3.0",
+        version=pkg_version,
         lifespan=app_lifespan,
     )
 
-    # 添加 CORS 中间件
+    # 添加 CORS 中间件 (开发模式允许 localhost)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

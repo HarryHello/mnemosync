@@ -8,6 +8,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { bindActorToGroup, listActorGroups, listActors, listUserGroups } from '@/api/client'
+import { formatDate } from '@/utils/format'
 import type { Actor, UserGroup } from '@/types/api'
 
 const items = ref<Actor[]>([])
@@ -102,11 +103,6 @@ async function submitBind() {
   } finally {
     bindSubmitting.value = false
   }
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return '—'
-  return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
 defineExpose({ refresh })

@@ -36,7 +36,7 @@ export async function resetPersonaConfig(): Promise<PersonaConfigRead> {
 }
 
 // ============================================================================
-// Structured Persona API (v0.3.3, SQLite-based)
+// Structured Persona API (v0.3.4, SQLite-based)
 // ============================================================================
 
 export async function getPersonaDefinition(): Promise<PersonaDefinitionRead> {

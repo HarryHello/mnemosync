@@ -18,7 +18,8 @@ from src.core.memory.models import (
     RelationshipAuditEntry,
     Visibility,
 )
-from src.persistence.base import SqliteStore
+from src.core.constants import MEMORY_ACTIVE_PRIORITY_THRESHOLD
+from src.persistence.base import SqliteStore, _parse_dt, resolve_sort_params
 
 
 def _dt(v: datetime | None) -> str | None:
@@ -26,15 +27,8 @@ def _dt(v: datetime | None) -> str | None:
     return v.isoformat() if v else None
 
 
-def _parse_dt(v: str | None) -> datetime | None:
-    """ISO 字符串 → datetime."""
-    if not v:
-        return None
-    return datetime.fromisoformat(v)
-
-
 class SqliteMemoryStore(SqliteStore):
-    """SQLite 记忆存储实现.
+    """SQLite 记忆存储实现 — 仅 MemoryEntry CRUD.
 
     使用方式:
       * 长连接单例 (推荐, API 层): 应用启动时 ``await store.connect()``, 关闭时 ``await store.close()``.
@@ -85,46 +79,11 @@ class SqliteMemoryStore(SqliteStore):
             "CREATE INDEX IF NOT EXISTS idx_mem_space ON memory_entries(space_id)"
         )
 
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS relationships (
-                persona_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                type TEXT NOT NULL DEFAULT 'stranger',
-                intimacy_score REAL NOT NULL DEFAULT 0.0,
-                trust_level REAL NOT NULL DEFAULT 0.0,
-                interaction_count INTEGER NOT NULL DEFAULT 0,
-                last_active TIMESTAMP,
-                notes TEXT,
-                PRIMARY KEY (persona_id, user_id)
-            )
-        """)
-
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS relationship_audit_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                persona_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                changed_at TIMESTAMP NOT NULL,
-                source TEXT NOT NULL,
-                field_name TEXT NOT NULL,
-                old_value TEXT,
-                new_value TEXT,
-                reason TEXT NOT NULL
-            )
-        """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_audit_persona_user "
-            "ON relationship_audit_log(persona_id, user_id, changed_at DESC)"
-        )
-
         # 命名迁移: 幂等 ADD COLUMN (捕获 duplicate column 错误)
         from src.persistence.migrations import MigrationRunner, add_column_if_missing
 
         await MigrationRunner([
             ("001_add_space_id", add_column_if_missing("memory_entries", "space_id", "TEXT")),
-            ("002_add_persona_addressing", add_column_if_missing("relationships", "persona_addressing", "TEXT")),
-            ("003_add_user_addressing", add_column_if_missing("relationships", "user_addressing", "TEXT")),
-            ("004_add_context", add_column_if_missing("relationships", "context", "TEXT")),
             ("005_add_superseded_by", add_column_if_missing("memory_entries", "superseded_by", "TEXT")),
         ]).apply(db)
 
@@ -276,11 +235,11 @@ class SqliteMemoryStore(SqliteStore):
                 SELECT * FROM memory_entries
                 WHERE source_user = ? AND memory_type = 'normal' AND is_forgotten = 0
                   AND superseded_by IS NULL
-                  AND priority > 0.3
+                  AND priority > ?
                 ORDER BY priority DESC, created_at DESC
                 LIMIT ?
                 """,
-                (source_user, limit),
+                (source_user, MEMORY_ACTIVE_PRIORITY_THRESHOLD, limit),
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [self._row_to_entry(r) for r in rows]
@@ -428,17 +387,19 @@ class SqliteMemoryStore(SqliteStore):
         access_count / memory_type / source_user. 非法值退回 created_at.
         sort_order: 'asc' / 'desc', 其它值退回 desc.
         """
-        allowed_sort = {
-            "created_at",
-            "last_accessed",
-            "importance",
-            "decay_rate",
-            "access_count",
-            "memory_type",
-            "source_user",
-        }
-        sort_col = sort_by if sort_by in allowed_sort else "created_at"
-        direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+        sort_col, direction = resolve_sort_params(
+            sort_by, sort_order,
+            {
+                "created_at": "created_at",
+                "last_accessed": "last_accessed",
+                "importance": "importance",
+                "decay_rate": "decay_rate",
+                "access_count": "access_count",
+                "memory_type": "memory_type",
+                "source_user": "source_user",
+            },
+            default_col="created_at",
+        )
 
         where = ["is_forgotten = 0", "superseded_by IS NULL"]
         params: list = []
@@ -508,6 +469,96 @@ class SqliteMemoryStore(SqliteStore):
             if len(rows) < batch_size:
                 break
             offset += batch_size
+
+    # ============ 批量清理 (人格状态重置) ============
+
+    async def delete_all_memories(self) -> int:
+        """清空所有记忆 (含 PERMANENT). 用于人格状态重置."""
+        async with self._conn() as db:
+            cur = await db.execute("DELETE FROM memory_entries")
+            await db.commit()
+            return cur.rowcount or 0
+
+    # ============ 工具方法 ============
+
+    def _row_to_entry(self, row: tuple) -> MemoryEntry:
+        return MemoryEntry(
+            id=row[0],
+            content=row[1],
+            role=row[2],
+            source_user=row[3],
+            memory_type=MemoryType(row[4]),
+            importance=row[5],
+            decay_rate=row[6],
+            priority=row[7],
+            access_count=row[8],
+            is_forgotten=bool(row[9]),
+            visibility=Visibility(row[10]),
+            custom_policies=row[11].split("|") if row[11] else [],
+            emotional_tags=row[12].split("|") if row[12] else [],
+            related_memories=row[13].split("|") if row[13] else [],
+            created_at=_parse_dt(row[14]) or datetime.now(UTC),
+            last_accessed=_parse_dt(row[15]),
+            expires_at=_parse_dt(row[16]),
+            space_id=row[17] if len(row) > 17 else None,
+            superseded_by=row[18] if len(row) > 18 else None,
+        )
+
+
+class SqliteRelationshipStore(SqliteStore):
+    """SQLite 关系存储实现 — Relationship CRUD + 审计日志.
+
+    与 SqliteMemoryStore 共享同一个数据库文件 (relationships 表 + relationship_audit_log 表).
+    """
+
+    @staticmethod
+    async def _init_schema(db: aiosqlite.Connection) -> None:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS relationships (
+                persona_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'stranger',
+                intimacy_score REAL NOT NULL DEFAULT 0.0,
+                trust_level REAL NOT NULL DEFAULT 0.0,
+                interaction_count INTEGER NOT NULL DEFAULT 0,
+                last_active TIMESTAMP,
+                notes TEXT,
+                PRIMARY KEY (persona_id, user_id)
+            )
+        """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS relationship_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                persona_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                changed_at TIMESTAMP NOT NULL,
+                source TEXT NOT NULL,
+                field_name TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                reason TEXT NOT NULL
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_persona_user "
+            "ON relationship_audit_log(persona_id, user_id, changed_at DESC)"
+        )
+
+        # 命名迁移: 幂等 ADD COLUMN (捕获 duplicate column 错误)
+        from src.persistence.migrations import MigrationRunner, add_column_if_missing
+
+        await MigrationRunner([
+            ("002_add_persona_addressing", add_column_if_missing("relationships", "persona_addressing", "TEXT")),
+            ("003_add_user_addressing", add_column_if_missing("relationships", "user_addressing", "TEXT")),
+            ("004_add_context", add_column_if_missing("relationships", "context", "TEXT")),
+        ]).apply(db)
+
+    async def init_db(self) -> None:
+        """兼容旧接口: 幂等地初始化 schema. 长连接模式下 connect() 已包含此步骤."""
+        async with self._conn() as db:
+            await self._init_schema(db)
+            await db.commit()
 
     # ============ Relationship CRUD ============
 
@@ -815,13 +866,6 @@ class SqliteMemoryStore(SqliteStore):
 
     # ============ 批量清理 (人格状态重置) ============
 
-    async def delete_all_memories(self) -> int:
-        """清空所有记忆 (含 PERMANENT). 用于人格状态重置."""
-        async with self._conn() as db:
-            cur = await db.execute("DELETE FROM memory_entries")
-            await db.commit()
-            return cur.rowcount or 0
-
     async def delete_all_relationships(self) -> int:
         """清空所有关系状态. 用于人格状态重置."""
         async with self._conn() as db:
@@ -850,12 +894,18 @@ class SqliteMemoryStore(SqliteStore):
         last_active / user_id / type. 非法值退回 intimacy_score.
         sort_order: 'asc' / 'desc', 其它值退回 desc.
         """
-        allowed_sort = {
-            "intimacy_score", "trust_level", "interaction_count",
-            "last_active", "user_id", "type",
-        }
-        sort_col = sort_by if sort_by in allowed_sort else "intimacy_score"
-        direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+        sort_col, direction = resolve_sort_params(
+            sort_by, sort_order,
+            {
+                "intimacy_score": "intimacy_score",
+                "trust_level": "trust_level",
+                "interaction_count": "interaction_count",
+                "last_active": "last_active",
+                "user_id": "user_id",
+                "type": "type",
+            },
+            default_col="intimacy_score",
+        )
 
         async with self._conn() as db:
             async with db.execute(
@@ -883,29 +933,6 @@ class SqliteMemoryStore(SqliteStore):
         return items, total
 
     # ============ 工具方法 ============
-
-    def _row_to_entry(self, row: tuple) -> MemoryEntry:
-        return MemoryEntry(
-            id=row[0],
-            content=row[1],
-            role=row[2],
-            source_user=row[3],
-            memory_type=MemoryType(row[4]),
-            importance=row[5],
-            decay_rate=row[6],
-            priority=row[7],
-            access_count=row[8],
-            is_forgotten=bool(row[9]),
-            visibility=Visibility(row[10]),
-            custom_policies=row[11].split("|") if row[11] else [],
-            emotional_tags=row[12].split("|") if row[12] else [],
-            related_memories=row[13].split("|") if row[13] else [],
-            created_at=_parse_dt(row[14]) or datetime.now(UTC),
-            last_accessed=_parse_dt(row[15]),
-            expires_at=_parse_dt(row[16]),
-            space_id=row[17] if len(row) > 17 else None,
-            superseded_by=row[18] if len(row) > 18 else None,
-        )
 
     def _row_to_relationship(self, row: tuple) -> Relationship:
         return Relationship(

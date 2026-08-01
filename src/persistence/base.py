@@ -11,9 +11,20 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 import aiosqlite
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    """Parse ISO datetime string, return None if input is None or empty."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
 
 
 class SqliteStore:
@@ -63,3 +74,27 @@ class SqliteStore:
     async def _init_schema(db: aiosqlite.Connection) -> None:
         """幂等建表/迁移. 子类必须覆盖此方法."""
         raise NotImplementedError
+
+
+def resolve_sort_params(
+    sort_by: str | None,
+    sort_order: str | None,
+    allowed: dict[str, str],
+    default_col: str,
+    default_dir: str = "DESC",
+) -> tuple[str, str]:
+    """Resolve sort column and direction with validation.
+
+    Args:
+        sort_by: Requested sort column name (or None for default).
+        sort_order: "ASC" or "DESC" (or None for default).
+        allowed: Mapping of allowed column names to SQL column expressions.
+        default_col: Key in ``allowed`` to use when sort_by is None/invalid.
+        default_dir: Default direction ("ASC" or "DESC").
+
+    Returns:
+        (sql_column_expr, direction_string) tuple.
+    """
+    col = allowed.get(sort_by or "", allowed.get(default_col, default_col))
+    direction = "ASC" if (sort_order or "").upper() == "ASC" else default_dir
+    return col, direction
