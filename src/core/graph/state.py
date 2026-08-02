@@ -21,6 +21,7 @@ class AgentState(TypedDict, total=False):
     tool_choice: str | dict[str, Any] | None
     parallel_tool_calls: bool | None
     tool_transaction: Any | None              # 已校验的客户端工具事务尾部
+    tool_policy: Any | None                   # 工具策略 (v0.3.3)
     source_user: str                        # 有效用户 ID (effective_user_id)
     current_speaker: str | None             # 模型可读的当前发言者身份（不得使用内部 UUID）
     active_participants: list[str]           # 当前短期窗口中的模型可读参与者标签
@@ -28,10 +29,19 @@ class AgentState(TypedDict, total=False):
     persona: str                            # 人格 system prompt
     persona_name: str                       # 人格名称
     persona_id: str                         # 人格标识 (v0.3.0 仍为 "default", 不再硬编码)
+    persona_definition: Any | None          # 结构化人格定义 (v0.3.3+)
     thread_id: str                          # 会话 ID（checkpoint 用）
     proxy_thinking_enabled: bool            # 是否启用代理思考
     space_id: str | None                    # 会话空间 ID (v0.3.0)
     channel_type: str | None                # "direct" | "group" | None
+    source_frontend: str | None             # 前端来源标识
+    api_key_id: str | None                  # API Key ID
+    external_event_id: str | None           # 幂等事件 ID
+    main_model: str | None                  # 主模型名称
+    expression_style: str                   # 群聊表达习惯 (v0.3.3)
+    interaction_id: str | None              # 追踪 ID
+    internal_tool_names: set[str]           # 内部工具白名单 (v0.3.3)
+    normalized_events: list[Any]            # 插件预处理事件
 
     # === 代理推理 (proxy_thinking 写入) ===
     proxy_thinking_result: str | None
