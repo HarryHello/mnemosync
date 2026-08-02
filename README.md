@@ -119,7 +119,7 @@ API Key (每前端一枚) 的双重作用:
 ### 方式一：一键安装脚本（推荐）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
 ```
 
 脚本自动完成：安装 uv → 克隆代码 → 安装依赖 → 下载/构建管理面板 → 初始化数据库 → 注册 `mnemosync` 命令。

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Mnemosync 安装脚本
-# 用法: curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/dev/install.sh | sh
+# 用法: curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
 #
 # 需要: git
 # 可选: uv (脚本会自动安装), node + npm (若需要本地 build UI 而非从 Release 下载)
@@ -15,7 +15,7 @@ REPO_URL="https://github.com/HarryHello/mnemosync.git"
 API_URL="https://api.github.com/repos/HarryHello/mnemosync"
 INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-$HOME/.mnemosync}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
-BRANCH="${MNEMOSYNC_BRANCH:-dev}"
+BRANCH="${MNEMOSYNC_BRANCH:-main}"
 
 # 颜色 (使用 printf 兼容 sh)
 RED='\033[0;31m'
