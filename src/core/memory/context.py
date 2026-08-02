@@ -152,8 +152,8 @@ def _build_persona_section(
     if persona_definition is not None:
         from src.core.persona.definition import PersonaDefinition
         if isinstance(persona_definition, PersonaDefinition):
-            persona_definition.get_identity_for_space(space_id)
-            return persona_definition.to_legacy_prompt()
+            identity = persona_definition.get_identity_for_space(space_id)
+            return persona_definition.to_legacy_prompt(identity=identity)
     return persona_prompt
 
 
