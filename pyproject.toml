@@ -22,7 +22,7 @@ dependencies = [
     "fastapi~=0.115",
     "uvicorn[standard]~=0.32",
     # HTTP 客户端（Forwarder + DashScope API）
-    "httpx~=0.27",
+    "httpx[socks]~=0.27",
     # 数据校验与配置
     "pydantic~=2.9",
     "pydantic-settings~=2.6",
