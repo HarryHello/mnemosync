@@ -93,19 +93,23 @@ class PersonaDefinition:
             ),
         )
 
-    def to_legacy_prompt(self) -> str:
+    def to_legacy_prompt(self, identity: PersonaIdentity | None = None) -> str:
         """构建单段 prompt 文本 (供 __PERSONA_SECTION__ 注入).
 
         只包含人格级字段: 人格设定、说话风格、核心价值.
         关系背景 (context) 是 per-user 级别的, 不由这里注入.
+
+        Args:
+            identity: 可选的覆盖身份 (含空间覆盖). 为 None 时使用 self.identity.
         """
+        ident = identity or self.identity
         parts: list[str] = []
-        if self.identity.personality:
-            parts.append(f"## 人格设定\n{self.identity.personality}")
-        if self.identity.speaking_style:
-            parts.append(f"## 说话风格\n{self.identity.speaking_style}")
-        if self.identity.values:
-            vals = "\n".join(f"- {v}" for v in self.identity.values)
+        if ident.personality:
+            parts.append(f"## 人格设定\n{ident.personality}")
+        if ident.speaking_style:
+            parts.append(f"## 说话风格\n{ident.speaking_style}")
+        if ident.values:
+            vals = "\n".join(f"- {v}" for v in ident.values)
             parts.append(f"## 核心价值\n{vals}")
         return "\n\n".join(parts) if parts else ""
 
