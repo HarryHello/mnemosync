@@ -116,7 +116,23 @@ API Key (每前端一枚) 的双重作用:
 
 ## 🚀 快速开始
 
-### 方式一：Docker 部署
+### 方式一：一键安装脚本（推荐）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/dev/install.sh | sh
+```
+
+脚本自动完成：安装 uv → 克隆代码 → 安装依赖 → 下载/构建管理面板 → 初始化数据库 → 注册 `mnemosync` 命令。
+
+安装完成后：
+```bash
+mnemosync serve     # 启动服务
+mnemosync login     # 进入交互式 CLI
+```
+
+配置文件位于 `~/.mnemosync/config.local.toml`，首次使用请编辑填入 LLM 服务商 API Key。
+
+### 方式二：Docker 部署
 
 ```bash
 git clone https://github.com/Mnemosync/Mnemosync.git
@@ -126,7 +142,7 @@ docker compose logs -f
 docker compose exec mnemosync uv run mnemosync init
 ```
 
-### 方式二：源码部署
+### 方式三：源码部署
 
 ```bash
 # 安装 uv (若未装)
