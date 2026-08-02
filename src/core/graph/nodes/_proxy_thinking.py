@@ -9,13 +9,13 @@ from langchain_core.runnables import RunnableConfig
 
 from src.core.agents import run_proxy_thinking
 from src.core.agents.tracking import run_agent_tracked
+from src.core.graph.state import AgentState
 from src.core.memory import format_relationship
 from src.core.utils import last_user_message
 from src.infra.forwarder.multi import MultiForwarder
 from src.persistence.memory_store import SqliteMemoryStore
 
 from ._helpers import _retrieval_context
-from src.core.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 

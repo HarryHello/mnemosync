@@ -19,7 +19,8 @@ from datetime import UTC, datetime
 
 import aiosqlite
 
-from src.persistence.base import SqliteStore, _parse_dt as _parse_dt_base
+from src.persistence.base import SqliteStore
+from src.persistence.base import _parse_dt as _parse_dt_base
 
 
 @dataclass

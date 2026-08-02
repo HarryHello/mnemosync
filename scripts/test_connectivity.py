@@ -61,7 +61,7 @@ def test_chat_basic(cfg: dict) -> bool:
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
-        print(f"  ✓ 成功")
+        print("  ✓ 成功")
         print(f"    回复: {content!r}")
         print(f"    tokens: prompt={usage.get('prompt_tokens')}, completion={usage.get('completion_tokens')}")
         return True
@@ -76,7 +76,7 @@ def test_chat_basic(cfg: dict) -> bool:
 def test_chat_function_call(cfg: dict) -> bool:
     chat = cfg["chat"]
     model = chat["assist_model"]
-    print(f"\n[2/4] 测试 chat function_call（assist_model，ReAct 可行性）...")
+    print("\n[2/4] 测试 chat function_call（assist_model，ReAct 可行性）...")
     print(f"      model: {model}")
 
     tools = [
@@ -121,7 +121,7 @@ def test_chat_function_call(cfg: dict) -> bool:
         tool_calls = msg.get("tool_calls")
 
         if tool_calls:
-            print(f"  ✓ 模型发起了 function_call")
+            print("  ✓ 模型发起了 function_call")
             for tc in tool_calls:
                 fn = tc["function"]
                 print(f"    → {fn['name']}({fn['arguments']})")
@@ -130,7 +130,7 @@ def test_chat_function_call(cfg: dict) -> bool:
         else:
             print(f"  ⚠ 模型未调用工具，直接回复: {msg.get('content', '')[:100]!r}")
             print(f"    finish_reason: {finish_reason}")
-            print(f"    （function_call 能力可能不足，需换辅助模型）")
+            print("    （function_call 能力可能不足，需换辅助模型）")
             return False
     except httpx.HTTPStatusError as e:
         print(f"  ✗ HTTP {e.response.status_code}: {e.response.text[:200]}")
@@ -168,7 +168,7 @@ def test_embedding(cfg: dict) -> bool:
         resp.raise_for_status()
         data = resp.json()
         vec = data["data"][0]["embedding"]
-        print(f"  ✓ 成功")
+        print("  ✓ 成功")
         print(f"    向量维度: {len(vec)}")
         print(f"    前 5 维: {vec[:5]}")
         # 校验维度与配置一致
@@ -189,7 +189,7 @@ def test_rerank(cfg: dict) -> bool:
         print("\n[4/4] 跳过 rerank（未配置）")
         return True
     rr = cfg["rerank"]
-    print(f"\n[4/4] 测试 rerank...")
+    print("\n[4/4] 测试 rerank...")
     print(f"      base_url: {rr['base_url']}")
     print(f"      model:    {rr['model']}")
 
@@ -218,7 +218,7 @@ def test_rerank(cfg: dict) -> bool:
         resp.raise_for_status()
         data = resp.json()
         results = data.get("results", [])
-        print(f"  ✓ 成功")
+        print("  ✓ 成功")
         print(f"    返回 {len(results)} 条:")
         for r in results:
             idx = r.get("index")
@@ -231,7 +231,7 @@ def test_rerank(cfg: dict) -> bool:
         print(f"  ✗ HTTP {e.response.status_code}: {e.response.text[:200]}")
         # 尝试备用端点
         if e.response.status_code == 404:
-            print(f"  → /rerank 返回 404，尝试 /reranks ...")
+            print("  → /rerank 返回 404，尝试 /reranks ...")
             try:
                 resp2 = httpx.post(
                     f"{rr['base_url']}/reranks",

@@ -6,7 +6,7 @@ import argparse
 import json
 import re
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -191,13 +191,13 @@ def _match_groups(conversation_db: Path, http_db: Path) -> list[tuple[sqlite3.Ro
 
     matched: list[tuple[sqlite3.Row, sqlite3.Row]] = []
     for group in groups:
-        target = datetime.fromisoformat(group["current_ts"]).astimezone(timezone.utc)
+        target = datetime.fromisoformat(group["current_ts"]).astimezone(UTC)
         candidates = []
         for log in logs:
             content = _user_content(log["request_body"])
             if not CONTEXT_RE.search(content):
                 continue
-            log_ts = datetime.fromisoformat(log["created_at"]).replace(tzinfo=timezone.utc)
+            log_ts = datetime.fromisoformat(log["created_at"]).replace(tzinfo=UTC)
             candidates.append((abs((log_ts - target).total_seconds()), log))
         if candidates:
             distance, log = min(candidates, key=lambda item: item[0])
@@ -249,7 +249,7 @@ def main() -> None:
     matches = _match_groups(conversation_db, http_db)
     reconstructed: list[tuple[str, list[ConversationEvent], int]] = []
     for group, log in matches:
-        observed = datetime.fromisoformat(log["created_at"]).replace(tzinfo=timezone.utc)
+        observed = datetime.fromisoformat(log["created_at"]).replace(tzinfo=UTC)
         events = _events_from_log(
             log["request_body"], group["request_id"], observed,
             by_external, by_name, memberships,

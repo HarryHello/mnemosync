@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
 def build_entries(data: dict, source_user: str) -> list[MemoryEntry]:
     raw_items = data.get("memory", [])
     if not raw_items:
-        raise ValueError(f"TOML 里没有找到任何 [[memory]] 块")
+        raise ValueError("TOML 里没有找到任何 [[memory]] 块")
 
     entries: list[MemoryEntry] = []
     for i, item in enumerate(raw_items):

@@ -6,7 +6,7 @@ Pure functions and lightweight helpers used across multiple node implementations
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from src.core.memory.audience import RetrievalContext
 from src.core.utils import last_user_message

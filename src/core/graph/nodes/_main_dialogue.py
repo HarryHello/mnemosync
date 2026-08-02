@@ -27,8 +27,8 @@ from src.tools import MemoryRetriever
 from ._helpers import _compute_emotion, _retrieval_context
 
 if TYPE_CHECKING:
-    from src.core.graph.state import AgentState
     from src.core.graph.nodes import StoresDict
+    from src.core.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 

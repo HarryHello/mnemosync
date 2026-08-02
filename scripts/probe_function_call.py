@@ -3,7 +3,6 @@
 逐一测试候选模型，找出能正确发起 tool_call 的模型.
 """
 
-import sys
 import tomllib
 from pathlib import Path
 

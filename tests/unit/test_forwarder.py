@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-
 from src.infra.forwarder.forwarder import (
     Forwarder,
     ForwarderConfig,

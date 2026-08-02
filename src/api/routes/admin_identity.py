@@ -12,28 +12,26 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from src.api.deps import (
     get_identity_store,
-    get_memory_store,
     get_multi_forwarder,
     get_relationship_store,
 )
 from src.api.routes.auth import get_current_user
 from src.api.schemas.admin import (
-    AvailablePluginInfo,
-    AvailablePluginListResponse,
-    InstalledPluginInfo,
-    InstalledPluginListResponse,
-    PluginInfo,
-    PluginInstallBody,
-    PluginListResponse,
-
     ActorListResponse,
     ActorResponse,
+    AvailablePluginInfo,
+    AvailablePluginListResponse,
     GenerateConfigBody,
     GenerateConfigResponse,
     IdentityStrategyCreateBody,
     IdentityStrategyListResponse,
     IdentityStrategyResponse,
     IdentityStrategyUpdateBody,
+    InstalledPluginInfo,
+    InstalledPluginListResponse,
+    PluginInfo,
+    PluginInstallBody,
+    PluginListResponse,
     UserGroupCreateBody,
     UserGroupListResponse,
     UserGroupResponse,
@@ -41,7 +39,7 @@ from src.api.schemas.admin import (
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteRelationshipStore
 
 logger = logging.getLogger(__name__)
 

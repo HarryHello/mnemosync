@@ -11,6 +11,7 @@ from typing import Any
 
 import aiosqlite
 
+from src.core.constants import MEMORY_ACTIVE_PRIORITY_THRESHOLD
 from src.core.memory.models import (
     MemoryEntry,
     MemoryType,
@@ -18,7 +19,6 @@ from src.core.memory.models import (
     RelationshipAuditEntry,
     Visibility,
 )
-from src.core.constants import MEMORY_ACTIVE_PRIORITY_THRESHOLD
 from src.persistence.base import SqliteStore, _parse_dt, resolve_sort_params
 
 

@@ -12,7 +12,7 @@ import json
 import re
 import sqlite3
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -266,7 +266,7 @@ def parse_merged(
         if not is_current:
             # 旧合并快照缺少事件时间；跨快照按身份+内容去重，避免重复历史膨胀。
             event.event_fingerprint = hashlib.sha256(
-                f"legacy-history\x1f{row['space_id'] or ''}\x1f{external_key}\x1f{content}".encode("utf-8")
+                f"legacy-history\x1f{row['space_id'] or ''}\x1f{external_key}\x1f{content}".encode()
             ).hexdigest()
         events.append(event)
 
@@ -331,7 +331,7 @@ def normalize_rows(
                 space_id=context["space_id"],
                 origin="assistant",
                 event_fingerprint=hashlib.sha256(
-                    f"legacy-assistant-{row['id']}".encode("utf-8")
+                    f"legacy-assistant-{row['id']}".encode()
                 ).hexdigest(),
                 observed_at=datetime.fromisoformat(row["ts"]),
                 request_id=context["request_id"],
@@ -392,7 +392,7 @@ def apply_migration(
                 row_json TEXT NOT NULL
             )
         """)
-        archived_at = datetime.now(timezone.utc).isoformat()
+        archived_at = datetime.now(UTC).isoformat()
         for row in rows:
             connection.execute(
                 "INSERT OR REPLACE INTO conversation_turns_legacy_archive "
@@ -402,8 +402,8 @@ def apply_migration(
 
         space_state: dict[str, tuple[int, str | None]] = {}
         for event in events:
-            ts = (event.ts or datetime.now(timezone.utc)).isoformat()
-            observed_at = (event.observed_at or event.ts or datetime.now(timezone.utc)).isoformat()
+            ts = (event.ts or datetime.now(UTC)).isoformat()
+            observed_at = (event.observed_at or event.ts or datetime.now(UTC)).isoformat()
             sequence: int | None = None
             late_arrival = 0
             if event.space_id:

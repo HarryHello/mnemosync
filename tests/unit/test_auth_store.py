@@ -11,11 +11,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from src.persistence.auth_store import (
     SessionToken,
     SqliteAuthStore,
@@ -26,7 +24,6 @@ from src.persistence.auth_store import (
     validate_password_strength,
     verify_password,
 )
-
 
 # ---------------------------------------------------------------------------
 # hash_password / verify_password
@@ -296,7 +293,6 @@ class TestSqliteAuthStore:
         user1 = await auth_store.create_default_user("pass1234")
         # Create a second user to create a real duplicate
         from src.persistence.auth_store import hash_password
-        import aiosqlite
         async with auth_store._conn() as db:
             await db.execute(
                 "INSERT INTO users (id, username, password_hash, must_change_password, "

@@ -109,7 +109,6 @@ async def test_list_all_respects_limit(store):
 async def test_defaults_applied_when_missing(store):
     """get() 返回的默认值应与 SpacePolicy dataclass 一致."""
     # 直接插入一个原始行, 模拟旧数据
-    import json
     async with store._conn() as db:
         await db.execute(
             "INSERT INTO space_policies (space_id, config, updated_at) VALUES (?, ?, ?)",

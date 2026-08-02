@@ -6,8 +6,6 @@ import argparse as _argparse
 
 from src.infra.llm_service.models import ModelType
 
-from ._input import check_exit_requested
-
 
 class ModelCommandsMixin:
     """cmd_model 子命令族."""
