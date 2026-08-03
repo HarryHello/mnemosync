@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -24,14 +24,9 @@ from src.persistence.notification_store import NotificationStore
 
 
 @pytest.fixture
-def app(tmp_path: Path) -> Iterator[FastAPI]:
-    import asyncio
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+async def app(tmp_path: Path) -> AsyncIterator[FastAPI]:
     store = NotificationStore(str(tmp_path / "n.db"))
-    loop.run_until_complete(store.connect())
+    await store.connect()
 
     app = FastAPI()
     outer = APIRouter(prefix="/panel")
@@ -50,35 +45,26 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
     yield app
 
-    loop.run_until_complete(store.close())
-    loop.close()
+    await store.close()
 
 
-def _seed(app: FastAPI, count: int = 3) -> list[int]:
-    import asyncio
-
+async def _seed(app: FastAPI, count: int = 3) -> list[int]:
     store: NotificationStore = app.state.notification_store
-    loop = asyncio.new_event_loop()
-    try:
-        ids: list[int] = []
-        for i in range(count):
-            nid = loop.run_until_complete(
-                store.add(
-                    level="warning",
-                    category="memory_write_failed",
-                    title=f"t{i}",
-                    message=f"m{i}",
-                    meta={"stage": "embed", "i": i},
-                )
-            )
-            ids.append(nid)
-        return ids
-    finally:
-        loop.close()
+    ids: list[int] = []
+    for i in range(count):
+        nid = await store.add(
+            level="warning",
+            category="memory_write_failed",
+            title=f"t{i}",
+            message=f"m{i}",
+            meta={"stage": "embed", "i": i},
+        )
+        ids.append(nid)
+    return ids
 
 
-def test_list_returns_items_and_counts(app: FastAPI) -> None:
-    _seed(app, count=3)
+async def test_list_returns_items_and_counts(app: FastAPI) -> None:
+    await _seed(app, count=3)
     client = TestClient(app)
     resp = client.get("/panel/admin/notifications")
     assert resp.status_code == 200, resp.text
@@ -94,8 +80,8 @@ def test_list_returns_items_and_counts(app: FastAPI) -> None:
     assert body["items"][0]["read_at"] is None
 
 
-def test_list_unread_only_filters(app: FastAPI) -> None:
-    ids = _seed(app, count=3)
+async def test_list_unread_only_filters(app: FastAPI) -> None:
+    ids = await _seed(app, count=3)
     client = TestClient(app)
 
     # 先标记第一条已读 (最老)
@@ -109,16 +95,16 @@ def test_list_unread_only_filters(app: FastAPI) -> None:
     assert "t0" not in titles
 
 
-def test_unread_count_endpoint(app: FastAPI) -> None:
-    _seed(app, count=2)
+async def test_unread_count_endpoint(app: FastAPI) -> None:
+    await _seed(app, count=2)
     client = TestClient(app)
     resp = client.get("/panel/admin/notifications/unread-count")
     assert resp.status_code == 200
     assert resp.json() == {"unread_count": 2}
 
 
-def test_mark_read_hit_then_idempotent(app: FastAPI) -> None:
-    ids = _seed(app, count=1)
+async def test_mark_read_hit_then_idempotent(app: FastAPI) -> None:
+    ids = await _seed(app, count=1)
     client = TestClient(app)
 
     r1 = client.post(f"/panel/admin/notifications/{ids[0]}/read")
@@ -130,14 +116,14 @@ def test_mark_read_hit_then_idempotent(app: FastAPI) -> None:
     assert r2.json() == {"marked": 0}
 
 
-def test_mark_read_404_for_missing(app: FastAPI) -> None:
+async def test_mark_read_404_for_missing(app: FastAPI) -> None:
     client = TestClient(app)
     resp = client.post("/panel/admin/notifications/99999/read")
     assert resp.status_code == 404
 
 
-def test_mark_all_read(app: FastAPI) -> None:
-    _seed(app, count=3)
+async def test_mark_all_read(app: FastAPI) -> None:
+    await _seed(app, count=3)
     client = TestClient(app)
     resp = client.post("/panel/admin/notifications/mark-all-read")
     assert resp.status_code == 200
@@ -149,8 +135,8 @@ def test_mark_all_read(app: FastAPI) -> None:
     assert client.get("/panel/admin/notifications/unread-count").json()["unread_count"] == 0
 
 
-def test_delete_hit_then_404(app: FastAPI) -> None:
-    ids = _seed(app, count=1)
+async def test_delete_hit_then_404(app: FastAPI) -> None:
+    ids = await _seed(app, count=1)
     client = TestClient(app)
 
     r1 = client.delete(f"/panel/admin/notifications/{ids[0]}")

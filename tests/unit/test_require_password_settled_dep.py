@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -35,18 +35,13 @@ def _user(must_change: bool) -> User:
 
 
 @pytest.fixture
-def app(tmp_path: Path) -> Iterator[FastAPI]:
-    import asyncio
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+async def app(tmp_path: Path) -> AsyncIterator[FastAPI]:
     memory_store = SqliteMemoryStore(str(tmp_path / "mem.db"))
     relationship_store = SqliteRelationshipStore(str(tmp_path / "mem.db"))
     identity_store = SqliteIdentityStore(str(tmp_path / "identity.db"))
-    loop.run_until_complete(memory_store.connect())
-    loop.run_until_complete(relationship_store.connect())
-    loop.run_until_complete(identity_store.connect())
+    await memory_store.connect()
+    await relationship_store.connect()
+    await identity_store.connect()
 
     app = FastAPI()
     app.include_router(api_router)
@@ -58,10 +53,9 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
     yield app
 
-    loop.run_until_complete(memory_store.close())
-    loop.run_until_complete(relationship_store.close())
-    loop.run_until_complete(identity_store.close())
-    loop.close()
+    await memory_store.close()
+    await relationship_store.close()
+    await identity_store.close()
 
 
 def test_must_change_password_blocks_admin_routes(app: FastAPI) -> None:
