@@ -120,10 +120,8 @@ async function onSubmit() {
     width: 56px;
     height: 56px;
     margin: 0 auto $space-2;
-    border-radius: $radius-lg;
-    padding: 8px;
-    background: rgba(66, 133, 244, 0.08);
-    border: 1px solid rgba(66, 133, 244, 0.12);
+    background: none;
+    border: none;
   }
 
   h1 {
