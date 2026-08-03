@@ -5,14 +5,24 @@
 # 需要: git
 # 可选: uv (脚本会自动安装), node + npm (若需要本地 build UI 而非从 Release 下载)
 # 备注: Python 3.12+ 若系统未安装, uv 会在同步依赖时自动下载并管理, 无需手动准备.
+#
+# 环境变量:
+#   GITHUB_PROXY        GitHub 代理前缀, 如 https://ghproxy.com/
+#   MNEMOSYNC_DIR       自定义安装目录 (默认 ~/.mnemosync)
+#   MNEMOSYNC_BIN_DIR   自定义命令目录 (默认 ~/.local/bin)
+#   MNEMOSYNC_BRANCH    自定义分支 (默认 main)
+#
+# 使用代理安装示例:
+#   GITHUB_PROXY=https://ghproxy.com/ curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
 
 set -e
 
 # ============================================================================
 # 配置
 # ============================================================================
-REPO_URL="https://github.com/HarryHello/mnemosync.git"
-API_URL="https://api.github.com/repos/HarryHello/mnemosync"
+GITHUB_PROXY="${GITHUB_PROXY:-}"
+REPO_URL="${GITHUB_PROXY}https://github.com/HarryHello/mnemosync.git"
+API_URL="${GITHUB_PROXY}https://api.github.com/repos/HarryHello/mnemosync"
 INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-$HOME/.mnemosync}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
 BRANCH="${MNEMOSYNC_BRANCH:-main}"
@@ -90,7 +100,10 @@ setup_code() {
             cd "$INSTALL_DIR"
         fi
 
-        # 拉取最新代码
+        # 拉取最新代码 (支持代理)
+        if [ -n "$GITHUB_PROXY" ]; then
+            git remote set-url origin "$REPO_URL"
+        fi
         git fetch origin "$BRANCH"
         git reset --hard "origin/$BRANCH"
     else
@@ -133,6 +146,7 @@ setup_ui() {
             | cut -d'"' -f4)
 
         if [ -n "$DIST_URL" ]; then
+            DIST_URL="${GITHUB_PROXY}${DIST_URL}"
             if curl -fsSL "$DIST_URL" -o /tmp/mnemosync-ui-dist.tar.gz 2>/dev/null; then
                 tar -xzf /tmp/mnemosync-ui-dist.tar.gz -C ui/
                 rm -f /tmp/mnemosync-ui-dist.tar.gz
