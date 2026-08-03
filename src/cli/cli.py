@@ -184,9 +184,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
         env = os.environ.copy()
         env["PYTHONPATH"] = project_root
+        env["MNEMOSYNC_DIR"] = project_root  # 子进程复用同一安装目录
 
         proc = subprocess.Popen(
-            [sys.executable, "-m", "src.main", "serve"],
+            [sys.executable, "-m", "src.cli.cli", "serve"],
             cwd=project_root,
             env=env,
             stdout=open(log_file, "a"),
