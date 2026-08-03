@@ -87,6 +87,7 @@ async def _handle_non_stream(
         new_user_text=budget_input_text,
         max_tokens_hint=request.max_tokens,
         space_id=space_id,
+        source_user=source_user or None,
     )
     initial_state["active_participants"] = built.active_participants
     logger.debug(

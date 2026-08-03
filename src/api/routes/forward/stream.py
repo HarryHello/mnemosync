@@ -385,6 +385,7 @@ async def _handle_stream(
         new_user_text=budget_input_text,
         max_tokens_hint=request.max_tokens,
         space_id=space_id,
+        source_user=source_user or None,
     )
     logger.debug(
         "  🧵 短期对话装填: %d/%d 条 (预算 %d tok, 已用 %d, 因预算丢弃 %d)",

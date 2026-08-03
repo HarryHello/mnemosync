@@ -520,6 +520,25 @@ class SqliteConversationStore(SqliteStore):
             ) as cur:
                 return [self._row_to_turn(row) for row in await cur.fetchall()]
 
+    async def list_since_for_user(
+        self,
+        effective_user_id: str,
+        since: datetime,
+        limit: int = 1000,
+    ) -> list[ConversationTurn]:
+        """按用户过滤的对话流水 (空间未指定时的安全回退).
+
+        与 list_since 相同, 但只返回 effective_user_id 匹配的记录.
+        防止未归属用户 (space_id=None) 看到其他用户的对话上下文.
+        """
+        async with self._conn() as db:
+            async with db.execute(
+                f"SELECT {_SELECT_COLUMNS} FROM conversation_turns "
+                "WHERE effective_user_id = ? AND ts >= ? ORDER BY ts ASC, id ASC LIMIT ?",
+                (effective_user_id, since.isoformat(), limit),
+            ) as cur:
+                return [self._row_to_turn(row) for row in await cur.fetchall()]
+
     async def list_recent(self, limit: int = 100) -> list[ConversationTurn]:
         async with self._conn() as db:
             async with db.execute(

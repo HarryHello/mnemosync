@@ -155,6 +155,7 @@ async def build_short_term_history(
     new_user_text: str,
     max_tokens_hint: int | None,
     space_id: str | None = None,
+    source_user: str | None = None,
 ) -> BuiltContext:
     """跨前端对话流水 → 主对话 history.
 
@@ -169,12 +170,17 @@ async def build_short_term_history(
         space_id: 会话空间 ID (v0.3.0). 非空时只装填本空间流水 —
             群聊上下文绝不能混入其他空间 (别的群/私聊) 的对话;
             为空时退化为全局跨前端流水 (单用户私聊场景).
+        source_user: 有效用户 ID. 用于 space_id 为空时按用户隔离对话历史,
+            防止不同用户的上下文混杂.
     """
     since = now - timedelta(days=window_days)
     if space_id:
         candidates = await store.list_for_space(space_id, since=since, limit=5000)
+    elif source_user:
+        candidates = await store.list_since_for_user(source_user, since=since, limit=5000)
     else:
-        candidates = await store.list_since(since, limit=5000)
+        # 未归属且无空间: 不加载任何对话历史 (安全兜底)
+        candidates = []
     budget = _resolve_context_budget(context_length, system_text, new_user_text, max_tokens_hint)
     kept, used, dropped = trim_by_budget(candidates, budget)
     return BuiltContext(
