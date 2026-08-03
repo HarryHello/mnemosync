@@ -176,31 +176,33 @@ def cmd_serve(args: argparse.Namespace) -> int:
     pid_file = os.path.join(project_root, "data", "mnemosync.pid")
 
     if args.daemon:
-        # 后台模式
-        pid = os.fork()
-        if pid > 0:
-            # 父进程
-            print(f"🚀 Mnemosync 已启动 (PID: {pid})")
-            print(f"   日志: {os.path.join(project_root, 'data', 'mnemosync.log')}")
-            print("   停止: mnemosync stop")
-            return 0
+        # 后台模式: 用 subprocess 代替 os.fork() (macOS 不支持不带 exec 的 fork)
+        import subprocess
 
-        # 子进程
-        os.setsid()
+        log_file = os.path.join(project_root, "data", "mnemosync.log")
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = project_root
+
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "src.main", "serve"],
+            cwd=project_root,
+            env=env,
+            stdout=open(log_file, "a"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
 
         # 写入 PID 文件
         os.makedirs(os.path.dirname(pid_file), exist_ok=True)
         with open(pid_file, "w") as f:
-            f.write(str(os.getpid()))
+            f.write(str(proc.pid))
 
-        # 重定向标准输出到日志文件
-        log_file = os.path.join(project_root, "data", "mnemosync.log")
-        sys.stdout = open(log_file, "a")
-        sys.stderr = sys.stdout
-
-        print(f"🚀 Mnemosync 后台启动中... http://{host}:{port}")
-
-        uvicorn.run(app, host=host, port=port, log_level=args.log_level)
+        print(f"🚀 Mnemosync 已启动 (PID: {proc.pid})")
+        print(f"   日志: {log_file}")
+        print("   停止: mnemosync stop")
+        return 0
     else:
         # 前台模式
         # 保存 PID 以便 stop 命令使用
