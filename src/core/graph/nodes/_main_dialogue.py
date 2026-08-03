@@ -7,15 +7,14 @@ Pipeline stages:
 4. _extract_metadata -- assemble return dict
 """
 
-from __future__ import annotations
-
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
 from src.core.agents import run_main_dialogue
 from src.core.config import get_settings
+from src.core.graph.state import AgentState
 from src.core.memory import build_main_dialogue_messages, format_relationship
 from src.core.memory.trigger_reason import infer_trigger_reason
 from src.core.utils import last_user_message
@@ -24,11 +23,7 @@ from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.tools import MemoryRetriever
 
-from ._helpers import _compute_emotion, _retrieval_context
-
-if TYPE_CHECKING:
-    from src.core.graph.nodes import StoresDict
-    from src.core.graph.state import AgentState
+from ._helpers import StoresDict, _compute_emotion, _retrieval_context
 
 logger = logging.getLogger(__name__)
 

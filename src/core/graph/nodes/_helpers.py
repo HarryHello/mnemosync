@@ -6,16 +6,44 @@ Pure functions and lightweight helpers used across multiple node implementations
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from src.core.memory.audience import RetrievalContext
+from src.core.models.resolver import RoleResolver
 from src.core.utils import last_user_message
 from src.infra.forwarder.multi import MultiForwarder
+from src.infra.vector_store import VectorStore
+from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.notification_store import NotificationStore
 
 if TYPE_CHECKING:
     from src.core.graph.state import AgentState
+    from src.infra.debug_bus import DebugEventBus
+    from src.persistence.agent_run_store import AgentRunStore
+    from src.persistence.identity_store import SqliteIdentityStore
+    from src.persistence.lorebook_store import SqliteLorebookStore
+    from src.persistence.persona_store import SqlitePersonaStore
+    from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 logger = logging.getLogger(__name__)
+
+
+class StoresDict(TypedDict, total=False):
+    """Typed container for shared store instances passed via LangGraph config."""
+
+    multi_forwarder: MultiForwarder
+    resolver: RoleResolver
+    memory_store: SqliteMemoryStore
+    relationship_store: SqliteRelationshipStore
+    vector_store: VectorStore
+    notification_store: NotificationStore | None
+    debug_bus: DebugEventBus | None
+    identity_store: SqliteIdentityStore | None
+    persona_store: SqlitePersonaStore | None
+    lorebook_store: SqliteLorebookStore | None
+    space_policy_store: SqliteSpacePolicyStore | None
+    agent_run_store: AgentRunStore | None
+    _owns_forwarder: bool
 
 
 def _format_emotion_text(emotion_analysis: dict) -> str:

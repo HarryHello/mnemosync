@@ -1,7 +1,5 @@
 """Relationship analysis node: CoT agent that computes intimacy delta."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

@@ -1,7 +1,5 @@
 """Memory analysis node: ReAct agent that extracts candidate memories."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

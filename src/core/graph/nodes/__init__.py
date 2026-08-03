@@ -16,11 +16,11 @@ while preserving the public API via re-exports.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 
 from src.core.config import get_settings
+from src.core.graph.state import AgentState
 from src.core.memory import MemoryLifecycle  # noqa: F401 – re-exported for backward compat
 from src.core.models.resolver import RoleResolver
 from src.infra.forwarder.multi import MultiForwarder
@@ -29,38 +29,9 @@ from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
 from src.persistence.notification_store import NotificationStore
 
-if TYPE_CHECKING:
-    from src.infra.debug_bus import DebugEventBus
-    from src.persistence.agent_run_store import AgentRunStore
-    from src.persistence.identity_store import SqliteIdentityStore
-    from src.persistence.lorebook_store import SqliteLorebookStore
-    from src.persistence.persona_store import SqlitePersonaStore
-    from src.persistence.space_policy_store import SqliteSpacePolicyStore
-
-from src.core.graph.state import AgentState
+from ._helpers import StoresDict  # noqa: F401 – re-exported for backward compat
 
 logger = logging.getLogger(__name__)
-
-
-# ── Typed container ──────────────────────────────────────────────
-
-
-class StoresDict(TypedDict, total=False):
-    """Typed container for shared store instances passed via LangGraph config."""
-
-    multi_forwarder: MultiForwarder
-    resolver: RoleResolver
-    memory_store: SqliteMemoryStore
-    relationship_store: SqliteRelationshipStore
-    vector_store: VectorStore
-    notification_store: NotificationStore | None
-    debug_bus: DebugEventBus | None
-    identity_store: SqliteIdentityStore | None
-    persona_store: SqlitePersonaStore | None
-    lorebook_store: SqliteLorebookStore | None
-    space_policy_store: SqliteSpacePolicyStore | None
-    agent_run_store: AgentRunStore | None
-    _owns_forwarder: bool
 
 
 # ── Infrastructure (must live here for test patching compatibility) ──
