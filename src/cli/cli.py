@@ -16,15 +16,37 @@ from importlib.metadata import version as _get_version
 # ============================================================================
 
 def get_project_root() -> str:
-    """获取项目根目录."""
-    # 优先使用环境变量
-    if os.getenv("MNEMOSYNC_DIR"):
-        return os.getenv("MNEMOSYNC_DIR")
+    """获取项目根目录.
 
-    # 使用脚本所在位置向上查找
+    优先级:
+    1. MNEMOSYNC_DIR 环境变量
+    2. 安装环境 (venv 的父目录, 如 ~/.mnemosync)
+    3. 开发环境 (脚本往上两级)
+    """
+    # 1. 环境变量
+    env_dir = os.getenv("MNEMOSYNC_DIR")
+    if env_dir:
+        return env_dir
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(os.path.dirname(script_dir))
-    return project_root
+
+    # 2. 安装环境: .venv/lib/python3.x/site-packages/src/cli/cli.py
+    #    → .venv 的父目录就是安装根目录
+    if "site-packages" in script_dir:
+        # 从 script_dir 找到 .venv, 再取其父目录
+        parts = script_dir.split(os.sep)
+        for i, part in enumerate(parts):
+            if part == ".venv":
+                return os.sep.join(parts[:i])
+        # fallback: site-packages 往上 5 级 (lib/python3.x/site-packages/src/cli)
+        return os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.dirname(script_dir)
+            )))
+        )
+
+    # 3. 开发环境: src/cli/cli.py → 项目根目录
+    return os.path.dirname(os.path.dirname(script_dir))
 
 
 def is_docker_installed() -> bool:
