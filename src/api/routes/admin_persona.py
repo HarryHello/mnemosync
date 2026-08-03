@@ -806,3 +806,32 @@ async def import_character_card(
         has_lorebook=card.character_book is not None,
         has_examples=bool(card.mes_example),
     )
+
+
+@router.get("/persona/export")
+async def export_persona(request: Request):
+    """导出当前激活人格定义 (JSON 下载).
+
+    返回 PersonaDefinition 序列化后的 JSON, 通过 Content-Disposition 触发下载.
+    无激活人格时返回 404.
+    """
+    from fastapi.responses import Response
+
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    defn = await store.get_active()
+    if defn is None:
+        raise HTTPException(404, "No active persona definition")
+
+    import json as _json
+
+    payload = _json.dumps(defn.to_dict(), ensure_ascii=False, indent=2)
+    filename = f"{defn.name or 'persona'}.json"
+    return Response(
+        content=payload,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )

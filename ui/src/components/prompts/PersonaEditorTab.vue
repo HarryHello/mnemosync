@@ -10,8 +10,15 @@ import {
   createPersonaProfile,
   activatePersonaProfile,
   deletePersonaProfile,
+  importCharacterCard,
+  exportPersona,
 } from '@/api/client'
-import type { PersonaDefinitionRead, PersonaProfileRead, PersonaVersionItem } from '@/types/api'
+import type {
+  CharacterCardPreview,
+  PersonaDefinitionRead,
+  PersonaProfileRead,
+  PersonaVersionItem,
+} from '@/types/api'
 
 const props = defineProps<{
   active: boolean
@@ -48,6 +55,12 @@ const editOverrideScenario = ref('')
 const newProfileDialogVisible = ref(false)
 const newProfileName = ref('')
 const newProfileDesc = ref('')
+
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const importing = ref(false)
+const importDialogVisible = ref(false)
+const importPreview = ref<CharacterCardPreview | null>(null)
+const importSaving = ref(false)
 
 function hydrate(d: PersonaDefinitionRead) {
   definition.value = d
@@ -145,6 +158,64 @@ async function onDeleteProfile(pid: string) {
     await deletePersonaProfile(pid)
     ElMessage.success(`已删除「${profile.name}」`)
     await loadAll()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
+function onPickImportFile() {
+  fileInputRef.value?.click()
+}
+
+async function onImportFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  importing.value = true
+  try {
+    importPreview.value = await importCharacterCard(file)
+    importDialogVisible.value = true
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    importing.value = false
+  }
+}
+
+async function onConfirmImport() {
+  const preview = importPreview.value
+  if (!preview) return
+  importSaving.value = true
+  try {
+    const parsedValues = (preview.identity.values || []).filter(v => v.trim())
+    hydrate(await savePersonaDefinition({
+      name: preview.name || form.name || '导入人格',
+      identity: {
+        personality: preview.identity.personality,
+        speaking_style: preview.identity.speaking_style,
+        values: parsedValues,
+        persona_addressing: preview.identity.persona_addressing || '角色',
+      },
+      space_overrides: {},
+      changelog: `导入角色卡 (${preview.source_format})`,
+    }))
+    form.changelog = ''
+    importDialogVisible.value = false
+    importPreview.value = null
+    ElMessage.success(`已导入角色卡「${preview.name}」`)
+    await loadProfiles()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    importSaving.value = false
+  }
+}
+
+async function onExport() {
+  try {
+    await exportPersona()
+    ElMessage.success('人格已导出')
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   }
@@ -291,9 +362,19 @@ watch(
       </div>
       <div class="head-actions">
         <el-button size="small" @click="newProfileDialogVisible = true">新建人格</el-button>
+        <el-button size="small" :loading="importing" @click="onPickImportFile">导入角色卡</el-button>
+        <el-button size="small" @click="onExport">导出</el-button>
         <el-button size="small" @click="openVersions">版本历史</el-button>
       </div>
     </div>
+
+    <input
+      ref="fileInputRef"
+      type="file"
+      accept=".png,.json,image/png,application/json"
+      style="display: none"
+      @change="onImportFileChange"
+    />
 
     <el-card v-loading="loading || profilesLoading">
       <!-- 人格选择器 -->
@@ -476,6 +557,45 @@ watch(
         </el-form-item>
       </el-form>
     </el-dialog>
+
+    <!-- 导入角色卡预览对话框 -->
+    <el-dialog
+      v-model="importDialogVisible"
+      :title="`导入角色卡: ${importPreview?.name || ''}`"
+      width="560px"
+    >
+      <div v-if="importPreview" class="import-preview">
+        <div class="import-meta">
+          <el-tag size="small">{{ importPreview.source_format }}</el-tag>
+          <el-tag v-if="importPreview.has_lorebook" size="small" type="warning">含世界书</el-tag>
+          <el-tag v-if="importPreview.has_examples" size="small" type="info">含示例对话</el-tag>
+        </div>
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="人格设定">
+            <pre class="mono preview-text">{{ importPreview.identity.personality || '—' }}</pre>
+          </el-descriptions-item>
+          <el-descriptions-item label="说话风格">
+            <pre class="mono preview-text">{{ importPreview.identity.speaking_style || '—' }}</pre>
+          </el-descriptions-item>
+          <el-descriptions-item label="核心价值">
+            <div v-if="importPreview.identity.values.length">
+              <el-tag v-for="v in importPreview.identity.values" :key="v" size="small" style="margin-right: 6px">
+                {{ v }}
+              </el-tag>
+            </div>
+            <span v-else>—</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="人格自称">
+            {{ importPreview.identity.persona_addressing || '角色' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <p class="import-hint">确认后将以新版本保存当前激活人格。</p>
+      </div>
+      <template #footer>
+        <el-button @click="importDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="importSaving" @click="onConfirmImport">确认导入</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -601,5 +721,28 @@ watch(
   color: var(--el-text-color-secondary);
   padding: $space-4;
   text-align: center;
+}
+
+.import-preview {
+  margin-bottom: $space-2;
+
+  .import-meta {
+    display: flex;
+    gap: $space-2;
+    margin-bottom: $space-3;
+  }
+
+  .preview-text {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+  }
+
+  .import-hint {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    margin: $space-3 0 0;
+  }
 }
 </style>

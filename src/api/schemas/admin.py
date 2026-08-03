@@ -549,6 +549,11 @@ class PluginInstallBody(BaseModel):
     download_url: str
 
 
+class PluginProxyBody(BaseModel):
+    """读写插件代理配置请求."""
+    plugin_proxy: str = ""
+
+
 __all__ = [
     "PromptSummary",
     "PromptDetail",

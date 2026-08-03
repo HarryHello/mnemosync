@@ -13,6 +13,10 @@ class ModelInfo(BaseModel):
     object: Literal["model"] = "model"
     created: int = Field(default_factory=lambda: int(time.time()), description="创建时间戳")
     owned_by: str = Field(..., description="模型所有者")
+    # v0.3.5: 模型元数据 (前向兼容, 数据源后续接 role_bindings)
+    context_length: int | None = Field(None, description="上下文长度 (tokens)")
+    capabilities: list[str] | None = Field(None, description="能力标签, 如 [chat, function_calling]")
+    modalities: list[str] | None = Field(None, description="模态, 如 [text, image]")
 
 
 class ModelList(BaseModel):

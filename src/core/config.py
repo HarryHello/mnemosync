@@ -9,6 +9,7 @@ llm_service.db 的 role_bindings 表管理 (由 UI/CLI 增删改).
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,9 @@ LOCAL_CONFIG_PATH = PROJECT_ROOT / "config.local.toml"
 
 # 人格 override 文件路径 (由面板 PUT /panel/admin/persona 写入, 优先级最高)
 PERSONA_OVERRIDE_PATH = PROJECT_ROOT / "data" / "persona_override.toml"
+
+# 插件代理 override 文件路径 (由面板 PUT /identity/plugins/proxy 写入, 优先级最高)
+PLUGIN_PROXY_PATH = PROJECT_ROOT / "data" / "plugin_proxy.toml"
 
 
 @dataclass
@@ -224,6 +228,8 @@ class RuntimeConfig:
     # 身份绑定指令 (用户发消息触发绑定流程的关键词)
     identity_bind_command: str = "绑定"
     identity_bind_confirm_prefix: str = "绑定"  # "绑定 123456" 的前缀
+    # 插件检索/下载代理 (如 https://gh-proxy.org/) 前缀代理, 空表示不使用
+    plugin_proxy: str = ""
 
 
 @dataclass
@@ -300,6 +306,46 @@ def _delete_persona_override() -> bool:
         PERSONA_OVERRIDE_PATH.unlink()
         return True
     return False
+
+
+def get_plugin_proxy() -> str:
+    """获取插件代理配置.
+
+    优先级: data/plugin_proxy.toml (面板写入) > config.local.toml [runtime]
+    plugin_proxy > 环境变量 MNEMOSYNC_PLUGIN_PROXY. 空字符串表示不使用代理.
+    """
+    # 1. 面板写入的 override 文件 (优先级最高)
+    if PLUGIN_PROXY_PATH.exists():
+        try:
+            with open(PLUGIN_PROXY_PATH, "rb") as f:
+                data = tomllib.load(f)
+            val = str(data.get("plugin_proxy", "")).strip()
+            if val:
+                return val
+        except (OSError, tomllib.TOMLDecodeError):
+            pass
+    # 2. config.local.toml [runtime] plugin_proxy
+    try:
+        configured = get_settings().runtime.plugin_proxy
+    except Exception:
+        configured = ""
+    if configured and configured.strip():
+        return configured.strip()
+    # 3. 环境变量
+    return os.environ.get("MNEMOSYNC_PLUGIN_PROXY", "").strip()
+
+
+def set_plugin_proxy(value: str) -> None:
+    """持久化插件代理到 data/plugin_proxy.toml (面板 PUT /identity/plugins/proxy 写入)."""
+    from src.core._toml_write import _escape_basic_string
+
+    PLUGIN_PROXY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PLUGIN_PROXY_PATH.write_text(
+        "# Mnemosync 插件代理 override (由面板 PUT /identity/plugins/proxy 写入)\n"
+        "# 优先级: 本文件 > config.local.toml [runtime] plugin_proxy > 环境变量\n"
+        f'plugin_proxy = "{_escape_basic_string(value.strip())}"\n',
+        encoding="utf-8",
+    )
 
 
 def load_settings() -> Settings:

@@ -20,8 +20,10 @@ from src.core.identity.plugin_manager import (
     AvailablePlugin,
     InstalledPlugin,
     PluginMetadata,
+    _apply_proxy,
     _extract_class_attrs,
     _parse_metadata_from_source,
+    _proxy_url,
     _validate_download_url,
     _validate_file_name,
     remove_plugin,
@@ -112,6 +114,56 @@ class TestValidateDownloadUrl:
 
     def test_accepts_raw_subdomain(self) -> None:
         _validate_download_url("https://raw.githubusercontent.com/org/repo/main/f.py")
+
+    def test_accepts_proxy_domain_with_github_path(self) -> None:
+        with patch("src.core.identity.plugin_manager._proxy_url", return_value="https://gh-proxy.org/"):
+            _validate_download_url(
+                "https://gh-proxy.org/https://raw.githubusercontent.com/HarryHello/mnemosync-plugins/main/a.py"
+            )
+
+    def test_accepts_proxy_domain_with_github_com_path(self) -> None:
+        with patch("src.core.identity.plugin_manager._proxy_url", return_value="https://gh-proxy.org/"):
+            _validate_download_url(
+                "https://gh-proxy.org/https://github.com/HarryHello/mnemosync-plugins/blob/main/a.py"
+            )
+
+    def test_rejects_proxy_domain_with_non_github_path(self) -> None:
+        with patch("src.core.identity.plugin_manager._proxy_url", return_value="https://gh-proxy.org/"):
+            with pytest.raises(ValueError, match="不受信任"):
+                _validate_download_url("https://gh-proxy.org/https://evil.com/malware.py")
+
+    def test_rejects_other_proxy_domain(self) -> None:
+        with patch("src.core.identity.plugin_manager._proxy_url", return_value="https://gh-proxy.org/"):
+            with pytest.raises(ValueError, match="不受信任"):
+                _validate_download_url(
+                    "https://other-proxy.net/https://raw.githubusercontent.com/org/repo/main/a.py"
+                )
+
+
+# ---------------------------------------------------------------------------
+# _proxy_url / _apply_proxy
+# ---------------------------------------------------------------------------
+
+class TestProxyApply:
+    def test_apply_proxy_no_proxy(self) -> None:
+        with patch("src.core.identity.plugin_manager._proxy_url", return_value=None):
+            assert _apply_proxy(
+                "https://raw.githubusercontent.com/HarryHello/mnemosync-plugins/main/a.py"
+            ) == "https://raw.githubusercontent.com/HarryHello/mnemosync-plugins/main/a.py"
+
+    def test_apply_proxy_prefix(self) -> None:
+        with patch("src.core.identity.plugin_manager._proxy_url", return_value="https://gh-proxy.org/"):
+            assert _apply_proxy("https://raw.githubusercontent.com/HarryHello/mnemosync-plugins/main/a.py") == (
+                "https://gh-proxy.org/https://raw.githubusercontent.com/HarryHello/mnemosync-plugins/main/a.py"
+            )
+
+    def test_proxy_url_respects_env(self, monkeypatch) -> None:
+        monkeypatch.setenv("MNEMOSYNC_PLUGIN_PROXY", "https://proxy.example/")
+        assert _proxy_url() == "https://proxy.example/"
+
+    def test_proxy_url_empty_env_returns_none(self, monkeypatch) -> None:
+        monkeypatch.delenv("MNEMOSYNC_PLUGIN_PROXY", raising=False)
+        assert _proxy_url() is None
 
 
 # ---------------------------------------------------------------------------

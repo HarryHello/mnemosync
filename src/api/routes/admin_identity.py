@@ -32,6 +32,7 @@ from src.api.schemas.admin import (
     PluginInfo,
     PluginInstallBody,
     PluginListResponse,
+    PluginProxyBody,
     UserGroupCreateBody,
     UserGroupListResponse,
     UserGroupResponse,
@@ -484,6 +485,26 @@ async def install_plugin(body: PluginInstallBody):
     except Exception as e:
         logger.warning("安装插件失败: %s", e)
         raise HTTPException(502, detail=f"下载失败: {e}")
+
+
+@router.get("/identity/plugins/proxy")
+async def get_plugin_proxy_setting():
+    """读取插件代理配置 (v0.3.1)."""
+    from src.core.config import get_plugin_proxy
+
+    return {"plugin_proxy": get_plugin_proxy()}
+
+
+@router.put("/identity/plugins/proxy")
+async def set_plugin_proxy_setting(body: PluginProxyBody):
+    """持久化插件代理配置 (v0.3.1).
+
+    写入 data/plugin_proxy.toml, 插件检索/下载立即生效.
+    """
+    from src.core.config import get_plugin_proxy, set_plugin_proxy
+
+    set_plugin_proxy(body.plugin_proxy)
+    return {"plugin_proxy": get_plugin_proxy()}
 
 
 @router.delete("/identity/plugins/{file_name:path}")

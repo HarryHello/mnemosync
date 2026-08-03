@@ -1,6 +1,7 @@
 /**Persona API: 人格配置与状态重置. */
 
 import type {
+  CharacterCardPreview,
   PersonaConfigRead,
   PersonaConfigUpdateBody,
   PersonaDefinitionRead,
@@ -13,7 +14,7 @@ import type {
   PersonaResetResponse,
   PersonaVersionListResponse,
 } from '@/types/api'
-import { apiDelete, apiGet, apiPost, apiPut } from './http'
+import { apiDelete, apiGet, apiPost, apiPut, API_BASE, getToken } from './http'
 
 export async function resetPersona(
   body: PersonaResetBody = {},
@@ -109,4 +110,54 @@ export async function deletePersonaProfile(
   return apiDelete<{ success: boolean; persona_id: string }>(
     `/admin/persona/profiles/${personaId}`,
   )
+}
+
+// ============================================================================
+// Persona Import / Export
+// ============================================================================
+
+/**导入角色卡 (SillyTavern V1/V2 PNG/JSON), 返回解析预览. */
+export async function importCharacterCard(file: File): Promise<CharacterCardPreview> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const response = await fetch(`${API_BASE}/admin/persona/import-card`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(error.detail || `HTTP ${response.status}`)
+  }
+  return response.json()
+}
+
+/**导出当前激活人格为 JSON 文件 (触发浏览器下载). */
+export async function exportPersona(): Promise<void> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const response = await fetch(`${API_BASE}/admin/persona/export`, { headers })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(error.detail || `HTTP ${response.status}`)
+  }
+
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'persona.json'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }

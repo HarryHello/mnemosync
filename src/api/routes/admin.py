@@ -24,6 +24,7 @@ from src.api.routes.admin_memories import router as memories_router
 from src.api.routes.admin_notifications import router as notifications_router
 from src.api.routes.admin_persona import router as persona_router
 from src.api.routes.admin_prompts import router as prompts_router
+from src.api.routes.admin_restart import router as restart_router
 from src.api.routes.admin_upstream import router as upstream_router
 from src.api.routes.auth import get_current_user
 
@@ -43,3 +44,4 @@ router.include_router(notifications_router)
 router.include_router(identity_router)
 router.include_router(persona_router)
 router.include_router(agent_runs_router)
+router.include_router(restart_router)

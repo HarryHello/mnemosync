@@ -7,6 +7,7 @@ import {
   createUpstreamService,
   updateUpstreamService,
   deleteUpstreamService,
+  listUpstreamAvailableModels,
 } from '@/api/client'
 import { formatDate } from '@/utils/format'
 import type { UpstreamService } from '@/types/api'
@@ -125,6 +126,28 @@ async function onDelete(row: UpstreamService) {
   }
 }
 
+async function onTest(row: UpstreamService) {
+  try {
+    const { models } = await listUpstreamAvailableModels(row.id)
+    if (!models.length) {
+      ElMessage.success('连接成功, 但未探测到可用模型')
+      return
+    }
+    const list = models.map((m) => `<li class="mono">${m}</li>`).join('')
+    await ElMessageBox.alert(
+      `<ul style="margin:0;padding-left:18px;max-height:320px;overflow:auto">${list}</ul>`,
+      `可用模型 (${row.id})`,
+      {
+        dangerouslyUseHTMLString: true,
+        confirmButtonText: '关闭',
+        customClass: 'test-models-box',
+      },
+    )
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
 onMounted(refresh)
 
 defineExpose({ refresh })
@@ -176,8 +199,12 @@ defineExpose({ refresh })
               <span class="mono muted">{{ formatDate(row.created_at) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="180" fixed="right">
+          <el-table-column label="操作" width="240" fixed="right">
             <template #default="{ row }: { row: UpstreamService }">
+              <el-button link type="primary" @click="onTest(row)">
+                <el-icon><Connection /></el-icon>
+                <span>测试</span>
+              </el-button>
               <el-button link type="primary" @click="openEdit(row)">
                 <el-icon><Edit /></el-icon>
                 <span>编辑</span>
@@ -215,7 +242,7 @@ defineExpose({ refresh })
         <el-form-item label="Base URL" prop="base_url">
           <el-input
             v-model="createForm.base_url"
-            placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            placeholder="https://your-provider.com/v1"
           />
         </el-form-item>
         <el-form-item label="API Key" prop="api_key">

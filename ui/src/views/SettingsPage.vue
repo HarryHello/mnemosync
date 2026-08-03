@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { changePassword, setToken } from '@/api/client'
+import { changePassword, restartService, setToken } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 
@@ -11,6 +11,7 @@ const authStore = useAuthStore()
 
 const formRef = ref<FormInstance | null>(null)
 const submitting = ref(false)
+const restarting = ref(false)
 
 const form = reactive({
   old_password: '',
@@ -54,6 +55,33 @@ async function onSubmit() {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   } finally {
     submitting.value = false
+  }
+}
+
+async function onRestart() {
+  try {
+    await ElMessageBox.confirm(
+      '重启服务会中断当前连接, 请稍后刷新页面。确认重启吗?',
+      '重启服务',
+      {
+        confirmButtonText: '确认重启',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return // 用户取消
+  }
+
+  restarting.value = true
+  try {
+    const res = await restartService()
+    ElMessage.success(res.message || '服务重启中...')
+    ElMessage.info('请稍后重启完成后刷新页面')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    restarting.value = false
   }
 }
 </script>
@@ -126,6 +154,23 @@ async function onSubmit() {
           <el-button type="primary" :loading="submitting" @click="onSubmit">更新密码</el-button>
         </el-form-item>
       </el-form>
+    </el-card>
+
+    <el-card class="section">
+      <template #header>
+        <div class="card-header">
+          <span>服务</span>
+        </div>
+      </template>
+
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        title="重启服务会短暂中断连接"
+        description="重启完成后需要刷新页面重新加载。"
+      />
+      <el-button type="danger" :loading="restarting" @click="onRestart">重启服务</el-button>
     </el-card>
   </div>
 </template>

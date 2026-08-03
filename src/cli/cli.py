@@ -201,6 +201,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             f.write(str(proc.pid))
 
         print(f"🚀 Mnemosync 已启动 (PID: {proc.pid})")
+        print(f"   地址: http://{host}:{port}")
         print(f"   日志: {log_file}")
         print("   停止: mnemosync stop")
         return 0
@@ -375,6 +376,22 @@ def cmd_stop(args: argparse.Namespace) -> int:
     else:
         print("ℹ️  服务未运行")
     return 0
+
+
+def cmd_restart(args: argparse.Namespace) -> int:
+    """重启服务: 停止现有进程, 再后台启动."""
+    # 停止现有服务 (复用 cmd_stop 逻辑)
+    cmd_stop(argparse.Namespace())
+
+    # 后台启动 (复用 cmd_serve 的 daemon 分支)
+    serve_args = argparse.Namespace(
+        host=args.host,
+        port=args.port,
+        daemon=True,
+        debug=args.debug,
+        log_level=args.log_level,
+    )
+    return cmd_serve(serve_args)
 
 
 def cmd_upgrade(args: argparse.Namespace) -> int:
@@ -566,6 +583,14 @@ def main(argv: list[str] | None = None) -> int:
     # ── stop ──
     stop_parser = subparsers.add_parser("stop", help="停止服务 (Docker 模式)")
     stop_parser.set_defaults(func=cmd_stop)
+
+    # ── restart ──
+    restart_parser = subparsers.add_parser("restart", help="重启服务")
+    restart_parser.add_argument("--host", default=None, help="监听地址 (默认: 0.0.0.0)")
+    restart_parser.add_argument("--port", type=int, default=None, help="监听端口 (默认: 16125)")
+    restart_parser.add_argument("--debug", action="store_true", help="调试模式")
+    restart_parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    restart_parser.set_defaults(func=cmd_restart)
 
     # ── ask ──
     ask_parser = subparsers.add_parser("ask", help="命令行直连主对话 (调试用)")

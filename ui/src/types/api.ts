@@ -550,6 +550,14 @@ export interface PersonaVersionListResponse {
   total: number
 }
 
+export interface CharacterCardPreview {
+  name: string
+  source_format: string
+  identity: PersonaIdentityBody
+  has_lorebook: boolean
+  has_examples: boolean
+}
+
 // ============================================================================
 // Persona Profiles (v0.4.0 多人格)
 // ============================================================================
