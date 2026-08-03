@@ -85,14 +85,18 @@ onMounted(refresh)
       :prompt-total-count="promptTotalCount"
     />
 
-    <RelationshipCard class="relationship-card-block" :relationships="relationships" :loading="relationshipLoading" />
+    <SystemHealthCard class="health-card-block" :health="health" :error="healthErr" />
 
-    <SystemHealthCard :health="health" :error="healthErr" />
+    <RelationshipCard class="relationship-card-block" :relationships="relationships" :loading="relationshipLoading" />
   </div>
 </template>
 
 <style lang="scss" scoped>
 .stat-grid-block {
+  margin-bottom: $space-5;
+}
+
+.health-card-block {
   margin-bottom: $space-5;
 }
 

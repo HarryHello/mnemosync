@@ -248,6 +248,23 @@ export interface HealthResponse {
 }
 
 // ============================================================================
+// Backend (Admin)
+// ============================================================================
+
+export interface BackendStatusResponse {
+  running: boolean
+  pid: number | null
+  health: HealthResponse | null
+  port: number
+}
+
+export interface BackendActionResponse {
+  success: boolean
+  message: string
+  running: boolean
+}
+
+// ============================================================================
 // Prompts (Admin)
 // ============================================================================
 
