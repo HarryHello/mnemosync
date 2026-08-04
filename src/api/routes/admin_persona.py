@@ -6,8 +6,9 @@
 """
 
 import logging
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from src.api.deps import (
@@ -27,6 +28,8 @@ from src.api.schemas.admin import (
     PersonaResetBody,
     PersonaResetResponse,
 )
+from src.core.memory.reindex import ReindexProgress
+from src.infra.vector_store import VectorStore
 from src.core.config import (
     _delete_persona_override,
     _load_default_persona,
@@ -37,6 +40,7 @@ from src.core.config import (
 )
 from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.persona_store import SqlitePersonaStore
 from src.persistence.relationship_store import SqliteRelationshipStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
@@ -168,10 +172,10 @@ async def reset_persona(
     body: PersonaResetBody,
     memory_store: SqliteMemoryStore = Depends(get_memory_store),
     relationship_store: SqliteRelationshipStore = Depends(get_relationship_store),
-    vector_store=Depends(get_vector_store),
+    vector_store: VectorStore = Depends(get_vector_store),
     conversation_store: SqliteConversationStore = Depends(get_conversation_store),
-    progress=Depends(get_reindex_progress),
-):
+    progress: ReindexProgress = Depends(get_reindex_progress),
+) -> PersonaResetResponse:
     """把人格状态回退到"新装"级别: 清空长期记忆 (含 PERMANENT) / 关系 / 短期流水 / 向量库.
 
     与 prune 的差异:
@@ -261,13 +265,13 @@ async def reset_persona(
 
 
 @router.get("/persona", response_model=PersonaConfigRead)
-async def get_persona_config():
+async def get_persona_config() -> PersonaConfigRead:
     """获取当前人格配置 (多层合并后). 不返回 TOML 原始内容, 返回解析后的字段."""
     return _build_persona_read()
 
 
 @router.put("/persona", response_model=PersonaConfigRead)
-async def update_persona_config(body: PersonaConfigUpdateBody):
+async def update_persona_config(body: PersonaConfigUpdateBody) -> PersonaConfigRead:
     """写入 data/persona_override.toml, 覆盖人格字段.
 
     三字段都可选传, 但至少传一个. 写入后立即热重载 (调用 _reset_settings).
@@ -297,7 +301,7 @@ async def update_persona_config(body: PersonaConfigUpdateBody):
 
 
 @router.delete("/persona", response_model=PersonaConfigRead)
-async def reset_persona_config():
+async def reset_persona_config() -> PersonaConfigRead:
     """删除 persona override 文件, 回退到 config.local.toml / 资源默认值."""
     _delete_persona_override()
     _reset_settings()
@@ -309,12 +313,12 @@ async def reset_persona_config():
 # ============================================================================
 
 
-def _get_persona_store(request: Request):
+def _get_persona_store(request: Request) -> SqlitePersonaStore:
     return get_persona_store(request)
 
 
 @router.get("/persona/definition", response_model=PersonaDefinitionRead)
-async def get_persona_definition(request: Request):
+async def get_persona_definition(request: Request) -> PersonaDefinitionRead:
     """获取当前激活的结构化人格定义."""
     store = _get_persona_store(request)
     if store is None:
@@ -349,7 +353,7 @@ async def get_persona_definition(request: Request):
 async def save_persona_definition(
     body: PersonaDefinitionSaveBody,
     request: Request,
-):
+) -> PersonaDefinitionRead:
     """保存结构化人格 (创建新版本, 支持改名)."""
     store = _get_persona_store(request)
     if store is None:
@@ -416,7 +420,7 @@ async def list_persona_versions(
     request: Request,
     limit: int = 50,
     persona_id: str | None = None,
-):
+) -> PersonaVersionListResponse:
     """列出版本历史. 可选传入 persona_id 筛选."""
     store = _get_persona_store(request)
     if store is None:
@@ -441,7 +445,7 @@ async def list_persona_versions(
 async def rollback_persona_version(
     version_id: int,
     request: Request,
-):
+) -> dict[str, Any]:
     """回滚到指定人格版本."""
     store = _get_persona_store(request)
     if store is None:
@@ -458,7 +462,7 @@ async def rollback_persona_version(
 
 
 @router.get("/persona/profiles", response_model=PersonaProfileListResponse)
-async def list_persona_profiles(request: Request):
+async def list_persona_profiles(request: Request) -> PersonaProfileListResponse:
     """列出所有人格 profile."""
     store = _get_persona_store(request)
     if store is None:
@@ -482,7 +486,7 @@ async def list_persona_profiles(request: Request):
 async def create_persona_profile(
     body: PersonaProfileCreateBody,
     request: Request,
-):
+) -> PersonaProfileRead:
     """创建新人格 profile, 同时写入初始版本定义 (从默认提示词继承)."""
     store = _get_persona_store(request)
     if store is None:
@@ -533,7 +537,7 @@ async def create_persona_profile(
 async def get_persona_profile(
     persona_id: str,
     request: Request,
-):
+) -> PersonaProfileRead:
     """获取指定人格 profile."""
     store = _get_persona_store(request)
     if store is None:
@@ -556,7 +560,7 @@ async def update_persona_profile(
     persona_id: str,
     body: PersonaProfileUpdateBody,
     request: Request,
-):
+) -> PersonaProfileRead:
     """更新人格 profile (改名/改描述)."""
     store = _get_persona_store(request)
     if store is None:
@@ -588,7 +592,7 @@ async def update_persona_profile(
 async def activate_persona_profile(
     persona_id: str,
     request: Request,
-):
+) -> PersonaProfileRead:
     """切换到指定人格 profile."""
     store = _get_persona_store(request)
     if store is None:
@@ -613,7 +617,7 @@ async def activate_persona_profile(
 async def delete_persona_profile(
     persona_id: str,
     request: Request,
-):
+) -> dict[str, Any]:
     """删除人格 profile 及其所有版本."""
     store = _get_persona_store(request)
     if store is None:
@@ -647,7 +651,7 @@ class SpacePolicyRead(BaseModel):
 @router.get("/space-policies", response_model=list[SpacePolicyRead])
 async def list_space_policies(
     store: SqliteSpacePolicyStore = Depends(get_space_policy_store),
-):
+) -> list[SpacePolicyRead]:
     """列出所有空间策略."""
     policies = await store.list_all()
     return [
@@ -669,7 +673,7 @@ async def list_space_policies(
 async def get_space_policy(
     space_id: str,
     store: SqliteSpacePolicyStore = Depends(get_space_policy_store),
-):
+) -> SpacePolicyRead:
     """获取指定空间策略."""
     policy = await store.get(space_id)
     if policy is None:
@@ -691,7 +695,7 @@ async def upsert_space_policy(
     space_id: str,
     body: SpacePolicyBody,
     store: SqliteSpacePolicyStore = Depends(get_space_policy_store),
-):
+) -> SpacePolicyRead:
     """创建或更新空间策略."""
     from src.persistence.space_policy_store import SpacePolicy
     policy = SpacePolicy(
@@ -718,7 +722,7 @@ async def upsert_space_policy(
 async def delete_space_policy(
     space_id: str,
     store: SqliteSpacePolicyStore = Depends(get_space_policy_store),
-):
+) -> dict[str, Any]:
     """删除空间策略 (回退到默认行为)."""
     ok = await store.delete(space_id)
     if not ok:
@@ -744,8 +748,8 @@ class CharacterCardPreview(BaseModel):
 @router.post("/persona/import-card", response_model=CharacterCardPreview)
 async def import_character_card(
     request: Request,
-    body: dict | None = None,
-):
+    body: dict[str, Any] | None = None,
+) -> CharacterCardPreview:
     """从上传的角色卡文件解析并返回预览.
 
     支持 SillyTavern V1 (PNG) / V2 (PNG tEXt) / JSON 格式。
@@ -810,7 +814,7 @@ async def import_character_card(
 
 
 @router.get("/persona/export")
-async def export_persona(request: Request):
+async def export_persona(request: Request) -> Response:
     """导出当前激活人格定义 (JSON 下载).
 
     返回 PersonaDefinition 序列化后的 JSON, 通过 Content-Disposition 触发下载.

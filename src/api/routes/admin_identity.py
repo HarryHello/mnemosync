@@ -7,6 +7,7 @@
 
 import json
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -39,6 +40,7 @@ from src.api.schemas.admin import (
 )
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
+from src.core.identity.plugin_manager import PluginMetadata
 from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.relationship_store import SqliteRelationshipStore
 
@@ -58,7 +60,7 @@ router = APIRouter(
 @router.get("/identity/strategies", response_model=IdentityStrategyListResponse)
 async def list_identity_strategies(
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> IdentityStrategyListResponse:
     """列出所有身份识别策略."""
     items, total = await store.list_strategies()
     return IdentityStrategyListResponse(
@@ -79,7 +81,7 @@ async def list_identity_strategies(
 async def create_identity_strategy(
     body: IdentityStrategyCreateBody,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> IdentityStrategyResponse:
     """创建身份识别策略."""
     if body.strategy_type not in ("direct", "api_key_bound", "regex", "llm", "plugin"):
         raise HTTPException(400, detail=f"无效策略类型: {body.strategy_type}")
@@ -98,7 +100,7 @@ async def create_identity_strategy(
 async def get_identity_strategy(
     strategy_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> IdentityStrategyResponse:
     """获取单个策略详情."""
     s = await store.get_strategy(strategy_id)
     if s is None:
@@ -116,7 +118,7 @@ async def update_identity_strategy(
     strategy_id: str,
     body: IdentityStrategyUpdateBody,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> IdentityStrategyResponse:
     """更新策略 (名称/配置/启用状态)."""
     s = await store.update_strategy(
         strategy_id,
@@ -138,7 +140,7 @@ async def update_identity_strategy(
 async def generate_strategy_config(
     body: GenerateConfigBody,
     forwarder: MultiForwarder = Depends(get_multi_forwarder),
-):
+) -> GenerateConfigResponse:
     """AI 辅助生成身份策略配置 (v0.3.1).
 
     用户用自然语言描述身份信息在消息中的格式, 模型自动生成合法的策略配置 JSON,
@@ -211,7 +213,7 @@ async def generate_strategy_config(
 async def delete_identity_strategy(
     strategy_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> dict[str, Any]:
     """删除策略."""
     removed = await store.delete_strategy(strategy_id)
     if not removed:
@@ -229,7 +231,7 @@ async def list_actors(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> ActorListResponse:
     """列出所有 Actor."""
     items, total = await store.list_actors(limit=limit, offset=offset)
     return ActorListResponse(
@@ -250,7 +252,7 @@ async def list_actors(
 async def get_actor(
     actor_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> ActorResponse:
     """获取单个 Actor."""
     a = await store.get_actor(actor_id)
     if a is None:
@@ -273,7 +275,7 @@ async def list_user_groups(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> UserGroupListResponse:
     """列出所有 UserGroup."""
     items, total = await store.list_groups(limit=limit, offset=offset)
     return UserGroupListResponse(
@@ -293,7 +295,7 @@ async def list_user_groups(
 async def create_user_group(
     body: UserGroupCreateBody,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> UserGroupResponse:
     """创建 UserGroup."""
     g = await store.create_group(name=body.name)
     return UserGroupResponse(
@@ -307,7 +309,7 @@ async def create_user_group(
 async def get_user_group(
     group_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> UserGroupResponse:
     """获取单个 UserGroup."""
     g = await store.get_group(group_id)
     if g is None:
@@ -323,7 +325,7 @@ async def get_user_group(
 async def list_group_members(
     group_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> ActorListResponse:
     """列出 UserGroup 的所有成员 Actor."""
     members = await store.list_group_members(group_id)
     return ActorListResponse(
@@ -351,7 +353,7 @@ async def bind_actor_to_group(
     group_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
     relationship_store: SqliteRelationshipStore = Depends(get_relationship_store),
-):
+) -> dict[str, Any]:
     """绑定 Actor 到 UserGroup.
 
     绑定后自动迁移 Actor 的现有关系数据到 UserGroup, 防止同一人出现
@@ -377,7 +379,7 @@ async def unbind_actor_from_group(
     actor_id: str,
     group_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> dict[str, Any]:
     """解绑 Actor 从 UserGroup."""
     ok = await store.unbind_actor_from_group(actor_id, group_id)
     if not ok:
@@ -389,7 +391,7 @@ async def unbind_actor_from_group(
 async def list_actor_groups(
     actor_id: str,
     store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> UserGroupListResponse:
     """列出 Actor 所属的所有 UserGroup."""
     groups = await store.list_actor_groups(actor_id)
     return UserGroupListResponse(
@@ -408,7 +410,7 @@ async def list_actor_groups(
 @router.get("/identity/plugins", response_model=PluginListResponse)
 async def list_identity_plugins(
     request: Request,
-):
+) -> PluginListResponse:
     """列出所有已发现的身份解析插件."""
     plugins = getattr(request.app.state, "identity_plugins", None) or {}
     items = [
@@ -418,7 +420,7 @@ async def list_identity_plugins(
     return PluginListResponse(items=items, total=len(items))
 
 
-def _metadata_fields(metadata) -> dict:
+def _metadata_fields(metadata: PluginMetadata | None) -> dict[str, str]:
     """从 PluginMetadata 提取 schema 字段."""
     if metadata is None:
         return {"name": "", "description": "", "version": "", "author": ""}
@@ -431,7 +433,7 @@ def _metadata_fields(metadata) -> dict:
 
 
 @router.get("/identity/plugins/available", response_model=AvailablePluginListResponse)
-async def list_available_plugins():
+async def list_available_plugins() -> AvailablePluginListResponse:
     """从远程源列出可用插件.
 
     通过 GitHub API 获取插件源仓库的文件列表，解析每个插件的元数据。
@@ -455,7 +457,7 @@ async def list_available_plugins():
 
 
 @router.get("/identity/plugins/installed", response_model=InstalledPluginListResponse)
-async def list_installed_plugins():
+async def list_installed_plugins() -> InstalledPluginListResponse:
     """列出本地已安装的插件 (含元数据)."""
     from src.core.identity.plugin_manager import list_installed
 
@@ -470,7 +472,7 @@ async def list_installed_plugins():
 
 
 @router.post("/identity/plugins/install", status_code=201)
-async def install_plugin(body: PluginInstallBody):
+async def install_plugin(body: PluginInstallBody) -> dict[str, Any]:
     """从远程源安装插件.
 
     下载 .py 文件到 plugins/ 目录，重启后自动生效。
@@ -488,7 +490,7 @@ async def install_plugin(body: PluginInstallBody):
 
 
 @router.get("/identity/plugins/proxy")
-async def get_plugin_proxy_setting():
+async def get_plugin_proxy_setting() -> dict[str, Any]:
     """读取插件代理配置 (v0.3.1)."""
     from src.core.config import get_plugin_proxy
 
@@ -496,7 +498,7 @@ async def get_plugin_proxy_setting():
 
 
 @router.put("/identity/plugins/proxy")
-async def set_plugin_proxy_setting(body: PluginProxyBody):
+async def set_plugin_proxy_setting(body: PluginProxyBody) -> dict[str, Any]:
     """持久化插件代理配置 (v0.3.1).
 
     写入 data/plugin_proxy.toml, 插件检索/下载立即生效.
@@ -508,7 +510,7 @@ async def set_plugin_proxy_setting(body: PluginProxyBody):
 
 
 @router.delete("/identity/plugins/{file_name:path}")
-async def remove_plugin(file_name: str):
+async def remove_plugin(file_name: str) -> dict[str, Any]:
     """删除已安装的插件.
 
     删除后需要重启才能生效 (插件实例仍驻留内存)。

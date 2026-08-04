@@ -4,6 +4,7 @@ import signal
 import sys
 import termios
 import tty
+from typing import Any
 
 # 全局退出标志
 _exit_requested = False
@@ -13,7 +14,7 @@ def secure_input(prompt: str = "") -> str:
     """安全输入，显示星号代替字符."""
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
-    chars = []
+    chars: list[str] = []
 
     try:
         tty.setraw(fd)
@@ -50,11 +51,11 @@ def mask_api_key(key: str) -> str:
     return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
 
 
-def setup_exit_handler():
+def setup_exit_handler() -> None:
     """设置全局退出处理器."""
     global _exit_requested
 
-    def signal_handler(sig, frame):
+    def signal_handler(sig: int, frame: Any) -> None:
         _exit_requested = True
         raise KeyboardInterrupt("Ctrl+C pressed")
 
@@ -62,7 +63,7 @@ def setup_exit_handler():
     signal.signal(signal.SIGTERM, signal_handler)
 
 
-def check_exit_requested():
+def check_exit_requested() -> bool:
     """检查是否请求退出."""
     if _exit_requested:
         print("\n\n👋 Exiting CLI (Mnemosync service keeps running in background).\n")

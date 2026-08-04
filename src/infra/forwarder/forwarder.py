@@ -16,7 +16,8 @@ import os
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from types import TracebackType
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -29,7 +30,7 @@ from .debug_hook import get_debug_bus
 logger = logging.getLogger(__name__)
 
 
-def _emit_debug(direction: str, url: str, **fields) -> str | None:
+def _emit_debug(direction: str, url: str, **fields: Any) -> str | None:
     bus = get_debug_bus()
     if bus is None or not bus.should_emit():
         return None
@@ -47,7 +48,7 @@ def _emit_debug(direction: str, url: str, **fields) -> str | None:
     )
 
 
-def _log_upstream(direction: str, base_url: str, data: Any, status: int | None = None):
+def _log_upstream(direction: str, base_url: str, data: Any, status: int | None = None) -> None:
     """记录上游请求/响应到日志 (DEBUG 级别).
 
     仅当 MNEMOSYNC_DEBUG=1 时输出, 与 serve --debug 共用同一开关.
@@ -130,11 +131,11 @@ class Forwarder:
         model: str | None = None,
         temperature: float = 1.0,
         max_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        tool_choice: str | dict | None = None,
-        response_format: dict | None = None,
-        extra_body: dict | None = None,
-        **kwargs,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """非流式对话. 支持 function_call.
 
@@ -188,7 +189,7 @@ class Forwarder:
                 body=result,
             )
 
-            return result
+            return cast(dict[str, Any], result)
         except httpx.HTTPStatusError as e:
             _log_upstream("ERROR", self.config.base_url, {"error": e.response.text}, status=e.response.status_code)
             _emit_debug(
@@ -218,7 +219,7 @@ class Forwarder:
         model: str | None = None,
         temperature: float = 1.0,
         max_tokens: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> AsyncIterator[bytes]:
         """流式对话, yield SSE 原始字节.
 
@@ -396,7 +397,7 @@ class Forwarder:
                 for r in results:
                     if "document" not in r or r.get("document") is None:
                         r["document"] = documents[r["index"]]
-                return results
+                return cast(list[dict[str, Any]], results)
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404 and endpoint == "/rerank":
                     continue
@@ -431,7 +432,12 @@ class Forwarder:
     async def __aenter__(self) -> Forwarder:
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         await self.close()
 
 
@@ -443,7 +449,7 @@ class StreamResult:
     """
 
     text: str
-    tool_calls: list[dict] | None  # 累积合并后的完整 tool_calls; None = 无工具调用
+    tool_calls: list[dict[str, Any]] | None  # 累积合并后的完整 tool_calls; None = 无工具调用
     finish_reason: str | None
 
 
@@ -462,7 +468,7 @@ def parse_sse_stream_full(chunks: list[bytes]) -> StreamResult:
     同一 index 的 function.arguments 按帧顺序拼接, 处理跨帧分片.
     """
     content_parts: list[str] = []
-    tool_calls: dict[int, dict] = {}
+    tool_calls: dict[int, dict[str, Any]] = {}
     finish_reason: str | None = None
 
     # HTTP 分块边界可能切在 JSON 或 UTF-8 字符中; 先合并原始字节再解码.
@@ -510,7 +516,7 @@ def parse_sse_stream_full(chunks: list[bytes]) -> StreamResult:
         except (json.JSONDecodeError, KeyError, IndexError):
             continue
 
-    result_tool_calls: list[dict] | None = None
+    result_tool_calls: list[dict[str, Any]] | None = None
     if tool_calls:
         result_tool_calls = [tool_calls[i] for i in sorted(tool_calls)]
 

@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import aiosqlite
 
@@ -376,7 +378,7 @@ class SqliteConversationStore(SqliteStore):
     ) -> list[ConversationTurn]:
         """列出同一逻辑交互中的所有事件."""
         where = "interaction_id = ?"
-        params: list = [interaction_id]
+        params: list[str] = [interaction_id]
         if event_type:
             where += " AND event_type = ?"
             params.append(event_type)
@@ -408,15 +410,15 @@ class SqliteConversationStore(SqliteStore):
                 "ORDER BY ts DESC LIMIT ?",
                 (space_id, limit),
             ) as cur:
-                rows = await cur.fetchall()
+                rows = list(await cur.fetchall())
                 return rows[0][0] if rows else None
 
     async def list_recent_interactions(
         self, *, limit: int = 20, space_id: str | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """列出最近的逻辑交互摘要 (interaction_id, 事件数, 时间范围, 是否含工具调用)."""
         where = "interaction_id IS NOT NULL"
-        params: list = []
+        params: list[Any] = []
         if space_id:
             where += " AND space_id = ?"
             params.append(space_id)
@@ -443,7 +445,7 @@ class SqliteConversationStore(SqliteStore):
             for r in rows
         ]
 
-    async def get_evaluation_stats(self, *, limit: int = 500) -> dict:
+    async def get_evaluation_stats(self, *, limit: int = 500) -> dict[str, Any]:
         """聚合评估维度统计数据.
 
         从 conversation_turns 中计算:
@@ -459,8 +461,8 @@ class SqliteConversationStore(SqliteStore):
                 f"ORDER BY ts DESC LIMIT {int(limit)}"
             ) as cur:
                 row = await cur.fetchone()
-                avg_len = row[0] or 0.0
-                reply_count = row[1] or 0
+                avg_len = row[0] if row else 0.0
+                reply_count = row[1] if row else 0
 
             # 工具调用按名称分组
             async with db.execute(
@@ -479,8 +481,8 @@ class SqliteConversationStore(SqliteStore):
                 "FROM conversation_turns WHERE interaction_id IS NOT NULL"
             ) as cur:
                 row = await cur.fetchone()
-                interaction_count = row[0] or 0
-                interactions_with_tools = row[1] or 0
+                interaction_count = row[0] if row else 0
+                interactions_with_tools = row[1] if row else 0
 
         return {
             "avg_reply_length": round(avg_len, 1),
@@ -498,7 +500,7 @@ class SqliteConversationStore(SqliteStore):
         limit: int = DEFAULT_LIST_LIMIT,
     ) -> list[ConversationTurn]:
         where = "space_id = ?"
-        params: list = [space_id]
+        params: list[Any] = [space_id]
         if since is not None:
             where += " AND ts >= ?"
             params.append(since.isoformat())
@@ -580,7 +582,7 @@ class SqliteConversationStore(SqliteStore):
             default_col="ts",
         )
         where: list[str] = []
-        params: list = []
+        params: list[Any] = []
         filters = (
             ("role", role if role in ("user", "assistant") else None),
             ("source_frontend", source_frontend),
@@ -690,7 +692,7 @@ class SqliteConversationStore(SqliteStore):
                 return row[0] if row else 0
 
     @staticmethod
-    def _row_to_turn(row: tuple) -> ConversationTurn:
+    def _row_to_turn(row: Sequence[Any]) -> ConversationTurn:
         ts = datetime.fromisoformat(row[3]) if row[3] else datetime.now(UTC)
         observed_at = datetime.fromisoformat(row[16]) if row[16] else ts
         return ConversationTurn(

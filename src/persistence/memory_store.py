@@ -6,6 +6,7 @@ SQLite 存储记忆元数据 + 关系状态.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -188,7 +189,7 @@ class SqliteMemoryStore(SqliteStore):
         custom_policies) 由调用方走 AudienceFilter.filter 完成。
         """
         conditions = ["visibility = 'public'"]
-        params: list = []
+        params: list[Any] = []
         if source_user:
             conditions.append("source_user = ?")
             params.append(source_user)
@@ -391,7 +392,7 @@ class SqliteMemoryStore(SqliteStore):
         )
 
         where = ["is_forgotten = 0", "superseded_by IS NULL"]
-        params: list = []
+        params: list[Any] = []
         if source_user:
             where.insert(0, "source_user = ?")
             params.append(source_user)
@@ -441,7 +442,7 @@ class SqliteMemoryStore(SqliteStore):
             ) as cur:
                 return [row[0] for row in await cur.fetchall()]
 
-    async def iter_all(self, batch_size: int = 200):
+    async def iter_all(self, batch_size: int = 200) -> AsyncIterator[MemoryEntry]:
         """按 created_at 升序分批产出所有记忆 (含遗忘). 用于 reindex/prune 遍历."""
         offset = 0
         while True:
@@ -450,7 +451,7 @@ class SqliteMemoryStore(SqliteStore):
                     "SELECT * FROM memory_entries ORDER BY created_at ASC LIMIT ? OFFSET ?",
                     (batch_size, offset),
                 ) as cursor:
-                    rows = await cursor.fetchall()
+                    rows = list(await cursor.fetchall())
             if not rows:
                 break
             for r in rows:
@@ -470,7 +471,7 @@ class SqliteMemoryStore(SqliteStore):
 
     # ============ 工具方法 ============
 
-    def _row_to_entry(self, row: tuple) -> MemoryEntry:
+    def _row_to_entry(self, row: Sequence[Any]) -> MemoryEntry:
         return MemoryEntry(
             id=row[0],
             content=row[1],

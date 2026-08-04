@@ -12,7 +12,8 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from starlette.middleware.base import BaseHTTPMiddleware, _StreamingResponse
 from starlette.requests import Request
@@ -27,7 +28,12 @@ DEFAULT_RETENTION_DAYS = 7
 DEFAULT_MAX_RECORDS = 10000
 
 
-def _log_debug(method: str, direction: str, url: str, headers: dict = None, body: any = None, status: int = None):
+def _log_debug(
+    method: str, direction: str, url: str,
+    headers: dict[str, Any] | None = None,
+    body: Any = None,
+    status: int | None = None,
+) -> None:
     """通过标准 logger 输出调试请求/响应信息."""
     extra: dict[str, object] = {
         "direction": direction,
@@ -52,11 +58,13 @@ def _truncate_json(obj: object, max_len: int) -> str:
 class HttpLogMiddleware(BaseHTTPMiddleware):
     """HTTP 请求日志中间件 (纯 async, 非阻塞入队)."""
 
-    def __init__(self, app, debug: bool = False):
+    def __init__(self, app: Any, debug: bool = False):
         super().__init__(app)
         self.debug = debug or os.getenv("MNEMOSYNC_DEBUG") == "1"
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         skip_paths = ("/health", "/docs", "/openapi.json", "/redoc")
         skip_extensions = (".js", ".css", ".ico", ".png", ".jpg", ".svg", ".woff", ".woff2", ".ttf")
 
@@ -157,7 +165,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                 })
             return response
 
-        def _log(response_body):
+        def _log(response_body: Any) -> None:
             if self.debug:
                 _log_debug(
                     request.method,
@@ -199,7 +207,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         if isinstance(response, (_StreamingResponse, StreamingResponse)):
             body_chunks: list[bytes] = []
             async for chunk in response.body_iterator:
-                body_chunks.append(chunk)
+                body_chunks.append(cast(bytes, chunk))
 
             body_bytes = b"".join(body_chunks)
             response_body = None
@@ -223,7 +231,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         response_body = None
         if "json" in content_type:
             try:
-                body = response.body
+                body = cast(bytes, response.body)
                 if body:
                     response_body = json.loads(body.decode("utf-8", errors="replace"))
             except Exception:

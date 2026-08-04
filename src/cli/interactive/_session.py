@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import os
+from typing import Any
 
 from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.api_key_store import SqliteApiKeyStore
@@ -45,22 +46,22 @@ class MnemosyncCLI(
 ╰───────────────────────────────────────────────────────────────╯
 """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.auth_db = SqliteAuthStore(os.getenv("AUTH_DB_PATH", "data/auth.db"))
         self.api_key_db = SqliteApiKeyStore(os.getenv("MNEMOSYNC_DB_PATH", "data/api_keys.db"))
         llm_db = os.getenv("LLM_SERVICE_DB_PATH", "data/llm_service.db")
         self.llm_service_store = LLMServiceStore(llm_db)
-        self.current_user = None
-        self.current_password = None
+        self.current_user: Any = None
+        self.current_password: str | None = None
         self.running = True
 
-    async def init_db(self):
+    async def init_db(self) -> None:
         """初始化数据库."""
         await self.auth_db.init_db()
         await self.api_key_db.init_db()
         await self.llm_service_store.init_db()
 
-    def print_help(self):
+    def print_help(self) -> None:
         """打印帮助信息."""
         help_text = """
 Usage: COMMAND [OPTIONS]
@@ -168,7 +169,7 @@ Persona State (v0.2.7, via panel HTTP):
 
         return False
 
-    async def change_credentials(self):
+    async def change_credentials(self) -> None:
         """修改账号密码."""
         print("Please change your account and password.")
 
@@ -210,6 +211,8 @@ Persona State (v0.2.7, via panel HTTP):
                 continue
 
             try:
+                assert self.current_user is not None
+                assert self.current_password is not None
                 await self.auth_db.change_username_and_password(
                     self.current_user.id,
                     self.current_password,
@@ -222,21 +225,21 @@ Persona State (v0.2.7, via panel HTTP):
             except Exception as e:
                 print(f"❌ Failed to change credentials: {e}\n")
 
-    async def cmd_logout(self):
+    async def cmd_logout(self) -> None:
         """登出."""
         print("\n👋 Logout Mnemosync CLI.\n")
         self.running = False
 
-    async def cmd_stop(self):
+    async def cmd_stop(self) -> None:
         """停止服务（预留）."""
         print("\n🛑 Stopping Mnemosync server...\n")
         self.running = False
 
-    async def cmd_help(self):
+    async def cmd_help(self) -> None:
         """显示帮助."""
         self.print_help()
 
-    async def run(self):
+    async def run(self) -> None:
         """运行 CLI."""
         setup_exit_handler()
 
@@ -262,7 +265,7 @@ Persona State (v0.2.7, via panel HTTP):
                 pass
 
 
-async def main():
+async def main() -> None:
     """主入口."""
     cli = MnemosyncCLI()
     await cli.run()
