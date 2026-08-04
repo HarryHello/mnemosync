@@ -9,6 +9,10 @@ const props = defineProps<{
   error: string | null
 }>()
 
+const emit = defineEmits<{
+  'backend-started': []
+}>()
+
 const backendStatus = ref<BackendStatusResponse | null>(null)
 const backendError = ref<string | null>(null)
 const backendLoading = ref(false)
@@ -43,7 +47,7 @@ async function refreshBackendStatus() {
   }
 }
 
-async function runAction(action: () => Promise<{ message: string }>) {
+async function runAction(action: () => Promise<{ message: string }>, pollUntilRunning = false) {
   actionLoading.value = true
   try {
     const res = await action()
@@ -52,12 +56,22 @@ async function runAction(action: () => Promise<{ message: string }>) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   } finally {
     actionLoading.value = false
-    await refreshBackendStatus()
+    if (pollUntilRunning) {
+      // 轮询等待后端就绪 (最多 10 秒)
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 1000))
+        await refreshBackendStatus()
+        if (running.value) break
+      }
+      if (running.value) emit('backend-started')
+    } else {
+      await refreshBackendStatus()
+    }
   }
 }
 
 function handleStart() {
-  return runAction(() => startBackend())
+  return runAction(() => startBackend(), true)
 }
 
 function handleStop() {
@@ -65,7 +79,7 @@ function handleStop() {
 }
 
 function handleRestart() {
-  return runAction(() => restartBackend())
+  return runAction(() => restartBackend(), true)
 }
 
 onMounted(refreshBackendStatus)
@@ -97,11 +111,13 @@ onMounted(refreshBackendStatus)
               type="danger"
               size="small"
               @click="handleStop"
+              round
             >停止</el-button>
             <el-button
               :loading="actionLoading"
               size="small"
               @click="handleRestart"
+              round
             >重启</el-button>
           </template>
         </div>

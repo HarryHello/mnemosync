@@ -85,7 +85,12 @@ onMounted(refresh)
       :prompt-total-count="promptTotalCount"
     />
 
-    <SystemHealthCard class="health-card-block" :health="health" :error="healthErr" />
+    <SystemHealthCard
+      class="health-card-block"
+      :health="health"
+      :error="healthErr"
+      @backend-started="refresh"
+    />
 
     <RelationshipCard class="relationship-card-block" :relationships="relationships" :loading="relationshipLoading" />
   </div>
