@@ -32,7 +32,8 @@ from src.infra.llm_service.models import ModelType
 if TYPE_CHECKING:
     from src.core.memory.reindex import ReindexProgress
     from src.infra.vector_store import VectorStore
-    from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+    from src.persistence.memory_store import SqliteMemoryStore
+    from src.persistence.relationship_store import SqliteRelationshipStore
     from src.persistence.notification_store import NotificationStore
 
 logger = logging.getLogger(__name__)

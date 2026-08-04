@@ -36,7 +36,8 @@ from src.core.config import (
     get_settings,
 )
 from src.persistence.conversation_store import SqliteConversationStore
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 # ============================================================================

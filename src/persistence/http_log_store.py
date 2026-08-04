@@ -99,6 +99,18 @@ class HttpLogStore(SqliteStore):
         except asyncio.QueueFull:
             logger.warning("http_log queue full, dropping entry")
 
+    async def flush_sync(self) -> None:
+        """阻塞直到队列中已入队的所有条目都写盘.
+
+        供测试与需要"写后读"一致性的场景使用. 在队尾入队一个 flush 标记,
+        由 writer 处理完它 (FIFO 保证标记之前的所有条目都已落盘) 后唤醒.
+        """
+        if self._queue is None or self._writer_task is None:
+            return
+        event = asyncio.Event()
+        await self._queue.put({"__flush_request__": event})
+        await asyncio.wait_for(event.wait(), timeout=5.0)
+
     async def _get_writer_conn(self) -> aiosqlite.Connection:
         """Return a long-lived writer connection, creating it on first use."""
         if self._writer_conn is None:
@@ -121,6 +133,10 @@ class HttpLogStore(SqliteStore):
                 if first.get("__sentinel__"):
                     await self._flush(batch)
                     return
+                if first.get("__flush_request__"):
+                    await self._flush(batch)
+                    first["__flush_request__"].set()
+                    continue
                 batch.append(first)
                 # 尽量凑齐一批
                 while len(batch) < self._BATCH_SIZE:
@@ -131,6 +147,11 @@ class HttpLogStore(SqliteStore):
                     if item.get("__sentinel__"):
                         await self._flush(batch)
                         return
+                    if item.get("__flush_request__"):
+                        await self._flush(batch)
+                        item["__flush_request__"].set()
+                        batch.clear()
+                        break
                     batch.append(item)
                 await self._flush(batch)
                 batch.clear()

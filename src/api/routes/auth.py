@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from src.api.constants import ACCESS_TOKEN_EXPIRE_SECONDS
 from src.api.deps import get_auth_store
 from src.persistence.auth_store import SqliteAuthStore, User
 
@@ -132,7 +133,7 @@ async def login(
     return LoginResponse(
         access_token=session.raw_token,
         token_type="bearer",
-        expires_in=86400,
+        expires_in=ACCESS_TOKEN_EXPIRE_SECONDS,
         must_change_password=user.must_change_password,
         username=user.username,
     )

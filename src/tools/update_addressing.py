@@ -16,7 +16,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from src.persistence.memory_store import SqliteRelationshipStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 _MIN_REASON_LEN = 10
 

@@ -1,12 +1,10 @@
 """测试 HttpLogStore 的写入、查询和清理.
 
 HttpLogStore 使用后台批量写盘 (enqueue + writer_loop),
-测试中通过 await asyncio.sleep() 等待 writer flush.
+测试中通过 store.flush_sync() 确定性等待 writer flush.
 """
 
 from __future__ import annotations
-
-import asyncio
 
 import pytest
 from src.persistence.http_log_store import HttpLogStore
@@ -41,8 +39,7 @@ def _make_entry(
 
 async def _flush_and_wait(store: HttpLogStore) -> None:
     """Wait for the background writer to flush the queue."""
-    # Give the writer_loop time to process the batch
-    await asyncio.sleep(1.0)
+    await store.flush_sync()
 
 
 # ─── 写入 + 查询 ───────────────────────────────────────

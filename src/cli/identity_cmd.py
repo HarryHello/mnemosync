@@ -24,7 +24,7 @@ from src.cli.cli import get_project_root
 from src.core.config import get_settings
 from src.core.constants import DEFAULT_PERSONA_ID
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteRelationshipStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 _IDENTITY_DB_PATH = "data/identity.db"
 

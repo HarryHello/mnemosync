@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import AsyncIterator
@@ -24,6 +25,8 @@ from src.infra.debug_context import get_agent_name, get_correlation_id
 
 from .connection_pool import ConnectionPool
 from .debug_hook import get_debug_bus
+
+logger = logging.getLogger(__name__)
 
 
 def _emit_debug(direction: str, url: str, **fields) -> str | None:
@@ -44,29 +47,25 @@ def _emit_debug(direction: str, url: str, **fields) -> str | None:
     )
 
 
-def _print_upstream(direction: str, base_url: str, data: Any, status: int = None):
-    """打印上游请求/响应到控制台."""
-    colors = {
-        "REQUEST": "\033[95m",   # 紫色 (Mnemosync → LLM)
-        "RESPONSE": "\033[92m",  # 绿色 (LLM → Mnemosync)
-        "ERROR": "\033[91m",     # 红色
-        "TIMEOUT": "\033[93m",   # 黄色
-        "RESET": "\033[0m",
-    }
+def _log_upstream(direction: str, base_url: str, data: Any, status: int | None = None):
+    """记录上游请求/响应到日志 (DEBUG 级别).
 
-    color = colors.get(direction, colors["RESET"])
-    reset = colors["RESET"]
-
-    print(f"\n{color}{'='*60}")
-    print(f"[UPSTREAM {direction}] {base_url}")
-    if status:
-        print(f"  Status: {status}")
+    仅当 MNEMOSYNC_DEBUG=1 时输出, 与 serve --debug 共用同一开关.
+    """
+    if os.getenv("MNEMOSYNC_DEBUG") != "1":
+        return
     if isinstance(data, dict) or isinstance(data, list):
         data_str = json.dumps(data, indent=2, ensure_ascii=False)
     else:
         data_str = str(data)
-    print(f"  Data: {data_str[:2000]}")
-    print(f"{'='*60}{reset}\n")
+    status_str = str(status) if status is not None else "-"
+    logger.debug(
+        "[UPSTREAM %s] %s\nStatus: %s\nData: %s",
+        direction,
+        base_url,
+        status_str,
+        data_str[:2000],
+    )
 
 
 class UpstreamError(Exception):
@@ -164,9 +163,8 @@ class Forwarder:
         client = await self._get_client()
         chat_url = f"{self.config.base_url}/chat/completions"
 
-        # Debug: 打印上游请求
-        if os.getenv("MNEMOSYNC_DEBUG") == "1":
-            _print_upstream("REQUEST", self.config.base_url, payload)
+        # Debug: 记录上游请求
+        _log_upstream("REQUEST", self.config.base_url, payload)
         _emit_debug("upstream_request", chat_url, method="POST", body=payload)
 
         started = time.time()
@@ -179,9 +177,8 @@ class Forwarder:
             resp.raise_for_status()
             result = resp.json()
 
-            # Debug: 打印上游响应
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                _print_upstream("RESPONSE", self.config.base_url, result, status=resp.status_code)
+            # Debug: 记录上游响应
+            _log_upstream("RESPONSE", self.config.base_url, result, status=resp.status_code)
             _emit_debug(
                 "upstream_response",
                 chat_url,
@@ -193,8 +190,7 @@ class Forwarder:
 
             return result
         except httpx.HTTPStatusError as e:
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                _print_upstream("ERROR", self.config.base_url, {"error": e.response.text}, status=e.response.status_code)
+            _log_upstream("ERROR", self.config.base_url, {"error": e.response.text}, status=e.response.status_code)
             _emit_debug(
                 "upstream_response",
                 chat_url,
@@ -205,8 +201,7 @@ class Forwarder:
             )
             raise UpstreamError(e.response.status_code, e.response.text) from e
         except httpx.TimeoutException as e:
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                _print_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
+            _log_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
             _emit_debug(
                 "upstream_response",
                 chat_url,
@@ -245,9 +240,8 @@ class Forwarder:
         client = await self._get_client()
         stream_url = f"{self.config.base_url}/chat/completions"
 
-        # Debug: 打印上游请求
-        if os.getenv("MNEMOSYNC_DEBUG") == "1":
-            _print_upstream("REQUEST (STREAM)", self.config.base_url, payload)
+        # Debug: 记录上游请求
+        _log_upstream("REQUEST (STREAM)", self.config.base_url, payload)
         event_id = _emit_debug(
             "upstream_request", stream_url, method="POST", body=payload
         )
@@ -283,10 +277,8 @@ class Forwarder:
                         duration_ms=(time.time() - started) * 1000,
                     )
         except httpx.HTTPStatusError as e:
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                body = await e.response.aread()
-                _print_upstream("ERROR", self.config.base_url, {"error": body.decode()}, status=e.response.status_code)
             body = await e.response.aread()
+            _log_upstream("ERROR", self.config.base_url, {"error": body.decode()}, status=e.response.status_code)
             if event_id and bus is not None:
                 bus.finalize_stream(
                     event_id,
@@ -296,8 +288,7 @@ class Forwarder:
                 )
             raise UpstreamError(e.response.status_code, body.decode()) from e
         except httpx.TimeoutException as e:
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                _print_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
+            _log_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
             if event_id and bus is not None:
                 bus.finalize_stream(
                     event_id,

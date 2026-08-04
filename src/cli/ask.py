@@ -102,7 +102,8 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
     from src.infra.llm_service.models import ModelType
     from src.infra.llm_service.store import LLMServiceStore
     from src.infra.vector_store import VectorStore
-    from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+    from src.persistence.memory_store import SqliteMemoryStore
+    from src.persistence.relationship_store import SqliteRelationshipStore
     from src.tools import MemoryRetriever
 
     settings = get_settings()

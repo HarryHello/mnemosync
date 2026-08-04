@@ -18,7 +18,8 @@ from src.api.routes.auth import get_current_user
 from src.api.state import AppState
 from src.core.memory.models import Relationship
 from src.persistence.auth_store import User
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 
 @pytest.fixture

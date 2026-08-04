@@ -62,7 +62,7 @@ async def memory_store():
 @pytest.fixture
 async def relationship_store():
     """In-memory SqliteRelationshipStore for testing."""
-    from src.persistence.memory_store import SqliteRelationshipStore
+    from src.persistence.relationship_store import SqliteRelationshipStore
 
     store = SqliteRelationshipStore(":memory:")
     await store.connect()

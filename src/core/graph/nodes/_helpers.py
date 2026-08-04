@@ -13,7 +13,8 @@ from src.core.models.resolver import RoleResolver
 from src.core.utils import last_user_message
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.vector_store import VectorStore
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 from src.persistence.notification_store import NotificationStore
 
 if TYPE_CHECKING:

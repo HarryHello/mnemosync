@@ -30,7 +30,8 @@ from src.core.memory.reindex import ReindexProgress, ReindexState
 from src.infra.vector_store import VectorStore
 from src.persistence.auth_store import User
 from src.persistence.conversation_store import SqliteConversationStore
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 NOW = datetime(2026, 7, 18, tzinfo=UTC)
 

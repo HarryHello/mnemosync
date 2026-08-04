@@ -40,7 +40,7 @@ from src.api.schemas.admin import (
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.llm_service.models import ModelType
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteRelationshipStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 logger = logging.getLogger(__name__)
 
