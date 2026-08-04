@@ -57,6 +57,8 @@ class SqliteLorebookStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS lorebook_entries (
                 id TEXT PRIMARY KEY,
@@ -69,10 +71,16 @@ class SqliteLorebookStore(SqliteStore):
                 updated_at TIMESTAMP NOT NULL
             )
         """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_lorebook_space "
-            "ON lorebook_entries(space_id)"
-        )
+
+        async def _idx_space(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_lorebook_space "
+                "ON lorebook_entries(space_id)"
+            )
+
+        await MigrationRunner([
+            ("001_create_idx_space", _idx_space),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         async with self._conn() as db:

@@ -44,6 +44,8 @@ class AgentRunStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS agent_runs (
                 run_id TEXT PRIMARY KEY,
@@ -60,18 +62,30 @@ class AgentRunStore(SqliteStore):
                 error TEXT
             )
         """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_agent_runs_parent "
-            "ON agent_runs(parent_request_id)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_agent_runs_agent "
-            "ON agent_runs(agent_name)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_agent_runs_started "
-            "ON agent_runs(started_at DESC)"
-        )
+
+        async def _idx_parent(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_runs_parent "
+                "ON agent_runs(parent_request_id)"
+            )
+
+        async def _idx_agent(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_runs_agent "
+                "ON agent_runs(agent_name)"
+            )
+
+        async def _idx_started(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_runs_started "
+                "ON agent_runs(started_at DESC)"
+            )
+
+        await MigrationRunner([
+            ("001_create_idx_parent", _idx_parent),
+            ("002_create_idx_agent", _idx_agent),
+            ("003_create_idx_started", _idx_started),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         async with self._conn() as db:

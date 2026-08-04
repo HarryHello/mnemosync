@@ -32,6 +32,8 @@ class SqliteIdentityStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS actors (
                 id TEXT PRIMARY KEY,
@@ -43,10 +45,6 @@ class SqliteIdentityStore(SqliteStore):
                 updated_at TIMESTAMP NOT NULL,
                 UNIQUE(frontend, external_key)
             )
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_actors_frontend_key
-            ON actors(frontend, external_key)
         """)
 
         await db.execute("""
@@ -78,6 +76,16 @@ class SqliteIdentityStore(SqliteStore):
                 updated_at TIMESTAMP NOT NULL
             )
         """)
+
+        async def _idx_actors_frontend_key(db: aiosqlite.Connection) -> None:
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_actors_frontend_key
+                ON actors(frontend, external_key)
+            """)
+
+        await MigrationRunner([
+            ("001_create_idx_actors_frontend_key", _idx_actors_frontend_key),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         async with self._conn() as db:

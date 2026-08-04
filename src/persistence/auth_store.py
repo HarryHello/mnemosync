@@ -160,6 +160,8 @@ class SqliteAuthStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -183,8 +185,21 @@ class SqliteAuthStore(SqliteStore):
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_username ON users(username)")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_session_token ON sessions(token_hash)")
+
+        async def _idx_username(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_username ON users(username)"
+            )
+
+        async def _idx_session_token(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_session_token ON sessions(token_hash)"
+            )
+
+        await MigrationRunner([
+            ("001_create_idx_username", _idx_username),
+            ("002_create_idx_session_token", _idx_session_token),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         """兼容旧接口: 幂等地初始化 schema. 长连接模式下 connect() 已包含此步骤."""

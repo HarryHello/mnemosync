@@ -68,6 +68,8 @@ class HttpLogStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS http_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,12 +85,22 @@ class HttpLogStore(SqliteStore):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_http_logs_created_at ON http_logs(created_at)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_http_logs_path ON http_logs(path)"
-        )
+
+        async def _idx_created_at(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_http_logs_created_at "
+                "ON http_logs(created_at)"
+            )
+
+        async def _idx_path(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_http_logs_path ON http_logs(path)"
+            )
+
+        await MigrationRunner([
+            ("001_create_idx_created_at", _idx_created_at),
+            ("002_create_idx_path", _idx_path),
+        ]).apply(db)
 
     def enqueue(self, entry: dict[str, Any]) -> None:
         """非阻塞入队. 队列满时静默丢弃 (记录不应影响请求)."""
