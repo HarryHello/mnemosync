@@ -28,8 +28,6 @@ jobs:
         run: uv run ruff check src tests
 
       - name: Type check (mypy)
-        # TODO: fix pre-existing 597 type errors, then flip to blocking
-        continue-on-error: true
         run: uv run mypy src
 
       - name: Test (pytest)
@@ -63,8 +61,6 @@ jobs:
         run: npm run type-check
 
       - name: Lint
-        # TODO: fix pre-existing errors (oxlint . + eslint . --fix), then flip to blocking
-        continue-on-error: true
         run: npm run lint
 
       - name: Unit tests

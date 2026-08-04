@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import type { PersonaResetResponse } from '@/types/api'
 
-const props = defineProps<{
+defineProps<{
   resetPreview: PersonaResetResponse | null
   resetPreviewLoading: boolean
   resetRunning: boolean
   isRunning: boolean
 }>()
 
-const emit = defineEmits<{
+defineEmits<{
   'preview-reset': []
   'run-reset': []
 }>()

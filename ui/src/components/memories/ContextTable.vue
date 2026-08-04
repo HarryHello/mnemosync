@@ -2,7 +2,7 @@
 import type { ConversationTurn } from '@/types/api'
 import { formatDate } from '@/utils/format'
 
-const props = defineProps<{
+defineProps<{
   items: ConversationTurn[]
   loading?: boolean
   sortBy?: string

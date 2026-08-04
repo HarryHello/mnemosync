@@ -4,14 +4,15 @@ import type { ReindexStatusResponse } from '@/types/api'
 
 const props = defineProps<{
   status: ReindexStatusResponse
-  reindexForm: {
-    prune: boolean
-    priority_threshold: number
-  }
   reindexStarting: boolean
 }>()
 
-const emit = defineEmits<{
+const reindexForm = defineModel<{
+  prune: boolean
+  priority_threshold: number
+}>('reindexForm', { required: true })
+
+defineEmits<{
   'start-reindex': []
   'refresh-status': []
 }>()

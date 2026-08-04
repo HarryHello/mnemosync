@@ -87,7 +87,7 @@ async function loadProfiles() {
     profiles.value = res.items
     const active = res.items.find(p => p.is_active)
     activeProfileId.value = active?.id || null
-  } catch (err) {
+  } catch {
     // 首次使用时 profiles 表可能还不存在, 静默处理
     profiles.value = []
   } finally {
