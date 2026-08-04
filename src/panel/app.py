@@ -71,16 +71,15 @@ def build_panel_app() -> FastAPI:
     app.include_router(auth_router, prefix=_PANEL_PREFIX)
     app.include_router(backend_router, prefix=_PANEL_PREFIX)
 
-    # 反向代理: /panel/admin/* (除 backend 管理) → 后端
+    # 反向代理: /panel/* → 后端 (面板自身的 auth 和 backend 路由已先注册, 优先匹配)
+    # 这里只处理面板没有注册的路径 (如 /panel/api-keys, /panel/admin/memories 等)
     @app.api_route(
-        "/panel/admin/{path:path}",
+        "/panel/{path:path}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         include_in_schema=False,
     )
-    async def proxy_admin(path: str, request: Request) -> Response:
-        if path.startswith("backend/"):
-            return JSONResponse(status_code=404, content={"detail": "Not Found"})
-        return await proxy_request(request, f"panel/admin/{path}")
+    async def proxy_panel(path: str, request: Request) -> Response:
+        return await proxy_request(request, f"panel/{path}")
 
     @app.api_route(
         "/v1/{path:path}",
