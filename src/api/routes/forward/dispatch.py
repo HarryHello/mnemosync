@@ -2,12 +2,12 @@
 import json as _json
 import logging
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from src.api.schemas.forward import ChatCompletionRequest
+from src.api.schemas.forward import ChatCompletionRequest, ChatMessage
 from src.api.tool_policies import ToolPolicy, load_tool_policy
 from src.api.tool_transactions import (
     ToolTransactionError,
@@ -68,7 +68,7 @@ async def _resolve_tool_policy(
 # ── 消息规范化 ────────────────────────────────────────────────
 
 
-def _normalize_messages(messages: list) -> list[dict[str, Any]]:
+def _normalize_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
     """将请求消息转为 dict 列表, 并将 OpenAI content parts 数组格式展开为纯文本."""
     result = [msg.model_dump(exclude_none=True) for msg in messages]
     for m in result:
@@ -90,8 +90,8 @@ def _normalize_messages(messages: list) -> list[dict[str, Any]]:
 
 
 async def _extract_and_resolve_tool_transaction(
-    messages_dict: list[dict],
-    tools: list | None,
+    messages_dict: list[dict[str, Any]],
+    tools: list[Any] | None,
     http_request: Request,
 ) -> tuple[Any, str | None]:
     """提取工具事务尾部并解析 interaction_id.
@@ -144,7 +144,7 @@ async def _extract_and_resolve_tool_transaction(
 
 
 async def _prepare_prompt(
-    request_messages: list,
+    request_messages: list[ChatMessage],
     persona: str,
     http_request: Request,
 ) -> tuple[str, dict[str, Any] | None]:
@@ -157,7 +157,7 @@ async def _prepare_prompt(
     client_system_msg = ""
     for msg in request_messages:
         if msg.role == "system" and msg.content:
-            client_system_msg = msg.content
+            client_system_msg = cast(str, msg.content)
             break
 
     if not client_system_msg.strip():
@@ -200,7 +200,7 @@ async def _prepare_prompt(
 async def _handle_identity_binding(
     http_request: Request,
     request: ChatCompletionRequest,
-    messages_dict: list[dict],
+    messages_dict: list[dict[str, Any]],
     actor_id: str | None,
     space_id: str | None,
     current_speaker: str,
@@ -239,7 +239,7 @@ async def _bind_initiate(
     space_id: str | None,
     current_speaker: str,
     bind_prefix: str,
-):
+) -> JSONResponse:
     """发起跨平台绑定: 生成验证码."""
     from src.core.tools.identity_binding import get_binding_code_store
 
@@ -260,7 +260,7 @@ async def _bind_confirm(
     http_request: Request,
     input_code: str,
     actor_id: str,
-):
+) -> JSONResponse:
     """确认绑定: 校验验证码并执行绑定."""
     from src.core.tools.identity_binding import get_binding_code_store
 
@@ -313,7 +313,7 @@ async def _migrate_relationships(http_request: Request, actor_id: str, group_id:
     )
 
 
-def _build_bind_response(content: str, *, model: str = VIRTUAL_MODEL_ANY):
+def _build_bind_response(content: str, *, model: str = VIRTUAL_MODEL_ANY) -> JSONResponse:
     """构建身份绑定 JSONResponse."""
     from fastapi.responses import JSONResponse
 
@@ -335,8 +335,8 @@ def _build_bind_response(content: str, *, model: str = VIRTUAL_MODEL_ANY):
 
 def _build_initial_state(
     *,
-    messages_dict: list[dict],
-    allowed_tools: list | None,
+    messages_dict: list[dict[str, Any]],
+    allowed_tools: list[Any] | None,
     request: ChatCompletionRequest,
     tool_transaction: Any,
     tool_policy: ToolPolicy | None,

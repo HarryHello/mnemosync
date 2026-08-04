@@ -9,6 +9,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.api.reasoning_control import should_use_proxy_thinking
 from src.api.schemas.forward import (
@@ -74,7 +75,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/models", response_model=ModelList, tags=["Models"])
-async def list_models():
+async def list_models() -> ModelList:
     """列出可用模型."""
     return ModelList(
         object="list",
@@ -90,7 +91,7 @@ async def list_models():
 
 
 @router.get("/models/{model_id}", response_model=ModelInfo, tags=["Models"])
-async def get_model(model_id: str):
+async def get_model(model_id: str) -> ModelInfo:
     """获取特定模型信息."""
     if model_id == VIRTUAL_MODEL_ANY:
         return ModelInfo(
@@ -105,8 +106,10 @@ async def get_model(model_id: str):
 # ── Chat Completions ───────────────────────────────────────────
 
 
-@router.post("/chat/completions", tags=["Chat Completions"])
-async def create_chat_completion(request: ChatCompletionRequest, http_request: Request):
+@router.post("/chat/completions", tags=["Chat Completions"], response_model=None)
+async def create_chat_completion(
+    request: ChatCompletionRequest, http_request: Request
+) -> JSONResponse | StreamingResponse:
     """创建聊天补全.
 
     处理流程:
@@ -319,7 +322,9 @@ async def create_chat_completion(request: ChatCompletionRequest, http_request: R
     )
 
     from src.api.deps import _state
-    space_locks: SpaceLockManager = _state(http_request).space_locks
+    space_locks_mgr = _state(http_request).space_locks
+    assert space_locks_mgr is not None
+    space_locks: SpaceLockManager = space_locks_mgr
     lock_key = space_locks.lock_key(
         space_id=space_id, source_user=source_user, api_key_id=api_key_id,
     )
