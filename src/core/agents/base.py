@@ -58,7 +58,7 @@ class ReActResult:
         return self.error is None
 
 
-def _build_tools_schema(tools: list) -> list[dict]:
+def _build_tools_schema(tools: list[Any]) -> list[dict[str, Any]]:
     """把 LangChain Tool 列表转为 OpenAI function schema."""
     return [
         {
@@ -77,7 +77,7 @@ def _build_tools_schema(tools: list) -> list[dict]:
     ]
 
 
-async def _execute_tool(tool, args: dict[str, Any]) -> Any:
+async def _execute_tool(tool: Any, args: dict[str, Any]) -> Any:
     """执行单个 LangChain Tool."""
     try:
         return await tool.ainvoke(args)
@@ -91,10 +91,10 @@ async def run_react_loop(
     role: ModelType,
     system_prompt: str,
     user_prompt: str,
-    tools: list,
+    tools: list[Any],
     max_iterations: int = 5,
     temperature: float = 0.3,
-    extra_body: dict | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> ReActResult:
     """驱动 ReAct 循环.
 
@@ -218,7 +218,7 @@ async def run_simple_completion(
     system_prompt: str,
     user_prompt: str,
     temperature: float = 0.7,
-    extra_body: dict | None = None,
+    extra_body: dict[str, Any] | None = None,
     max_tokens: int | None = None,
 ) -> str:
     """简单的非工具对话调用（用于代理思考等不需要 function_call 的场景）.

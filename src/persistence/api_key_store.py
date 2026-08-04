@@ -10,7 +10,8 @@ import hashlib
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 import aiosqlite
 
@@ -251,7 +252,7 @@ class SqliteApiKeyStore(SqliteStore):
             )
             await db.commit()
 
-    async def _row_to_api_key(self, db: aiosqlite.Connection, row: tuple) -> ApiKey:
+    async def _row_to_api_key(self, db: aiosqlite.Connection, row: Sequence[Any]) -> ApiKey:
         # 列顺序: id, key_hash, key_prefix, note, created_at, last_used_at, is_active, key_full, key_encrypted, source
         legacy_plain = row[7] if len(row) > 7 else None
         encrypted = row[8] if len(row) > 8 else None

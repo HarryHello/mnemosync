@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from src.core.prompts import get_prompt_store
 from src.core.prompts.registry import PROMPT_REGISTRY
@@ -223,7 +224,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 # ── 入口 ──────────────────────────────────────────────────────
 
 
-def build_parser(sub: argparse._SubParsersAction) -> None:
+def build_parser(sub: argparse._SubParsersAction[Any]) -> None:
     """在 mnemosync 主 parser 上注册 `prompt` 子命令树."""
     p = sub.add_parser("prompt", help="管理 Agent 提示词覆盖 (list/show/set/reset/validate)")
     sp = p.add_subparsers(dest="subcmd", help="子命令")
@@ -273,7 +274,7 @@ def cmd_prompt(args: argparse.Namespace) -> int:
     if handler is None:
         # 未指定子命令 → 显示 list
         return _cmd_list(args)
-    return handler(args)
+    return int(handler(args))
 
 
 __all__ = ["build_parser", "cmd_prompt"]

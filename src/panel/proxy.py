@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import AsyncIterator
 
 import httpx
 from fastapi import Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ BACKEND_BASE = os.getenv("MNEMOSYNC_BACKEND_URL", "http://127.0.0.1:16126")
 _SKIP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
 
 
-async def proxy_request(request: Request, path: str):
+async def proxy_request(request: Request, path: str) -> Response:
     """把请求转发到后端, 流式返回响应.
 
     Args:
@@ -60,7 +61,7 @@ async def proxy_request(request: Request, path: str):
     content_type = resp.headers.get("content-type", "")
     headers_out = {k: v for k, v in resp.headers.items() if k.lower() not in _SKIP_HEADERS}
 
-    async def _iter():
+    async def _iter() -> AsyncIterator[bytes]:
         try:
             async for chunk in resp.aiter_bytes():
                 yield chunk

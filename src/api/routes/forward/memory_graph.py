@@ -1,7 +1,8 @@
 """异步执行记忆图 (流式模式下后台运行)."""
 import logging
-from typing import Any
+from typing import Any, cast
 
+from src.core.graph import AgentState
 from src.infra.forwarder import parse_sse_stream_full
 
 from ._accessors import _get_compiled_graph
@@ -28,6 +29,6 @@ async def _run_memory_graph(
             return
 
         graph = _get_compiled_graph()
-        await graph.ainvoke(initial_state, config=graph_config)
+        await graph.ainvoke(cast(AgentState, initial_state), config=cast(Any, graph_config))
     except Exception:
         logger.warning("后台记忆图执行失败", exc_info=True)

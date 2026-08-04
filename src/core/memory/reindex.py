@@ -23,7 +23,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.core.memory.models import MemoryEntry, MemoryType
 from src.infra.llm_service.models import ModelType
@@ -60,7 +60,7 @@ class ReindexProgress:
     def is_running(self) -> bool:
         return self.state == ReindexState.RUNNING
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "state": self.state.value,
             "total": self.total,
@@ -104,7 +104,7 @@ class PruneBreakdown:
     def total(self) -> int:
         return self.forgotten + self.expired + self.low_priority
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "forgotten": self.forgotten,
             "expired": self.expired,
@@ -220,7 +220,7 @@ class Reindexer:
                 self._fail(str(e))
                 raise
 
-    def _flush_batch(self, batch, cand):
+    def _flush_batch(self, batch: list[tuple[MemoryEntry, list[float]]], cand: Any) -> None:
         for entry, vec in batch:
             self.vector_store.add(entry, vec)
 

@@ -8,6 +8,12 @@ import argparse as _argparse
 class PersonaCommandsMixin:
     """cmd_persona 子命令族 (reset)."""
 
+    def _panel_base(self) -> str:
+        raise NotImplementedError  # 由组合类提供
+
+    async def _panel_token(self) -> str | None:
+        raise NotImplementedError  # 由组合类提供
+
     async def cmd_persona(self, argv: list[str]) -> None:
         """persona 子命令派发."""
         if not argv:

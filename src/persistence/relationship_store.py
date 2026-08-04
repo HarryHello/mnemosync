@@ -6,7 +6,9 @@ SQLite 存储关系状态 (relationships 表) + 关系审计日志 (relationship
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 
 import aiosqlite
 
@@ -150,7 +152,7 @@ class SqliteRelationshipStore(SqliteStore):
                 """,
                 (persona_id, actor_id),
             ) as cur:
-                actor_rows = await cur.fetchall()
+                actor_rows = list(await cur.fetchall())
 
             if not actor_rows:
                 return 0  # 没有需迁移的关系
@@ -182,8 +184,8 @@ class SqliteRelationshipStore(SqliteStore):
                     merged_trust = max(trust, e_trust)
                     merged_icount = icount + e_icount
                     merged_last = max(
-                        _parse_dt(last_active) if last_active else datetime.min,
-                        _parse_dt(e_last) if e_last else datetime.min,
+                        _parse_dt(last_active) or datetime.min,
+                        _parse_dt(e_last) or datetime.min,
                     )
                     merged_notes = (notes or "") + ("; " + e_notes if e_notes else "")
                     merged_p_addr = p_addr or e_p_addr
@@ -443,7 +445,7 @@ class SqliteRelationshipStore(SqliteStore):
 
     # ============ 工具方法 ============
 
-    def _row_to_relationship(self, row: tuple) -> Relationship:
+    def _row_to_relationship(self, row: Sequence[Any]) -> Relationship:
         return Relationship(
             persona_id=row[0],
             user_id=row[1],

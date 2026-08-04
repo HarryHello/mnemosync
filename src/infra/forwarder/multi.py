@@ -120,7 +120,7 @@ class MultiForwarder:
         messages: list[dict[str, Any]],
         *,
         candidates: Iterable[ResolvedCandidate] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """非流式对话. 按候选依次尝试, 首个成功返回."""
         cands = await self._candidates(role, candidates)
@@ -145,7 +145,7 @@ class MultiForwarder:
         messages: list[dict[str, Any]],
         *,
         candidates: Iterable[ResolvedCandidate] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> AsyncIterator[bytes]:
         """流式对话.
 
@@ -154,7 +154,7 @@ class MultiForwarder:
         cands = await self._candidates(role, candidates)
         errors: list[tuple[ResolvedCandidate, Exception]] = []
 
-        async def _iter():
+        async def _iter() -> AsyncIterator[bytes]:
             for c in cands:
                 fwd = self._get_forwarder(c)
                 gen = fwd.chat_stream(messages=messages, model=c.model, **kwargs)
@@ -259,7 +259,12 @@ class MultiForwarder:
     async def __aenter__(self) -> MultiForwarder:
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         await self.close()
 
 

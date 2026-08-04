@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
 from src.core.config import get_settings
 from src.core.constants import DEFAULT_PERSONA_ID
-from src.core.memory.models import Relationship
+from src.core.memory.models import MemoryEntry, Relationship
 from src.persistence.identity_store import SqliteIdentityStore
 
 logger = logging.getLogger(__name__)
@@ -133,7 +134,7 @@ async def _resolve_relationship_target(
     raise HTTPException(400, detail="user_id 或 actor_id 至少提供一个")
 
 
-def _memory_to_response(m) -> MemoryResponse:
+def _memory_to_response(m: MemoryEntry) -> MemoryResponse:
     return MemoryResponse(
         id=m.id,
         content=m.content,
@@ -148,7 +149,7 @@ def _memory_to_response(m) -> MemoryResponse:
 
 
 def _relationship_identity_response(
-    resolved: tuple | None,
+    resolved: tuple[Any, ...] | None,
 ) -> RelationshipIdentity | None:
     """将 IdentityStore 的批量解析结果转为 API 身份视图."""
     if resolved is None:
@@ -181,7 +182,7 @@ def _relationship_to_response(
     rel: Relationship | None,
     target: str,
     *,
-    settings_override=None,
+    settings_override: Any = None,
     identity: RelationshipIdentity | None = None,
 ) -> RelationshipResponse:
     """将关系数据转为 Response 模型, 自动处理 NULL 与 TOML 基线回退."""

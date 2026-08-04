@@ -10,7 +10,7 @@ import os
 import subprocess
 import sys
 from importlib.metadata import version as _get_version
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -81,7 +81,7 @@ def is_container_running() -> bool:
         return False
 
 
-def run_docker_command(args: list[str], capture: bool = False) -> subprocess.CompletedProcess:
+def run_docker_command(args: list[str], capture: bool = False) -> subprocess.CompletedProcess[Any]:
     """运行 Docker Compose 命令."""
     project_root = get_project_root()
     cmd = ["docker", "compose", "-f", f"{project_root}/docker-compose.yml"] + args
@@ -143,7 +143,7 @@ def _mount_static(app: "FastAPI", project_root: str) -> None:
     import os
 
     from fastapi.staticfiles import StaticFiles
-    from starlette.responses import FileResponse
+    from starlette.responses import FileResponse, Response
 
     ui_dist = os.path.join(project_root, "ui", "dist")
     if not os.path.exists(ui_dist):
@@ -153,7 +153,7 @@ def _mount_static(app: "FastAPI", project_root: str) -> None:
     app.mount("/assets", StaticFiles(directory=os.path.join(ui_dist, "assets")), name="assets")
 
     @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
+    async def serve_spa(full_path: str) -> Response:
         """SPA 路由: 未注册的非 API 路径返回 index.html.
 
         /panel/* 与 /v1/* 属于 API 命名空间, 若未命中已注册路由必须直接 404,
@@ -345,7 +345,7 @@ def cmd_init_docker(args: argparse.Namespace) -> int:
 
     # 构建
     print("📦 构建 Docker 镜像...")
-    result = run_docker_command(["build"])
+    result: subprocess.CompletedProcess[Any] = run_docker_command(["build"])
     if result.returncode != 0:
         print("❌ 构建失败")
         return 1
@@ -781,7 +781,7 @@ def main(argv: list[str] | None = None) -> int:
         cmd_help(args)
         return 0
 
-    return args.func(args)
+    return int(args.func(args))
 
 
 if __name__ == "__main__":

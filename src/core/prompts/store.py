@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 from .registry import PROMPT_REGISTRY, PromptSpec
 
@@ -85,7 +85,7 @@ class PromptStore:
         raw = m.group(1)
         body = text[m.end():]
         try:
-            import yaml
+            import yaml  # type: ignore[import-untyped]
         except ImportError:
             logger.warning("PyYAML 未安装, 忽略 frontmatter")
             return body, {}
@@ -251,7 +251,7 @@ class PromptStore:
             version=version,
         )
 
-    def list_history(self, name: str) -> list[dict[str, Any]]:
+    def list_history(self, name: str) -> List[dict[str, Any]]:
         """.history/ 下针对某 name 的备份列表 (按 mtime 倒序)."""
         self._spec(name)
         if not self.history_dir.is_dir():

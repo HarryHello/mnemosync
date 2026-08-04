@@ -9,6 +9,7 @@ import logging
 import os
 import subprocess
 import sys
+from typing import Any
 
 from fastapi import APIRouter, Depends
 
@@ -24,7 +25,7 @@ router = APIRouter(
 
 
 @router.post("/restart")
-async def restart_service():
+async def restart_service() -> dict[str, Any]:
     """重启服务.
 
     通过 subprocess 触发 ``src.cli.cli restart``, 并立即返回响应.

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from langchain_core.tools import tool
 
+from src.core.memory.models import MemoryEntry
 from src.infra.forwarder.multi import MultiForwarder
 from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
@@ -150,7 +151,7 @@ class MemoryRetriever:
         return results
 
     def _build_result(
-        self, entry, similarity: float, relevance: float | None
+        self, entry: MemoryEntry, similarity: float, relevance: float | None
     ) -> RetrievedMemory:
         return RetrievedMemory(
             memory_id=entry.id,
@@ -166,7 +167,7 @@ class MemoryRetriever:
 def make_vector_search_tool(
     retriever: MemoryRetriever,
     retrieval_ctx: RetrievalContext | None = None,
-):
+) -> Any:
     """创建 vector_search LangChain Tool.
 
     Args:

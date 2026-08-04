@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import asyncio
@@ -68,7 +68,7 @@ class AppState:
     lorebook_store: SqliteLorebookStore | None = None
     space_policy_store: SqliteSpacePolicyStore | None = None
     agent_run_store: AgentRunStore | None = None
-    active_bg_tasks: dict[str, asyncio.Task] | None = None
+    active_bg_tasks: dict[str, asyncio.Task[Any]] | None = None
 
     # ── 服务 / 管理器 ──────────────────────────────────
     resolver: RoleResolver | None = None

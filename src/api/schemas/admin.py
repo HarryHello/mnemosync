@@ -7,6 +7,8 @@ Prompt 覆盖管理 / 备份 / 校验相关的 request & response schema.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -212,8 +214,8 @@ class DebugEventSummary(BaseModel):
     status: int | None = None
     duration_ms: float | None = None
     key_note: str | None = None
-    headers: dict | None = None
-    body_preview: dict | list | str | None = None
+    headers: dict[str, Any] | None = None
+    body_preview: dict[str, Any] | list[Any] | str | None = None
     body_full_size: int = 0
     is_truncated: bool = False
 
@@ -224,7 +226,7 @@ class DebugEventListResponse(BaseModel):
 
 class DebugEventDetailResponse(BaseModel):
     summary: DebugEventSummary
-    body_full: dict | list | str | None = None
+    body_full: dict[str, Any] | list[Any] | str | None = None
     stream_assembled: str | None = None
     stream_chunks_count: int = 0
 
@@ -395,7 +397,7 @@ class NotificationItem(BaseModel):
     category: str
     title: str
     message: str
-    meta: dict | None = None
+    meta: dict[str, Any] | None = None
     read_at: str | None = None
 
 

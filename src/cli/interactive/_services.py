@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from src.infra.forwarder.forwarder import Forwarder, ForwarderConfig
 from src.infra.llm_service.models import LLMServiceProvider
+from src.infra.llm_service.store import LLMServiceStore
 
 from ._input import check_exit_requested, mask_api_key, secure_input
 
 
 class ServiceCommandsMixin:
     """cmd_ls_service / cmd_show_service / cmd_ad_service / cmd_rm_service / cmd_ls_models."""
+
+    llm_service_store: LLMServiceStore
 
     async def cmd_ls_service(self) -> None:
         """列出服务."""

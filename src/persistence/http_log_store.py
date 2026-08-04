@@ -32,7 +32,7 @@ class HttpLogStore(SqliteStore):
     def __init__(self, db_path: str):
         super().__init__(db_path)
         self._queue: asyncio.Queue[dict[str, Any]] | None = None
-        self._writer_task: asyncio.Task | None = None
+        self._writer_task: asyncio.Task[None] | None = None
         self._writer_conn: aiosqlite.Connection | None = None
         self._stopping = False
 
@@ -231,7 +231,7 @@ class HttpLogStore(SqliteStore):
         status: int | None = None,
         since: str | None = None,
         until: str | None = None,
-    ) -> list[tuple]:
+    ) -> list[tuple[Any, ...]]:
         conditions, params = self._build_filter(method, path, status, since, until)
         where = " AND ".join(conditions) if conditions else "1=1"
         offset = (page - 1) * page_size
@@ -241,14 +241,16 @@ class HttpLogStore(SqliteStore):
                 f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 params + [page_size, offset],
             ) as cur:
-                return await cur.fetchall()
+                rows = await cur.fetchall()
+                return [tuple(r) for r in rows]
 
-    async def get_by_id(self, log_id: int) -> tuple | None:
+    async def get_by_id(self, log_id: int) -> tuple[Any, ...] | None:
         async with self._conn() as db:
             async with db.execute(
                 "SELECT * FROM http_logs WHERE id = ?", (log_id,)
             ) as cur:
-                return await cur.fetchone()
+                row = await cur.fetchone()
+                return tuple(row) if row is not None else None
 
     async def clear_all(self) -> None:
         async with self._conn() as db:

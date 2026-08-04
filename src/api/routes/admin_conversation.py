@@ -7,6 +7,7 @@
 
 import logging
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -65,7 +66,7 @@ async def list_conversation_turns(
     ),
     sort_order: str = Query("desc", description="asc | desc"),
     store: SqliteConversationStore = Depends(get_conversation_store),
-):
+) -> ConversationTurnListResponse:
     """按 ts 降序分页列出跨前端对话流水.
 
     面板 "上下文流水" 视图用. 服务器把所有前端的对话汇聚到这里, 装填时
@@ -123,7 +124,7 @@ async def list_conversation_turns(
 @router.get("/conversation-turns/speakers")
 async def list_conversation_speakers(
     store: SqliteConversationStore = Depends(get_conversation_store),
-):
+) -> dict[str, Any]:
     """列出对话流水中出现过的说话者, 供前端说话者筛选下拉框."""
     return {"items": await store.list_distinct_speakers()}
 
@@ -131,7 +132,7 @@ async def list_conversation_speakers(
 @router.get("/conversation-turns/sources")
 async def list_conversation_turn_sources(
     store: SqliteConversationStore = Depends(get_conversation_store),
-):
+) -> dict[str, Any]:
     """列出流水里出现过的所有来源标签 (source_frontend distinct).
 
     面板 "来源" 列 header filter 用. NULL / 空串排除 (视为 "未标注")
@@ -143,7 +144,7 @@ async def list_conversation_turn_sources(
 async def delete_conversation_turn(
     turn_id: int,
     store: SqliteConversationStore = Depends(get_conversation_store),
-):
+) -> dict[str, Any]:
     """删除单条对话轮次. 用于面板逐条清理.
 
     注意: 不动其它前端已经拿到的上下文; 但下一次装填时该条从服务器视角"从未存在"
@@ -158,7 +159,7 @@ async def delete_conversation_turn(
 async def batch_delete_conversation_turns(
     body: ConversationDeleteBatchBody,
     store: SqliteConversationStore = Depends(get_conversation_store),
-):
+) -> dict[str, Any]:
     """批量删除指定 id 的对话轮次."""
     deleted = await store.delete_by_ids(body.ids)
     return {"success": True, "deleted": deleted}
@@ -168,7 +169,7 @@ async def batch_delete_conversation_turns(
 async def clear_conversation_turns(
     since_iso: str | None = Query(None, alias="since", description="ISO 时间, 只清早于该时间的记录 (省略则全清)"),
     store: SqliteConversationStore = Depends(get_conversation_store),
-):
+) -> ConversationClearResponse:
     """清空跨前端对话流水.
 
     * 不带 since → 全清 ("重置连续记忆")
@@ -193,7 +194,7 @@ async def list_interactions(
     limit: int = Query(20, ge=1, le=100),
     space_id: str | None = Query(None),
     store: SqliteConversationStore = Depends(get_conversation_store),
-):
+) -> InteractionListResponse:
     """列出最近的逻辑交互摘要.
 
     每个交互包含一次用户输入触发的所有事件 (message + tool_call + tool_result),

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from collections.abc import Sequence
 from typing import Any
 
 import aiosqlite
@@ -181,7 +182,7 @@ class NotificationStore(SqliteStore):
                 return self._row_to_notification(row) if row else None
 
     @staticmethod
-    def _row_to_notification(row: tuple) -> Notification:
+    def _row_to_notification(row: Sequence[Any]) -> Notification:
         created = datetime.fromisoformat(row[1]) if row[1] else datetime.now(UTC)
         read = datetime.fromisoformat(row[7]) if row[7] else None
         meta_json = row[6]

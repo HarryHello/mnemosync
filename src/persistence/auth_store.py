@@ -17,7 +17,8 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 import aiosqlite
 import bcrypt
@@ -350,7 +351,7 @@ class SqliteAuthStore(SqliteStore):
             await db.commit()
         return user
 
-    def _row_to_user(self, row: tuple) -> User:
+    def _row_to_user(self, row: Sequence[Any]) -> User:
         return User(
             id=row[0], username=row[1], password_hash=row[2],
             must_change_password=bool(row[3]),
@@ -360,7 +361,7 @@ class SqliteAuthStore(SqliteStore):
             is_active=bool(row[7]),
         )
 
-    def _row_to_session(self, row: tuple, raw_token: str) -> SessionToken:
+    def _row_to_session(self, row: Sequence[Any], raw_token: str) -> SessionToken:
         return SessionToken(
             id=row[0], user_id=row[1], token_hash=row[2], raw_token=raw_token,
             expires_at=datetime.fromisoformat(row[3]) if row[3] else datetime.now(UTC),

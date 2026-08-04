@@ -39,7 +39,7 @@ async def get_relationship(
     actor_id: str | None = Query(None, min_length=1, description="Actor ID, 自动解析为 effective_user_id"),
     store: SqliteRelationshipStore = Depends(get_relationship_store),
     identity_store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> RelationshipResponse:
     """获取关系状态."""
     target = await _resolve_relationship_target(request, user_id, actor_id)
     rel = await store.get_relationship(_persona_id(), target)
@@ -58,7 +58,7 @@ async def list_relationships(
     sort_order: str = Query("desc", description="asc | desc"),
     store: SqliteRelationshipStore = Depends(get_relationship_store),
     identity_store: SqliteIdentityStore = Depends(get_identity_store),
-):
+) -> RelationshipListResponse:
     """分页列出当前人格的所有关系."""
     offset = (page - 1) * page_size
     rows, total = await store.list_relationships(
@@ -89,7 +89,7 @@ async def update_relationship_addressing(
     body: RelationshipUpdateBody,
     request: Request,
     store: SqliteRelationshipStore = Depends(get_relationship_store),
-):
+) -> RelationshipResponse:
     """人工 override 关系称呼/背景 (source='manual')."""
     provided = {
         "persona_addressing": body.persona_addressing,
@@ -125,7 +125,7 @@ async def list_relationship_audit(
     actor_id: str | None = Query(None, min_length=1, description="Actor ID, 自动解析为 effective_user_id"),
     limit: int = Query(20, ge=1, le=200),
     store: SqliteRelationshipStore = Depends(get_relationship_store),
-):
+) -> RelationshipAuditResponse:
     """按时间倒序返回关系称呼字段的审计条目."""
     target = await _resolve_relationship_target(request, user_id, actor_id)
     entries = await store.list_relationship_audit(_persona_id(), target, limit=limit)

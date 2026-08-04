@@ -162,9 +162,9 @@ def extract_style_from_turns(
             style.punct_freq[name] = min(count / total, 1.0)
 
     # 回应模式频率
-    for pattern in _RESPONSE_PATTERNS:
-        count = sum(1 for t in assistant_texts if t.strip().lower().startswith(pattern.lower()))
+    for resp in _RESPONSE_PATTERNS:
+        count = sum(1 for t in assistant_texts if t.strip().lower().startswith(resp.lower()))
         if count > 0:
-            style.response_pattern_freq[pattern] = count / len(assistant_texts)
+            style.response_pattern_freq[resp] = count / len(assistant_texts)
 
     return style

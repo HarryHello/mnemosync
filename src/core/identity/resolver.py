@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.core.identity.models import IdentityContext, StrategyType
 from src.infra.forwarder.multi import MultiForwarder
@@ -48,8 +48,8 @@ class IdentityResolver:
     async def resolve(
         self,
         request_user: str | None,
-        messages: list[dict],
-        strategy_config: dict | None,  # 来自 API Key 绑定的策略
+        messages: list[dict[str, Any]],
+        strategy_config: dict[str, Any] | None,  # 来自 API Key 绑定的策略
         strategy_type: str | None,
         strategy_name: str | None,
     ) -> IdentityContext:
@@ -112,7 +112,7 @@ class IdentityResolver:
         )
 
     async def _resolve_direct(
-        self, request_user: str | None, config: dict, strategy_name: str | None,
+        self, request_user: str | None, config: dict[str, Any], strategy_name: str | None,
     ) -> IdentityContext:
         """使用 request.user 字段。"""
         if not request_user:
@@ -137,7 +137,7 @@ class IdentityResolver:
         )
 
     async def _resolve_api_key_bound(
-        self, config: dict, strategy_name: str | None,
+        self, config: dict[str, Any], strategy_name: str | None,
     ) -> IdentityContext:
         """Key 即身份，固定 external_key。"""
         external_key = config.get("external_key", "api-key-bound")
@@ -164,7 +164,7 @@ class IdentityResolver:
         )
 
     async def _resolve_regex(
-        self, messages: list[dict], config: dict, strategy_name: str | None,
+        self, messages: list[dict[str, Any]], config: dict[str, Any], strategy_name: str | None,
     ) -> IdentityContext:
         """从消息内容中正则提取身份。"""
         frontend = config.get("frontend", "regex")
@@ -199,7 +199,7 @@ class IdentityResolver:
         )
 
     async def _resolve_llm(
-        self, messages: list[dict], config: dict, strategy_name: str | None,
+        self, messages: list[dict[str, Any]], config: dict[str, Any], strategy_name: str | None,
     ) -> IdentityContext:
         """用辅助模型从消息内容中提取身份。"""
         if self.forwarder is None:
@@ -252,7 +252,7 @@ class IdentityResolver:
             return self._unattributed()
 
     async def _resolve_plugin(
-        self, messages: list[dict], config: dict, strategy_name: str | None,
+        self, messages: list[dict[str, Any]], config: dict[str, Any], strategy_name: str | None,
     ) -> IdentityContext:
         """用第三方插件提取身份."""
         plugin_name = config.get("plugin_name", "")
@@ -290,7 +290,7 @@ class IdentityResolver:
     # ============ 辅助方法 ============
 
     @staticmethod
-    def _extract_search_text(messages: list[dict], search_in: str) -> str:
+    def _extract_search_text(messages: list[dict[str, Any]], search_in: str) -> str:
         """从 messages 中提取搜索文本。
 
         Args:

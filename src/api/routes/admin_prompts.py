@@ -49,7 +49,7 @@ def _resolve_prompt_name(name: str) -> None:
 
 
 @router.get("/prompts", response_model=list[PromptSummary])
-async def list_prompts():
+async def list_prompts() -> list[PromptSummary]:
     """列出所有 Agent 提示词 + 覆盖状态."""
     store = get_prompt_store()
     return [
@@ -65,7 +65,7 @@ async def list_prompts():
 
 
 @router.get("/prompts/{name}", response_model=PromptDetail)
-async def get_prompt(name: str):
+async def get_prompt(name: str) -> PromptDetail:
     """获取单个提示词详情 (current + default 原文)."""
     _resolve_prompt_name(name)
     store = get_prompt_store()
@@ -84,7 +84,7 @@ async def get_prompt(name: str):
 
 
 @router.put("/prompts/{name}", response_model=PromptSummary)
-async def update_prompt(name: str, body: PromptWriteBody):
+async def update_prompt(name: str, body: PromptWriteBody) -> PromptSummary:
     """写入覆盖版本. 校验失败返回 400."""
     _resolve_prompt_name(name)
     store = get_prompt_store()
@@ -109,7 +109,7 @@ async def update_prompt(name: str, body: PromptWriteBody):
 
 
 @router.delete("/prompts/{name}", response_model=PromptSummary)
-async def reset_prompt(name: str):
+async def reset_prompt(name: str) -> PromptSummary:
     """删除覆盖, 回到默认 (自动备份最后一版)."""
     _resolve_prompt_name(name)
     store = get_prompt_store()
@@ -125,7 +125,7 @@ async def reset_prompt(name: str):
 
 
 @router.post("/prompts/{name}:validate", response_model=PromptValidateResponse)
-async def validate_prompt(name: str, body: PromptWriteBody):
+async def validate_prompt(name: str, body: PromptWriteBody) -> PromptValidateResponse:
     """dry-run 校验 (不写盘)."""
     _resolve_prompt_name(name)
     store = get_prompt_store()
@@ -138,7 +138,7 @@ async def validate_prompt(name: str, body: PromptWriteBody):
 
 
 @router.get("/prompts/{name}/history", response_model=PromptHistoryResponse)
-async def list_prompt_history(name: str):
+async def list_prompt_history(name: str) -> PromptHistoryResponse:
     """列出该 name 在 .history/ 下的备份."""
     _resolve_prompt_name(name)
     store = get_prompt_store()

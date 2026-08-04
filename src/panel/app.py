@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from src.api.routes.auth import router as auth_router
 from src.api.state import AppState
@@ -30,12 +32,12 @@ _PANEL_PREFIX = "/panel"
 
 
 @asynccontextmanager
-async def _panel_lifespan(app: FastAPI):
+async def _panel_lifespan(app: FastAPI) -> AsyncIterator[None]:
     """面板生命周期: 只连接 auth_store (验证登录/管理后端)."""
     settings = get_settings()
     auth_store = SqliteAuthStore(str(settings.storage.auth_db_abs))
     await auth_store.connect()
-    app.state = AppState(auth_store=auth_store)
+    app.state = cast(Any, AppState(auth_store=auth_store))
     logger.info("面板进程就绪 (auth_store 已连接)")
     try:
         yield
@@ -75,7 +77,7 @@ def build_panel_app() -> FastAPI:
         methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         include_in_schema=False,
     )
-    async def proxy_admin(path: str, request: Request):
+    async def proxy_admin(path: str, request: Request) -> Response:
         if path.startswith("backend/"):
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
         return await proxy_request(request, f"panel/admin/{path}")
@@ -85,7 +87,7 @@ def build_panel_app() -> FastAPI:
         methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         include_in_schema=False,
     )
-    async def proxy_v1(path: str, request: Request):
+    async def proxy_v1(path: str, request: Request) -> Response:
         return await proxy_request(request, f"v1/{path}")
 
     # 静态文件 + SPA 兜底

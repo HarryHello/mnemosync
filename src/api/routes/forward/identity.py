@@ -2,6 +2,8 @@
 import json
 import logging
 
+from typing import Any
+
 from fastapi import Request
 
 from src.core.identity import IdentityContext, IdentityResolver
@@ -22,7 +24,7 @@ async def _resolve_main_candidate(
     *,
     require_tools: bool = False,
     streaming: bool = False,
-):
+) -> Any:
     """解析 MAIN 角色首选候选.
 
     当请求携带 tools 时 (require_tools=True), 优先选择支持工具的候选;
@@ -30,6 +32,8 @@ async def _resolve_main_candidate(
     """
     from src.api.deps import _state
     resolver = _state(http_request).resolver
+    if resolver is None:
+        return None
     try:
         if require_tools:
             return await resolver.first_for_tools(ModelType.MAIN, streaming=streaming)
@@ -76,7 +80,7 @@ async def _resolve_identity_context(
     http_request: Request,
     api_key: ApiKey | None,
     request_user: str | None,
-    messages: list,
+    messages: list[Any],
 ) -> IdentityContext | None:
     """解析请求中的身份信息。
 

@@ -147,7 +147,7 @@ def trim_by_budget(
 
 
 async def build_short_term_history(
-    store,  # SqliteConversationStore, 松耦合避免循环导入
+    store: Any,  # SqliteConversationStore, 松耦合避免循环导入
     now: datetime,
     window_days: int,
     context_length: int | None,

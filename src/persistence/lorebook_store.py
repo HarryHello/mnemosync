@@ -11,7 +11,9 @@ import json
 import logging
 import secrets
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 
 import aiosqlite
 
@@ -195,9 +197,7 @@ class SqliteLorebookStore(SqliteStore):
                 return row[0] if row else 0
 
     @staticmethod
-    def _row_to_entry(row) -> LorebookEntry | None:
-        if row is None:
-            return None
+    def _row_to_entry(row: Sequence[Any]) -> LorebookEntry:
         try:
             keywords = json.loads(row[2]) if isinstance(row[2], str) else []
         except (json.JSONDecodeError, TypeError):

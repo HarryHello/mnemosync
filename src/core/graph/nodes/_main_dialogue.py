@@ -67,7 +67,7 @@ async def _prepare_context(
 
     logger.debug("  🔍 检索查询: %s", query[:100] if query else "(空)")
 
-    retrieved_entries: list = []
+    retrieved_entries: list[Any] = []
     if query:
         retriever = MemoryRetriever(forwarder, vector_store, memory_store)
         results = await retriever.search(
@@ -106,7 +106,7 @@ async def _prepare_context(
     )
 
     # Load Lorebook entries (keyword matching)
-    lorebook_entries: list = []
+    lorebook_entries: list[Any] = []
     lorebook_store = stores.get("lorebook_store")
     if lorebook_store is not None and query:
         try:
@@ -147,7 +147,7 @@ async def _prepare_context(
 
 async def _invoke_llm(
     forwarder: MultiForwarder,
-    messages: list,
+    messages: list[Any],
     state: AgentState,
     stores: StoresDict,
 ) -> Any:
@@ -302,7 +302,7 @@ async def _process_response(
 def _extract_metadata(
     response: str,
     dialogue: Any,
-    emotion_analysis: dict,
+    emotion_analysis: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble final return dict from dialogue result."""
     logger.debug(

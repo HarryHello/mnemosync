@@ -37,7 +37,7 @@ async def create_api_key(
 
     return ApiKeyCreateResponse(
         id=api_key.id,
-        key=api_key.key_full,
+        key=api_key.key_full or "",
         key_prefix=api_key.key_prefix,
         note=api_key.note,
         created_at=api_key.created_at.isoformat(),

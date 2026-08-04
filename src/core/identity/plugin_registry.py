@@ -9,7 +9,7 @@ import importlib.util
 import logging
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from src.core.identity.plugin import IdentityPlugin
@@ -87,7 +87,7 @@ def _find_plugin_files(root: Path) -> list[Path]:
     return files
 
 
-def _load_plugins_from_file(path: Path) -> list:
+def _load_plugins_from_file(path: Path) -> list[Any]:
     """从 .py 文件加载所有 IdentityPlugin 子类实例."""
     from src.core.identity.plugin import IdentityPlugin
 

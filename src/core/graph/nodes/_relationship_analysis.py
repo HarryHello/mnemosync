@@ -96,7 +96,7 @@ async def relationship_analysis_node(
         logger.debug("  ✅ 关系分析完成: 亲密 %+.2f, 信任 %+.2f",
                      out.intimacy_delta, out.trust_delta)
 
-        lifecycle = MemoryLifecycle(memory_store, None, forwarder, relationship_store=relationship_store)  # type: ignore[arg-type]
+        lifecycle = MemoryLifecycle(memory_store, None, forwarder, relationship_store=relationship_store)
         await lifecycle.apply_relationship_update(
             persona_id=state["persona_id"],
             user_id=source_user,

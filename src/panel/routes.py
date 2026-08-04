@@ -10,6 +10,7 @@ import logging
 import os
 import subprocess
 import sys
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends
@@ -39,7 +40,7 @@ def _is_pid_running(pid: int) -> bool:
         return False
 
 
-async def _get_backend_status() -> dict:
+async def _get_backend_status() -> dict[str, Any]:
     """读取后端进程状态: pid 存在 + 探测活跃 + /health 可达."""
     pid_file = _pid_file()
     pid: int | None = None
@@ -71,7 +72,7 @@ async def _get_backend_status() -> dict:
     }
 
 
-def _spawn_backend() -> subprocess.Popen:
+def _spawn_backend() -> subprocess.Popen[bytes]:
     """后台启动后端进程 (mnemosync backend --daemon)."""
     project_root = get_project_root()
     env = os.environ.copy()
@@ -90,13 +91,13 @@ def _spawn_backend() -> subprocess.Popen:
 
 
 @router.get("/status")
-async def backend_status() -> dict:
+async def backend_status() -> dict[str, Any]:
     """查询后端进程状态."""
     return await _get_backend_status()
 
 
 @router.post("/start")
-async def backend_start() -> dict:
+async def backend_start() -> dict[str, Any]:
     """启动后端进程."""
     status = await _get_backend_status()
     if status["running"]:
@@ -107,7 +108,7 @@ async def backend_start() -> dict:
 
 
 @router.post("/stop")
-async def backend_stop() -> dict:
+async def backend_stop() -> dict[str, Any]:
     """停止后端进程."""
     from src.cli.cli import _stop_pid_file
 
@@ -117,7 +118,7 @@ async def backend_stop() -> dict:
 
 
 @router.post("/restart")
-async def backend_restart() -> dict:
+async def backend_restart() -> dict[str, Any]:
     """重启后端进程 (先停后启)."""
     from src.cli.cli import _stop_pid_file
 

@@ -45,7 +45,7 @@ async def memory_analysis_node(
     resolver: RoleResolver = stores["resolver"]
     memory_store: SqliteMemoryStore = stores["memory_store"]
     vector_store: VectorStore = stores["vector_store"]
-    notification_store: NotificationStore = stores["notification_store"]
+    notification_store: NotificationStore | None = stores["notification_store"]
     owns_fwd = stores.get("_owns_forwarder", False)
 
     logger.debug("=" * 60)

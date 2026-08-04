@@ -5,10 +5,14 @@ from __future__ import annotations
 import argparse as _argparse
 import asyncio
 import os
+from typing import Any
 
 
 class MemoryCommandsMixin:
     """cmd_memory 子命令族 (reindex / prune)."""
+
+    current_user: Any
+    current_password: str | None
 
     def _panel_base(self) -> str:
         host = os.getenv("MNEMOSYNC_PANEL_HOST", "127.0.0.1")
@@ -33,7 +37,8 @@ class MemoryCommandsMixin:
                 if r.status_code != 200:
                     print(f"❌ 登录 panel 失败: {r.status_code} {r.text[:200]}\n")
                     return None
-                return r.json().get("access_token")
+                tok = r.json().get("access_token")
+                return tok if isinstance(tok, str) else None
         except httpx.RequestError as e:
             print(f"❌ 无法连接 panel: {e} (确认服务器在 {self._panel_base()} 运行)\n")
             return None

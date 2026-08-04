@@ -26,7 +26,7 @@ def make_update_addressing_tool(
     persona_id: str,
     user_id: str,
     actor_id: str | None = None,
-):
+) -> Any:
     """构建绑定 (persona_id, user_id) 的 update_addressing tool.
 
     persona_id / user_id 在闭包中固化, Agent 无法跨用户 / 跨人格写。

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import aiosqlite
@@ -109,8 +110,8 @@ class AgentRunStore(SqliteStore):
         run_id: str,
         *,
         status: str,
-        tool_trace: list[dict] | None = None,
-        usage: dict | None = None,
+        tool_trace: list[dict[str, Any]] | None = None,
+        usage: dict[str, Any] | None = None,
         structured_result: Any | None = None,
         error: str | None = None,
     ) -> None:
@@ -217,7 +218,7 @@ class AgentRunStore(SqliteStore):
     # ── 行转换 ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _row_to_record(row: tuple) -> AgentRunRecord:
+    def _row_to_record(row: Sequence[Any]) -> AgentRunRecord:
         return AgentRunRecord(
             run_id=row[0],
             parent_request_id=row[1],

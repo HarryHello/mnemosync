@@ -8,6 +8,7 @@
 
 import os
 import sys
+from typing import Any
 from importlib.metadata import version as _get_version
 
 
@@ -34,7 +35,7 @@ def serve() -> None:
     )
 
     @app.get("/health", tags=["Health"])
-    async def health() -> dict:
+    async def health() -> dict[str, Any]:
         """无需认证的健康检查端点 (供 Docker / 负载均衡使用)."""
         return {"status": "ok"}
 
@@ -64,7 +65,7 @@ def main() -> int:
             from .persistence.api_key_store import SqliteApiKeyStore
             from .persistence.auth_store import SqliteAuthStore
 
-            async def _init():
+            async def _init() -> None:
                 os.makedirs("data", exist_ok=True)
 
                 auth_db = SqliteAuthStore(os.getenv("AUTH_DB_PATH", "data/auth.db"))

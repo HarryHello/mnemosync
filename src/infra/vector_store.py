@@ -12,7 +12,7 @@ embedding_model, embedding_dim)`。首次写入时自动 lock; 之后每次写�
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import chromadb
 from chromadb.config import Settings
@@ -139,7 +139,7 @@ class VectorStore:
         """添加/更新一条记忆的向量."""
         self._collection.add(
             ids=[entry.id],
-            embeddings=[vector],
+            embeddings=cast(Any, [vector]),
             metadatas=[self._entry_to_metadata(entry)],
             documents=[entry.content],
         )
@@ -180,16 +180,16 @@ class VectorStore:
         if where is None and source_user:
             where = {"source_user": source_user}
         result = self._collection.query(
-            query_embeddings=[query_vector],
+            query_embeddings=cast(Any, [query_vector]),
             n_results=top_k,
             where=where,
             include=["metadatas", "documents", "distances"],
         )
 
-        ids = result.get("ids", [[]])[0]
-        documents = result.get("documents", [[]])[0]
-        distances = result.get("distances", [[]])[0]
-        metadatas = result.get("metadatas", [[]])[0]
+        ids = (result.get("ids") or [[]])[0]
+        documents = (result.get("documents") or [[]])[0]
+        distances = (result.get("distances") or [[]])[0]
+        metadatas = (result.get("metadatas") or [[]])[0]
 
         out: list[dict[str, Any]] = []
         for i, _id in enumerate(ids):

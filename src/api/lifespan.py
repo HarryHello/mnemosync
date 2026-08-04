@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 from fastapi import FastAPI
 
@@ -76,7 +78,7 @@ async def _conversation_prune_loop(
             logger.warning("conversation_turns 定时清理失败: %s", e)
 
 
-async def _connect_stores(settings) -> dict:
+async def _connect_stores(settings: Any) -> dict[str, Any]:
     """创建并连接所有 Store, 返回已连接实例的字典.
 
     任一 Store 连接失败时, 已连接的会在后续 ``_close_all`` 中被正确关闭.
@@ -98,7 +100,7 @@ async def _connect_stores(settings) -> dict:
     space_policy_store = SqliteSpacePolicyStore(str(storage.identity_db_abs))
     agent_run_store = AgentRunStore(str(storage.agent_run_db_abs))
 
-    instances = {
+    instances: dict[str, Any] = {
         "auth_store": auth_store,
         "api_key_store": api_key_store,
         "memory_store": memory_store,
@@ -129,7 +131,7 @@ async def _connect_stores(settings) -> dict:
     return instances
 
 
-async def _close_all(instances: dict) -> None:
+async def _close_all(instances: dict[str, Any]) -> None:
     """关闭所有已初始化的 Store, 每个独立 try/except 保证互不影响."""
     close_order = [
         "conversation_store", "notification_store", "identity_store",
@@ -146,7 +148,7 @@ async def _close_all(instances: dict) -> None:
 
 
 @asynccontextmanager
-async def app_lifespan(app: FastAPI):
+async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用启动 / 关闭钩子.
 
     启动:
@@ -225,7 +227,7 @@ async def app_lifespan(app: FastAPI):
         agent_run_store=instances["agent_run_store"],
         active_bg_tasks={},
     )
-    app.state = state
+    app.state = cast(Any, state)
 
     # ── 4. 自动迁移: legacy/config 人格到 DB ─────────
     active = await instances["persona_store"].get_active()

@@ -11,6 +11,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -115,12 +116,13 @@ async def list_available(source_url: str | None = None) -> list[AvailablePlugin]
         )
 
         for (name, url), metadata in zip(candidates, metadata_list, strict=False):
-            if isinstance(metadata, Exception):
-                metadata = None
+            download_metadata: PluginMetadata | None = cast(
+                PluginMetadata | None, metadata
+            ) if not isinstance(metadata, Exception) else None
             plugins.append(AvailablePlugin(
                 file_name=name,
                 download_url=url,
-                metadata=metadata,
+                metadata=download_metadata,
             ))
     except httpx.HTTPStatusError as e:
         logger.warning("获取插件源失败 (%s): %s %s", url, e.response.status_code, e.response.text[:200])
