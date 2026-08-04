@@ -13,6 +13,15 @@ MEMORY_ACTIVE_PRIORITY_THRESHOLD: float = 0.3
 # 对话存储默认列表查询上限
 DEFAULT_LIST_LIMIT: int = 5000
 
+# 审计日志清理周期 (秒): 后台协程每天清理一次过期对话流水
+AUDIT_LOG_RETENTION_INTERVAL: int = 24 * 3600
+
+# HTTP 请求/响应日志 body 截断长度 (字符)
+LOG_BODY_MAX_CHARS: int = 1000
+
+# Prompt 版本备份文件名冲突重试上限 (生成唯一时间戳文件名)
+PROMPT_VERSION_MAX_ATTEMPTS: int = 1000
+
 # 工具调用事件的固定 token 估算值
 TOOL_CALL_TOKEN_COUNT: int = 8
 

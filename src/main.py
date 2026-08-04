@@ -8,8 +8,8 @@
 
 import os
 import sys
-from typing import Any
 from importlib.metadata import version as _get_version
+from typing import Any
 
 
 def serve() -> None:

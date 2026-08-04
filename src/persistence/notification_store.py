@@ -16,9 +16,9 @@ upstream_status 等), UI 按 category 决定是否展开。
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from collections.abc import Sequence
 from typing import Any
 
 import aiosqlite

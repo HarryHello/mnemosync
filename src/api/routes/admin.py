@@ -8,8 +8,11 @@
 - admin_upstream.py    — 上游 LLM 服务商 + 模型绑定
 - admin_conversation.py — 跨前端对话流水管理
 - admin_notifications.py — 通知中心
-- admin_identity.py    — 身份管理 (Actors / UserGroups / Strategies)
-- admin_persona.py     — 人格配置与重置
+- admin_identity/      — 身份管理 (Actors / UserGroups / Strategies)
+- admin_persona/       — 人格配置与重置
+
+`admin_identity` 与 `admin_persona` 为包, 内部按职责分模块, 包级 `router` 聚合.
+`__init__.py` 中的 `router` 名与旧单文件一致, 保证 include 不变.
 
 **认证**: 所有路由要求登录 (Depends(get_current_user)), 由父 router 统一注入.
 """

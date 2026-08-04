@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 import logging
 import secrets
-from dataclasses import dataclass, field
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 

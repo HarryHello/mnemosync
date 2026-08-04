@@ -1,7 +1,6 @@
 """身份/模型解析: API Key 验证, 模型候选, 身份上下文."""
 import json
 import logging
-
 from typing import Any
 
 from fastapi import Request

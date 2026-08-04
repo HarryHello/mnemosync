@@ -19,6 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, _StreamingResponse
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
+from src.core.constants import LOG_BODY_MAX_CHARS
 from src.infra.debug_context import new_correlation_id, set_correlation_id
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ def _log_debug(
         extra["headers"] = _truncate_json(headers, 500)
     if body:
         body_str = json.dumps(body, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
-        extra["body"] = body_str[:1000]
+        extra["body"] = body_str[:LOG_BODY_MAX_CHARS]
     logger.debug("http %s %s %s", direction, method, url, extra=extra)
 
 
@@ -99,7 +100,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                     try:
                         request_body = json.loads(body.decode("utf-8", errors="replace"))
                     except (json.JSONDecodeError, UnicodeDecodeError):
-                        request_body = body.decode("utf-8", errors="replace")[:1000]
+                        request_body = body.decode("utf-8", errors="replace")[:LOG_BODY_MAX_CHARS]
             except Exception as e:
                 logger.debug("Failed to read request body: %s", e)
 
@@ -215,7 +216,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                 try:
                     response_body = json.loads(body_bytes.decode("utf-8", errors="replace"))
                 except (json.JSONDecodeError, UnicodeDecodeError):
-                    response_body = body_bytes.decode("utf-8", errors="replace")[:1000]
+                    response_body = body_bytes.decode("utf-8", errors="replace")[:LOG_BODY_MAX_CHARS]
 
             _log(response_body)
 

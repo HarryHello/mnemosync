@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from collections.abc import Sequence
 from typing import Any, Protocol
 
 import aiosqlite

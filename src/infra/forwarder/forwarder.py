@@ -425,6 +425,7 @@ class Forwarder:
     # ============ 生命周期 ============
 
     async def close(self) -> None:
+        """关闭自建的 HTTP 客户端 (使用外部 pool 时无需关闭)."""
         if self._client and not self._pool:
             await self._client.aclose()
             self._client = None

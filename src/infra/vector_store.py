@@ -153,6 +153,7 @@ class VectorStore:
         self.add(entry, vector)
 
     def delete(self, memory_id: str) -> None:
+        """删除一条记忆的向量. 删除失败仅记 warning, 不抛出."""
         try:
             self._collection.delete(ids=[memory_id])
         except Exception:
@@ -204,6 +205,7 @@ class VectorStore:
         return out
 
     def count(self) -> int:
+        """返回 collection 中当前的向量条数."""
         return self._collection.count()
 
     @staticmethod

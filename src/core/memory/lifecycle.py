@@ -33,8 +33,8 @@ if TYPE_CHECKING:
     from src.core.memory.reindex import ReindexProgress
     from src.infra.vector_store import VectorStore
     from src.persistence.memory_store import SqliteMemoryStore
-    from src.persistence.relationship_store import SqliteRelationshipStore
     from src.persistence.notification_store import NotificationStore
+    from src.persistence.relationship_store import SqliteRelationshipStore
 
 logger = logging.getLogger(__name__)
 
@@ -320,5 +320,5 @@ class MemoryLifecycle:
                 message=str(error) or type(error).__name__,
                 meta=meta,
             )
-        except Exception as notify_err:
+        except aiosqlite.Error as notify_err:
             logger.warning("写入通知中心失败: %s", notify_err)

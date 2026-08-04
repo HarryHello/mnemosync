@@ -6,14 +6,17 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from collections.abc import Sequence
 from typing import Any, Literal
 
 import aiosqlite
 
 from src.persistence.base import SqliteStore
+
+# 清理时保留的最大记录数 (超出后删除最旧记录)
+MAX_RECORDS: int = 10000
 
 
 @dataclass
@@ -195,7 +198,7 @@ class AgentRunStore(SqliteStore):
                 return row[0] if row else 0
 
     async def cleanup(
-        self, retention_days: int = 7, max_records: int = 10000
+        self, retention_days: int = 7, max_records: int = MAX_RECORDS
     ) -> int:
         """清理旧记录, 返回被删条数."""
         async with self._conn() as db:

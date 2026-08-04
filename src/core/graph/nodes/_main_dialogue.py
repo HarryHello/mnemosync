@@ -10,6 +10,7 @@ Pipeline stages:
 import logging
 from typing import Any
 
+import aiosqlite
 from langchain_core.runnables import RunnableConfig
 
 from src.core.agents import run_main_dialogue
@@ -113,7 +114,7 @@ async def _prepare_context(
             lorebook_entries = await lorebook_store.match_for_space(
                 query, space_id=state.get("space_id"), limit=5,
             )
-        except Exception:
+        except aiosqlite.Error:
             logger.warning("Lorebook match failed", exc_info=True)
 
     messages = build_main_dialogue_messages(
@@ -204,6 +205,8 @@ async def _invoke_llm(
                         identity_store=identity_store,
                         **args,
                     )
+                # 内部 tool handler 是任意业务代码, 其异常需转成 model 可见的
+                # tool_result, 不能中断对话. 保留裸捕获兜底.
                 except Exception as e:
                     result = {"success": False, "error": str(e)}
                 messages_with_tools.append({
@@ -259,7 +262,7 @@ async def _process_response(
         if space_policy_store is not None and space_id:
             try:
                 space_policy = await space_policy_store.get(space_id)
-            except Exception:
+            except aiosqlite.Error:
                 logger.warning("Failed to load space policy for expressor", exc_info=True)
 
         expressor_cfg = ExpressorConfig(

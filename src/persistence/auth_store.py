@@ -14,10 +14,10 @@ import hashlib
 import hmac
 import os
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from collections.abc import Sequence
 from typing import Any, Protocol
 
 import aiosqlite

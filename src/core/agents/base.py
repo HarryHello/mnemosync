@@ -33,6 +33,7 @@ class ReActStep:
     is_final: bool = False
 
     def format(self) -> str:
+        """将单步记录格式化为可读文本 (调试/演示用)."""
         parts = [f"[Round {self.round}]"]
         if self.think:
             parts.append(f"  Think: {self.think[:100]}")
@@ -55,6 +56,7 @@ class ReActResult:
 
     @property
     def succeeded(self) -> bool:
+        """循环是否成功结束 (无 error)."""
         return self.error is None
 
 

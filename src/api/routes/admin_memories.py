@@ -19,12 +19,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.deps import get_lorebook_store
 from src.api.routes.auth import get_current_user
-from src.persistence.lorebook_store import SqliteLorebookStore
 from src.api.schemas.admin import (
     LorebookEntryCreateBody,
     LorebookEntryItem,
     LorebookEntryListResponse,
 )
+from src.persistence.lorebook_store import SqliteLorebookStore
 
 from .admin_memories_crud import router as crud_router
 from .admin_memories_maintenance import router as maintenance_router

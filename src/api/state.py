@@ -40,9 +40,9 @@ if TYPE_CHECKING:
     from src.persistence.identity_store import SqliteIdentityStore
     from src.persistence.lorebook_store import SqliteLorebookStore
     from src.persistence.memory_store import SqliteMemoryStore
-    from src.persistence.relationship_store import SqliteRelationshipStore
     from src.persistence.notification_store import NotificationStore
     from src.persistence.persona_store import SqlitePersonaStore
+    from src.persistence.relationship_store import SqliteRelationshipStore
     from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 

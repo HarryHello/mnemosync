@@ -91,6 +91,7 @@ class SqliteMemoryStore(SqliteStore):
     # ============ MemoryEntry CRUD ============
 
     async def save(self, entry: MemoryEntry) -> None:
+        """以 upsert 方式保存一条记忆（INSERT OR REPLACE）."""
         async with self._conn() as db:
             await db.execute(
                 """
@@ -126,6 +127,7 @@ class SqliteMemoryStore(SqliteStore):
             await db.commit()
 
     async def get_by_id(self, entry_id: str) -> MemoryEntry | None:
+        """按 id 查询单条记忆; 不存在返回 None."""
         async with self._conn() as db:
             async with db.execute(
                 "SELECT * FROM memory_entries WHERE id = ?", (entry_id,)
@@ -134,6 +136,7 @@ class SqliteMemoryStore(SqliteStore):
                 return self._row_to_entry(row) if row else None
 
     async def delete(self, entry_id: str) -> bool:
+        """物理删除一条记忆; 返回是否删除了记录."""
         async with self._conn() as db:
             cur = await db.execute(
                 "DELETE FROM memory_entries WHERE id = ?", (entry_id,)
@@ -255,6 +258,7 @@ class SqliteMemoryStore(SqliteStore):
     async def update_priority(
         self, entry_id: str, priority: float, is_forgotten: bool
     ) -> None:
+        """更新记忆的优先级与遗忘标记 (衰减评估后调用)."""
         async with self._conn() as db:
             await db.execute(
                 """
@@ -323,6 +327,7 @@ class SqliteMemoryStore(SqliteStore):
             await db.commit()
 
     async def count_permanent(self, source_user: str) -> int:
+        """统计某用户当前永久记忆的数量 (用于限额检查)."""
         async with self._conn() as db:
             async with db.execute(
                 """

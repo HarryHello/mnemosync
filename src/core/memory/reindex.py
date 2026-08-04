@@ -25,7 +25,10 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+import aiosqlite
+
 from src.core.memory.models import MemoryEntry, MemoryType
+from src.core.models.resolver import NoCandidateForRoleError
 from src.infra.llm_service.models import ModelType
 
 if TYPE_CHECKING:
@@ -163,7 +166,7 @@ class Reindexer:
             self._reset_progress()
             try:
                 cand = await self.resolver.first(ModelType.EMBEDDING)
-            except Exception as e:
+            except (NoCandidateForRoleError, aiosqlite.Error) as e:
                 self._fail(f"无可用嵌入模型: {e}")
                 raise
 
@@ -215,6 +218,8 @@ class Reindexer:
                     "reindex 完成: total=%d processed=%d pruned=%d",
                     self.progress.total, self.progress.processed, self.progress.pruned,
                 )
+            # 整个 reindex 是跨子系统操作 (SQLite / ChromaDB / 上游嵌入), 任一阶段失败
+            # 都必须中止整轮并标记 ERROR, 因此保留裸捕获兜底 (日志已带堆栈).
             except Exception as e:
                 logger.exception("reindex 失败")
                 self._fail(str(e))
@@ -290,7 +295,7 @@ class Pruner:
                 await self.memory_store.delete(mid)
                 self.vector_store.delete(mid)
                 deleted += 1
-            except Exception as e:
+            except (aiosqlite.Error, RuntimeError) as e:
                 logger.error("prune 删除失败 %s: %s", mid, e)
         return PruneResult(
             total_before=total_before,

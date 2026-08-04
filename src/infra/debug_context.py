@@ -47,7 +47,7 @@ class use_agent:
         self.name = name
         self._token: Token[str | None] | None = None
 
-    def __enter__(self) -> "use_agent":
+    def __enter__(self) -> use_agent:
         token = _agent_name.set(self.name)
         self._token = token
         return self

@@ -13,7 +13,7 @@ from fastapi import FastAPI
 
 from src.api.state import AppState
 from src.core.config import _load_default_persona, get_settings
-from src.core.constants import DEFAULT_PERSONA_ID
+from src.core.constants import AUDIT_LOG_RETENTION_INTERVAL, DEFAULT_PERSONA_ID
 from src.core.identity.plugin_registry import discover_plugins
 from src.core.memory.reindex import ReindexProgress
 from src.core.models.resolver import RoleResolver
@@ -38,9 +38,9 @@ from src.persistence.idempotency_store import SqliteIdempotencyStore
 from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.lorebook_store import SqliteLorebookStore
 from src.persistence.memory_store import SqliteMemoryStore
-from src.persistence.relationship_store import SqliteRelationshipStore
 from src.persistence.notification_store import NotificationStore
 from src.persistence.persona_store import SqlitePersonaStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ async def _conversation_prune_loop(
     store: SqliteConversationStore, window_days: int
 ) -> None:
     """每天清一次过期对话流水. 独立后台协程, 单进程单实例."""
-    interval = 24 * 3600
+    interval = AUDIT_LOG_RETENTION_INTERVAL
     try:
         cutoff = datetime.now(UTC) - timedelta(days=window_days)
         n = await store.delete_before(cutoff)

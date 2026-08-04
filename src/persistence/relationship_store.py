@@ -74,6 +74,7 @@ class SqliteRelationshipStore(SqliteStore):
     # ============ Relationship CRUD ============
 
     async def get_relationship(self, persona_id: str, user_id: str) -> Relationship | None:
+        """按 (persona_id, user_id) 查询一条关系; 不存在返回 None."""
         async with self._conn() as db:
             async with db.execute(
                 """
@@ -88,6 +89,7 @@ class SqliteRelationshipStore(SqliteStore):
                 return self._row_to_relationship(row) if row else None
 
     async def save_relationship(self, rel: Relationship) -> None:
+        """以 upsert 方式保存一条关系 (INSERT OR REPLACE)."""
         async with self._conn() as db:
             await db.execute(
                 """
@@ -385,6 +387,7 @@ class SqliteRelationshipStore(SqliteStore):
             return cur.rowcount or 0
 
     async def count_relationships(self) -> int:
+        """返回所有关系行的总数 (用于重置仪表盘)."""
         async with self._conn() as db:
             async with db.execute("SELECT COUNT(*) FROM relationships") as cursor:
                 row = await cursor.fetchone()

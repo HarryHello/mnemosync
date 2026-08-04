@@ -24,7 +24,6 @@ from src.core.agents.tracking import run_agent_tracked
 from src.core.config import Settings, get_settings
 from src.core.constants import VIRTUAL_MODEL_ANY
 from src.core.memory import MemoryEntry, Relationship, format_relationship
-from src.persistence.conversation_store import SqliteConversationStore
 from src.core.memory.context import (
     build_main_dialogue_messages,
     render_main_dialogue_system,
@@ -36,6 +35,7 @@ from src.infra.debug_context import emit_pipeline, use_agent
 from src.infra.forwarder import StreamResult, UpstreamError, UpstreamTimeout, parse_sse_stream_full
 from src.infra.forwarder.multi import MultiForwarder, UpstreamAllCandidatesFailed
 from src.infra.llm_service.models import ModelType
+from src.persistence.conversation_store import SqliteConversationStore
 from src.tools import MemoryRetriever
 
 from ._accessors import _build_graph_config, _get_conversation_store, _get_multi_forwarder
