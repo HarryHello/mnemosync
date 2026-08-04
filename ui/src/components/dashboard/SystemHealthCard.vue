@@ -13,16 +13,30 @@ const backendStatus = ref<BackendStatusResponse | null>(null)
 const backendError = ref<string | null>(null)
 const backendLoading = ref(false)
 const actionLoading = ref(false)
+// 是否为前后端分离模式 (面板进程提供后端管理路由)
+const isPanelMode = ref(true)
 
-const running = computed(() => backendStatus.value?.running ?? false)
+const running = computed(() => {
+  if (isPanelMode.value) {
+    return backendStatus.value?.running ?? false
+  }
+  // 单进程模式: 用 props.health 判断 (来自 /health 端点)
+  return props.health?.status === 'ok'
+})
 
 async function refreshBackendStatus() {
   backendLoading.value = true
   backendError.value = null
   try {
     backendStatus.value = await getBackendStatus()
+    isPanelMode.value = true
   } catch (err) {
-    backendError.value = err instanceof Error ? err.message : String(err)
+    // 路由不存在 (404/405) = 单进程模式, 无后端管理路由
+    if (err instanceof Error && /404|405|Not Found/.test(err.message)) {
+      isPanelMode.value = false
+    } else {
+      backendError.value = err instanceof Error ? err.message : String(err)
+    }
     backendStatus.value = null
   } finally {
     backendLoading.value = false
@@ -61,18 +75,21 @@ onMounted(refreshBackendStatus)
   <el-card class="health-card">
     <template #header>
       <div class="card-header">
-        <span>系统健康</span>
-        <div class="header-right">
+        <span>
+          系统健康 &ThickSpace;
           <el-tag v-if="backendLoading" size="small" type="info">检测中</el-tag>
           <el-tag v-else-if="running" type="success" size="small">运行中</el-tag>
           <el-tag v-else-if="backendError" type="danger" size="small">未知</el-tag>
           <el-tag v-else type="danger" size="small">已停止</el-tag>
+        </span>
+        <div class="header-right" v-if="isPanelMode">
           <el-button
             v-if="!running"
             :loading="actionLoading"
             type="primary"
             size="small"
             @click="handleStart"
+            round
           >启动</el-button>
           <template v-else>
             <el-button
@@ -110,7 +127,7 @@ onMounted(refreshBackendStatus)
       v-else-if="!props.health && !running"
       type="warning"
       :closable="false"
-      title="后端进程未在运行, 无法获取健康数据"
+      :title="isPanelMode ? '后端进程未在运行, 无法获取健康数据' : '无法获取健康数据'"
     />
 
     <el-skeleton v-else :rows="2" animated />
