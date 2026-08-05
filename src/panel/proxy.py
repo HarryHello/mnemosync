@@ -41,7 +41,9 @@ async def proxy_request(request: Request, path: str) -> Response:
 
     try:
         # trust_env=False: 本地后端直连, 不走系统代理 (避免代理把 127.0.0.1 请求泄走)
-        async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(30, connect=5), trust_env=False,
+        ) as client:
             req = client.build_request(
                 request.method, url, headers=headers, content=body,
             )

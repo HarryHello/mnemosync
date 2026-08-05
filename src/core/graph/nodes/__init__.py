@@ -93,7 +93,7 @@ def _get_stores(config: RunnableConfig | None) -> StoresDict:
             stores["notification_store"] = NotificationStore(
                 str(s.storage.notification_db_abs),
             )
-        except (AttributeError, Exception):
+        except Exception:
             # Test environment may mock settings without notification_db_abs;
             # nodes not using notifications are unaffected
             stores["notification_store"] = None

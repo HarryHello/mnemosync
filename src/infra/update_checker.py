@@ -35,7 +35,8 @@ async def check_for_update() -> dict | None:
     """
     try:
         current = _get_version("mnemosync")
-    except Exception:
+    except Exception as e:
+        logger.debug("版本查询失败: %s", e)
         return None
 
     try:

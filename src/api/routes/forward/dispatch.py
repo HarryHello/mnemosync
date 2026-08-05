@@ -60,8 +60,8 @@ async def _resolve_tool_policy(
             cfg = _json.loads(strategy.config)
             if isinstance(cfg, dict) and "tool_policy" in cfg:
                 return load_tool_policy(_json.dumps(cfg["tool_policy"]))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("工具策略加载失败: %s", e)
     return None
 
 

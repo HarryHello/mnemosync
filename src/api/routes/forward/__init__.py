@@ -222,8 +222,8 @@ async def create_chat_completion(
     if persona_store is not None:
         try:
             persona_definition = await persona_store.get_active()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("人格加载失败: %s", e)
     persona = settings.persona.prompt
     persona_name = settings.persona.name
     if persona_definition is not None:
@@ -302,8 +302,8 @@ async def create_chat_completion(
             )
             style = extract_style_from_turns(recent_turns, space_id or "")
             expression_style = style.to_memory_content()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("表达风格提取失败: %s", e)
 
     # 16. 构建初始状态 + 空间锁 + 派发
     initial_state = _build_initial_state(
@@ -323,7 +323,8 @@ async def create_chat_completion(
 
     from src.api.deps import _state
     space_locks_mgr = _state(http_request).space_locks
-    assert space_locks_mgr is not None
+    if space_locks_mgr is None:
+        raise RuntimeError("SpaceLockManager not initialized")
     space_locks: SpaceLockManager = space_locks_mgr
     lock_key = space_locks.lock_key(
         space_id=space_id, source_user=source_user, api_key_id=api_key_id,

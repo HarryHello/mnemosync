@@ -70,7 +70,8 @@ async def _resolve_source_frontend(request: Request, api_key_id: str | None) -> 
         store = _get_api_key_store()
     try:
         ak: ApiKey | None = await store.get_by_id(api_key_id)
-    except Exception:
+    except Exception as e:
+        logger.debug("API Key 查询失败: %s", e)
         return None
     return ak.note if ak else None
 

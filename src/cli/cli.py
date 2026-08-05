@@ -62,7 +62,8 @@ def is_docker_installed() -> bool:
             text=True
         )
         return result.returncode == 0
-    except Exception:
+    except Exception as e:
+        logger.debug("Docker 检测失败: %s", e)
         return False
 
 
@@ -77,7 +78,8 @@ def is_container_running() -> bool:
         if result.returncode != 0:
             return False
         return "running" in result.stdout.lower()
-    except Exception:
+    except Exception as e:
+        logger.debug("容器状态检测失败: %s", e)
         return False
 
 
@@ -109,7 +111,8 @@ def _build_api_app(args: argparse.Namespace) -> "FastAPI":
 
     try:
         pkg_version = _get_version("mnemosync")
-    except Exception:
+    except Exception as e:
+        logger.debug("版本查询失败: %s", e)
         pkg_version = "0.0.0+unknown"
 
     app = FastAPI(
@@ -187,14 +190,16 @@ def _run_daemon(project_root: str, pid_file: str, log_file: str, cmd: list[str],
     env["PYTHONPATH"] = project_root
     env["MNEMOSYNC_DIR"] = project_root  # 子进程复用同一安装目录
 
+    log_fh = open(log_file, "a")
     proc = subprocess.Popen(
         [sys.executable, "-m", "src.cli.cli", *cmd],
         cwd=project_root,
         env=env,
-        stdout=open(log_file, "a"),
+        stdout=log_fh,
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+    log_fh.close()
 
     os.makedirs(os.path.dirname(pid_file), exist_ok=True)
     with open(pid_file, "w") as f:

@@ -80,14 +80,17 @@ def _spawn_backend() -> subprocess.Popen[bytes]:
     env["MNEMOSYNC_DIR"] = project_root
     log_file = os.path.join(project_root, "data", "backend.log")
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    return subprocess.Popen(
+    log_fh = open(log_file, "a")
+    proc = subprocess.Popen(
         [sys.executable, "-m", "src.cli.cli", "backend", "--daemon"],
         cwd=project_root,
         env=env,
-        stdout=open(log_file, "a"),
+        stdout=log_fh,
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+    log_fh.close()
+    return proc
 
 
 @router.get("/status")

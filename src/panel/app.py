@@ -51,10 +51,16 @@ def build_panel_app() -> FastAPI:
 
     from src.cli.cli import _mount_static, get_project_root
 
+    try:
+        from importlib.metadata import version as _get_version
+        _panel_version = _get_version("mnemosync")
+    except Exception:
+        _panel_version = "0.0.0+unknown"
+
     app = FastAPI(
         title="Mnemosync Panel",
         description="Mnemosync 轻量管理面板 (前后端分离的前端入口)",
-        version="0.3.5",
+        version=_panel_version,
         lifespan=_panel_lifespan,
     )
 
