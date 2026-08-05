@@ -119,6 +119,12 @@ def _build_api_app(args: argparse.Namespace) -> "FastAPI":
         lifespan=app_lifespan,
     )
 
+    # 公开健康检查端点 (无需认证, 面板状态检测/负载均衡器使用)
+    @app.get("/health", tags=["Health"])
+    async def _health():
+        from datetime import UTC, datetime
+        return {"status": "ok", "version": pkg_version, "timestamp": datetime.now(UTC).isoformat()}
+
     # 添加 CORS 中间件 (开发模式允许 localhost)
     app.add_middleware(
         CORSMiddleware,
