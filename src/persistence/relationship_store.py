@@ -301,6 +301,8 @@ class SqliteRelationshipStore(SqliteStore):
                 current = dict(zip(self._ADDRESSING_FIELDS, row, strict=False))
 
             for field_name, new_val in proposals.items():
+                if field_name not in self._ADDRESSING_FIELDS:
+                    raise ValueError(f"非法字段: {field_name}")
                 if new_val is None:
                     continue
                 old_val = current[field_name]

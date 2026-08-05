@@ -21,8 +21,11 @@ logger = logging.getLogger(__name__)
 # 后端地址, 默认 127.0.0.1:16126 (仅本机, 不对外暴露)
 BACKEND_BASE = os.getenv("MNEMOSYNC_BACKEND_URL", "http://127.0.0.1:16126")
 
-# 透传时移除的请求头 (host 由 httpx 重设; content-length 由 httpx 计算)
-_SKIP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
+# 透传时保留的请求头 (白名单模式, 仅转发业务相关头)
+_FORWARD_HEADERS = {
+    "authorization", "content-type", "accept", "accept-encoding",
+    "accept-language", "cache-control", "user-agent", "x-request-id",
+}
 
 
 async def proxy_request(request: Request, path: str) -> Response:
@@ -35,7 +38,7 @@ async def proxy_request(request: Request, path: str) -> Response:
     url = f"{BACKEND_BASE}/{path}"
     headers = {
         k: v for k, v in request.headers.items()
-        if k.lower() not in _SKIP_HEADERS
+        if k.lower() in _FORWARD_HEADERS
     }
     body = await request.body()
 
@@ -61,7 +64,9 @@ async def proxy_request(request: Request, path: str) -> Response:
 
     # 流式转发响应体 (支持 SSE / 流式 chat)
     content_type = resp.headers.get("content-type", "")
-    headers_out = {k: v for k, v in resp.headers.items() if k.lower() not in _SKIP_HEADERS}
+    # 响应头: 移除 hop-by-hop 头, 保留业务头
+    _RESP_SKIP = {"transfer-encoding", "connection", "keep-alive"}
+    headers_out = {k: v for k, v in resp.headers.items() if k.lower() not in _RESP_SKIP}
 
     async def _iter() -> AsyncIterator[bytes]:
         try:

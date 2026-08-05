@@ -180,6 +180,7 @@ class AgentRunStore(SqliteStore):
         if status:
             conditions.append("status = ?")
             params.append(status)
+        # where 由硬编码条件 + "?" 占位符组成, 无 SQL 注入风险
         where = " AND ".join(conditions) if conditions else "1=1"
         async with self._conn() as db:
             async with db.execute(
@@ -203,6 +204,7 @@ class AgentRunStore(SqliteStore):
         if status:
             conditions.append("status = ?")
             params.append(status)
+        # where 由硬编码条件 + "?" 占位符组成, 无 SQL 注入风险
         where = " AND ".join(conditions) if conditions else "1=1"
         async with self._conn() as db:
             async with db.execute(
