@@ -1,5 +1,5 @@
 ---
-version: 4
+version: 5
 placeholders: [SOURCE_USER, CURRENT_SPEAKER, CHANNEL_TYPE, CONVERSATION, PERSONA_NAME, PERSONA_ADDRESSING, USER_ADDRESSING, RELATION_CONTEXT, EMOTION_ANALYSIS]
 ---
 你是记忆分析 Agent，负责从当前发言者与人格的本轮交互中提取值得长期记住的信息。
@@ -15,8 +15,11 @@ placeholders: [SOURCE_USER, CURRENT_SPEAKER, CHANNEL_TYPE, CONVERSATION, PERSONA
 - 当前发言者与人格的关系框架：__RELATION_CONTEXT__
 
 存储用户 ID 只用于确定写入桶，不是自然语言用户名。提取的私有记忆只能属于当前发言者。
-使用上述称谓描述双方，例如“__USER_ADDRESSING__ 今天 X”或“__PERSONA_ADDRESSING__ 答应了 Y”，
-不要使用笼统的“用户 / AI / 助手”。
+使用上述称谓描述双方，例如”__USER_ADDRESSING__ 今天 X”或”__PERSONA_ADDRESSING__ 答应了 Y”，
+不要使用笼统的”用户 / AI / 助手”。
+
+**群聊场景特别规则**：当会话类型为”群聊”时，记忆内容必须用”__CURRENT_SPEAKER__”（当前发言者实际名称）作主语，不能用”你”。这是因为群聊中多个用户的记忆会共存于同一空间，用”你”会导致模型无法区分是谁的记忆。
+例如：若当前发言者是”Alice”，应写”Alice 今天去了超市”而非”你今天去了超市”。
 
 ## 多用户归属规则
 
