@@ -3,20 +3,58 @@
 本文件记录 Mnemosync 的主要版本变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [v0.3.5] - 2026-07
+## [v0.3.5] - 2026-08
 
 ### 安全
-- 升级 starlette 修复已知安全漏洞，并启用 CI 阻断性检查。
-- 修复对话历史中跨用户上下文混入的问题（`b1ac477`）。
+- 修复群聊上下文混杂漏洞：`build_short_term_history` 增加 `source_user` 过滤，防止不同用户的对话历史泄露。
+- 升级 starlette 1.0→1.3，修复 6 个 CVE。
+- 群聊记忆用实际用户名（`CURRENT_SPEAKER`）作主语，替代模糊的"你"。
+
+### 功能
+- **前后端分离**：新增 `mnemosync panel`（轻量面板 16125）+ `mnemosync backend`（后端 16126），支持面板内启停后端。
+- **Agent 运行契约**：`AgentSpec` 注册表、`AgentRunStore` 持久化、`run_agent_tracked()` 超时/追踪。
+- **版本更新检测**：启动时检查 GitHub releases，有新版本自动通知；设置页面手动检查 + 升级按钮。
+- **一次性升级通知**：v0.3.5 升级提醒用户重建向量库（chromadb 大版本升级）。
+- **仪表盘改进**：健康卡片显示后端状态 + 启停按钮；上游配置测试按钮；自动刷新。
+- **设置页面**：版本更新检测 + 升级按钮；重启服务按钮。
+- **人格导入导出**：角色卡导入（已有）+ 导出按钮。
+- CLI 新增 `mnemosync restart`、`mnemosync backend-stop`；daemon 模式显示端口。
 
 ### 架构
-- 实现前端-后端分离（panel + backend 进程分离）。
-- 修复 `docx/design/to-fix.md` 中 8 个问题。
+- 拆分 `nodes.py`（803 行→7 个模块包）。
+- 拆分 `memory_store.py`（950 行→`memory_store` + `relationship_store`）。
+- 拆分 `admin_persona.py`（837 行→8 个文件包）。
+- 拆分 `admin_identity.py`（524 行→5 个文件包）。
+- 提取 forward `_accessors.py` 解决循环依赖。
+- `HttpLogStore` 改继承 `SqliteStore`。
+- 所有 store 统一使用 `MigrationRunner` 管理 schema。
+- langgraph 1.x config 注入 bug 修复（`from __future__ import annotations` 导致节点收不到 config）。
+
+### 修复
+- SSE 中间件消费 body 导致调试面板永远"连接中"。
+- memory_graph 任务创建后立即被 finally 取消。
+- `get_project_root()` 在安装环境下路径错误。
+- `SystemHealthCard` 启停后健康数据不更新。
+- 面板代理 `/panel/api-keys` 返回 404（代理范围不足）。
+- `http_log_store` 的 `is_closed()` 无效调用。
+- 9 个 Vue 组件 `fmtDate` 未定义。
+- 日志页面分页无响应。
+
+### 依赖升级
+- langgraph 0.6→1.2、langchain-core 0.3→1.5（移除未使用的 langchain/langchain-openai）
+- chromadb 0.6→1.5、cryptography 42→50
+- fastapi 0.115→0.141、uvicorn 0.32→0.52、pydantic 2.9→2.13
+- bcrypt 4.2→5.0、structlog 24.4→26.1、httpx 加 socksio 代理支持
+- pytest 8.4→9.1、pytest-asyncio 0.26→1.4、ruff 0.12→0.16、mypy 1.17→2.3
 
 ### 工程
-- 升级全部依赖至最新版本（v0.3.5）。
-- 修复全部 mypy 错误（244 → 0），分解 `_handle_stream` 等相关重构。
-- 将 `SqliteRelationshipStore` 拆分，修复若干快速问题。
+- mypy 580→0 错误，CI 改为阻断。
+- 前端 ESLint 18 错误清零，CI 改为阻断。
+- 补充 17 个新测试（crypto、relationship_store、admin_core、vector_search、forward integration、panel_routes、update_checker、identity_binding）。
+- 收窄 `except Exception` 裸捕获，补充 `logger.debug`。
+- 抽取 magic numbers 为命名常量。
+- 面板代理改用请求头白名单。
+- 添加 CHANGELOG.md。
 
 ## [v0.3.4] - 2026-06
 
