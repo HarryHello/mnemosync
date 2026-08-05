@@ -8,7 +8,7 @@ Pipeline stages:
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 from langchain_core.runnables import RunnableConfig
@@ -16,6 +16,9 @@ from langchain_core.runnables import RunnableConfig
 from src.core.agents import run_main_dialogue
 from src.core.config import get_settings
 from src.core.graph.state import AgentState
+
+if TYPE_CHECKING:
+    from src.core.config import Settings
 from src.core.memory import build_main_dialogue_messages, format_relationship
 from src.core.memory.trigger_reason import infer_trigger_reason
 from src.core.utils import last_user_message
@@ -32,7 +35,7 @@ logger = logging.getLogger(__name__)
 async def _prepare_context(
     state: AgentState,
     config: RunnableConfig | None,
-    settings: Any,
+    settings: "Settings",
     forwarder: MultiForwarder,
     memory_store: SqliteMemoryStore,
     vector_store: VectorStore,

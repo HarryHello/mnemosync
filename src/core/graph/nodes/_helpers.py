@@ -18,7 +18,9 @@ from src.persistence.notification_store import NotificationStore
 from src.persistence.relationship_store import SqliteRelationshipStore
 
 if TYPE_CHECKING:
+    from src.core.config import Settings
     from src.core.graph.state import AgentState
+    from src.core.memory.models import Relationship
     from src.infra.debug_bus import DebugEventBus
     from src.persistence.agent_run_store import AgentRunStore
     from src.persistence.identity_store import SqliteIdentityStore
@@ -73,7 +75,7 @@ async def _compute_emotion(
         return {"emotion": "neutral", "intensity": 0.0, "category": "other", "keywords": [], "summary": ""}
 
 
-def _resolve_addressing(rel: Any, settings: Any) -> tuple[str, str, str]:
+def _resolve_addressing(rel: Relationship | None, settings: Settings) -> tuple[str, str, str]:
     """Runtime addressing resolution: table values (non-None) take priority, else fallback to TOML baseline.
 
     v0.2.10 onwards relationships table has persona_addressing / user_addressing / context columns.
@@ -88,7 +90,7 @@ def _resolve_addressing(rel: Any, settings: Any) -> tuple[str, str, str]:
     )
 
 
-def _retrieval_context(state: AgentState, rel: Any = None) -> RetrievalContext:
+def _retrieval_context(state: AgentState, rel: Relationship | None = None) -> RetrievalContext:
     """Build audience context from graph state (v0.3.0).
 
     rel is used for FRIENDS_ONLY / CONFIDENTIAL threshold checks;
