@@ -292,7 +292,36 @@ async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.warning("版本升级通知失败 (可忽略): %s", e)
 
-    # ── 7. 启动后台清理任务 ──────────────────────────
+    # ── 7. 版本更新检查 (异步, 不阻塞启动) ─────────
+    async def _check_update() -> None:
+        try:
+            from src.infra.update_checker import check_for_update
+            update = await check_for_update()
+            if update:
+                cat = "update_available"
+                all_notifs = await notification_store.list_page(limit=500, offset=0)
+                # 避免重复: 只在版本变更时发新通知
+                already = any(
+                    n.category == cat and update["latest_version"] in (n.title or "")
+                    for n in all_notifs[0]
+                )
+                if not already:
+                    await notification_store.add(
+                        level="info",
+                        category=cat,
+                        title=f"新版本 {update['latest_version']} 可用",
+                        message=(
+                            f"当前版本: {update['current_version']}。"
+                            f"运行 `mnemosync upgrade` 升级。"
+                        ),
+                    )
+                    logger.info("发现新版本: %s", update["latest_version"])
+        except Exception as e:
+            logger.debug("版本更新检查失败 (可忽略): %s", e)
+
+    asyncio.create_task(_check_update(), name="update-check")
+
+    # ── 8. 启动后台清理任务 ──────────────────────────
     prune_task = asyncio.create_task(
         _conversation_prune_loop(instances["conversation_store"], settings.storage.short_term_days),
         name="conversation-prune-loop",

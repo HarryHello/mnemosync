@@ -189,3 +189,19 @@ async def clear_logs(store: HttpLogStore = Depends(get_http_log_store)) -> dict[
     """清空所有日志."""
     await store.clear_all()
     return {"success": True, "message": "All logs cleared"}
+
+
+@router.get("/check-update")
+async def check_update() -> dict[str, Any]:
+    """检查是否有新版本可用."""
+    from src.infra.update_checker import check_for_update
+
+    update = await check_for_update()
+    if update:
+        return {
+            "update_available": True,
+            "latest_version": update["latest_version"],
+            "current_version": update["current_version"],
+            "url": update["url"],
+        }
+    return {"update_available": False}
