@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElCol, ElRow } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { changePassword, checkUpdate, restartService, setToken, upgradeService } from '@/api/client'
 import type { UpdateCheckResult } from '@/api/client'
@@ -204,69 +204,85 @@ async function onRestart() {
       </el-form>
     </el-card>
 
-    <el-card class="section">
-      <template #header>
-        <div class="card-header">
-          <span>版本更新</span>
-        </div>
-      </template>
+    <el-row :gutter="16" class="settings-row">
+      <el-col :span="12">
+        <el-card class="section settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>服务</span>
+            </div>
+          </template>
 
-      <div v-if="updateChecking" class="update-status">
-        <el-skeleton :rows="1" animated />
-      </div>
-      <div v-else-if="updateResult?.update_available" class="update-available">
-        <el-alert type="success" :closable="false" show-icon
-          :title="`新版本 ${updateResult.latest_version} 可用`"
-          :description="`当前版本: ${updateResult.current_version}`"
-        />
-        <div class="update-actions">
-          <el-button type="primary" :loading="upgrading" @click="onUpgrade">
-            升级到 {{ updateResult.latest_version }}
+          <el-alert
+            type="warning"
+            :closable="false"
+            show-icon
+            title="重启服务会短暂中断连接"
+            description="重启完成后需要刷新页面重新加载。"
+          />
+          <el-button
+            class="restart-button"
+            type="danger"
+            :loading="restarting"
+            @click="onRestart">
+              重启服务
           </el-button>
-          <el-button @click="onUpdateCheck" :loading="updateChecking">
-            重新检查
-          </el-button>
-          <el-button v-if="updateResult.url" tag="a" :href="updateResult.url" target="_blank" link>
-            查看更新日志
-          </el-button>
-        </div>
-      </div>
-      <div v-else class="update-latest">
-        <el-alert type="info" :closable="false" show-icon title="已是最新版本" />
-        <el-button style="margin-top: 8px" @click="onUpdateCheck" :loading="updateChecking" size="small">
-          重新检查
-        </el-button>
-      </div>
-    </el-card>
+        </el-card>
+      </el-col>
 
-    <el-card class="section">
-      <template #header>
-        <div class="card-header">
-          <span>服务</span>
-        </div>
-      </template>
+      <el-col :span="12">
+        <el-card class="section settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>版本更新</span>
+            </div>
+          </template>
 
-      <el-alert
-        type="warning"
-        :closable="false"
-        show-icon
-        title="重启服务会短暂中断连接"
-        description="重启完成后需要刷新页面重新加载。"
-      />
-      <el-button
-        class="restart-button"
-        type="danger"
-        :loading="restarting"
-        @click="onRestart">
-          重启服务
-      </el-button>
-    </el-card>
+          <div v-if="updateChecking" class="update-status">
+            <el-skeleton :rows="1" animated />
+          </div>
+          <div v-else-if="updateResult?.update_available" class="update-available">
+            <el-alert type="success" :closable="false" show-icon
+              :title="`新版本 ${updateResult.latest_version} 可用`"
+              :description="`当前版本: ${updateResult.current_version}`"
+            />
+            <div class="update-actions">
+              <el-button type="primary" :loading="upgrading" @click="onUpgrade">
+                升级到 {{ updateResult.latest_version }}
+              </el-button>
+              <el-button @click="onUpdateCheck" :loading="updateChecking">
+                重新检查
+              </el-button>
+              <el-button v-if="updateResult.url" tag="a" :href="updateResult.url" target="_blank" link>
+                查看更新日志
+              </el-button>
+            </div>
+          </div>
+          <div v-else class="update-latest">
+            <el-alert type="info" :closable="false" show-icon title="已是最新版本" />
+            <el-button style="margin-top: 8px" @click="onUpdateCheck" :loading="updateChecking" size="small">
+              重新检查
+            </el-button>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
 <style lang="scss" scoped>
 .section {
   margin-bottom: $space-4;
+}
+
+.settings-row {
+  align-items: stretch;
+}
+
+.settings-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .card-header {
