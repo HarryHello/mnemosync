@@ -220,13 +220,14 @@ async function onRestart() {
             title="重启服务会短暂中断连接"
             description="重启完成后需要刷新页面重新加载。"
           />
-          <el-button
-            class="restart-button"
-            type="danger"
-            :loading="restarting"
-            @click="onRestart">
-              重启服务
-          </el-button>
+          <div class="restart-wrapper">
+            <el-button
+              type="danger"
+              :loading="restarting"
+              @click="onRestart">
+                重启服务
+            </el-button>
+          </div>
         </el-card>
       </el-col>
 
@@ -260,7 +261,7 @@ async function onRestart() {
           </div>
           <div v-else class="update-latest">
             <el-alert type="info" :closable="false" show-icon title="已是最新版本" />
-            <el-button style="margin-top: 8px" @click="onUpdateCheck" :loading="updateChecking" size="small">
+            <el-button style="margin-top: 8px" @click="onUpdateCheck" :loading="updateChecking" size="medium">
               重新检查
             </el-button>
           </div>
@@ -291,8 +292,10 @@ async function onRestart() {
   gap: $space-2;
 }
 
-.restart-button {
-  margin-top: $space-2;
+.restart-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-top: $space-3;
 }
 
 .update-actions {
