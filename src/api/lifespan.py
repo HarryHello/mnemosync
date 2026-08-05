@@ -273,7 +273,26 @@ async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.warning("启动关系迁移失败 (可忽略): %s", e)
 
-    # ── 6. 启动后台清理任务 ──────────────────────────
+    # ── 6. 版本升级一次性通知 ──────────────────────
+    notification_store = instances["notification_store"]
+    try:
+        from src.core.constants import UPGRADE_NOTIFICATION_VERSIONS
+        for ver, msg in UPGRADE_NOTIFICATION_VERSIONS.items():
+            cat = f"version_upgrade_{ver}"
+            # 检查是否已发过此版本的通知 (查全量)
+            all_notifs = await notification_store.list_page(limit=500, offset=0)
+            if not any(n.category == cat for n in all_notifs[0]):
+                await notification_store.add(
+                    level="warning",
+                    category=cat,
+                    title=f"升级到 v{ver} 注意事项",
+                    message=msg,
+                )
+                logger.info("已添加版本升级通知: v%s", ver)
+    except Exception as e:
+        logger.warning("版本升级通知失败 (可忽略): %s", e)
+
+    # ── 7. 启动后台清理任务 ──────────────────────────
     prune_task = asyncio.create_task(
         _conversation_prune_loop(instances["conversation_store"], settings.storage.short_term_days),
         name="conversation-prune-loop",

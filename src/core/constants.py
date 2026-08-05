@@ -31,3 +31,12 @@ VIRTUAL_MODEL_CREATED_AT: int = 1686935002
 # 辅助 Agent ReAct 最大迭代次数 (与 AgentSpec 保持一致)
 MEMORY_ANALYSIS_MAX_ITERATIONS: int = 4
 RELATIONSHIP_ANALYSIS_MAX_ITERATIONS: int = 2
+
+# 版本升级一次性通知 (版本号 → 通知内容)
+# 仅在对应版本首次启动时发送一次, 用户阅读后不再重复
+UPGRADE_NOTIFICATION_VERSIONS: dict[str, str] = {
+    "0.3.5": (
+        "v0.3.5 升级了 ChromaDB (0.6→1.5) 和 LangGraph (0.6→1.2)。"
+        "如果向量检索出现问题，请执行 `mnemosync memory reindex` 重建向量库。"
+    ),
+}
