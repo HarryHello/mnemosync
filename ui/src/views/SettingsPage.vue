@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { changePassword, restartService, setToken } from '@/api/client'
+import { changePassword, checkUpdate, restartService, setToken, upgradeService } from '@/api/client'
+import type { UpdateCheckResult } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 
@@ -12,6 +13,9 @@ const authStore = useAuthStore()
 const formRef = ref<FormInstance | null>(null)
 const submitting = ref(false)
 const restarting = ref(false)
+const upgrading = ref(false)
+const updateChecking = ref(false)
+const updateResult = ref<UpdateCheckResult | null>(null)
 
 const form = reactive({
   old_password: '',
@@ -57,6 +61,50 @@ async function onSubmit() {
     submitting.value = false
   }
 }
+
+async function onUpdateCheck() {
+  updateChecking.value = true
+  try {
+    updateResult.value = await checkUpdate()
+    if (!updateResult.value.update_available) {
+      ElMessage.success('已是最新版本')
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    updateChecking.value = false
+  }
+}
+
+async function onUpgrade() {
+  if (!updateResult.value?.update_available) return
+  try {
+    await ElMessageBox.confirm(
+      `将升级到 ${updateResult.value.latest_version}，升级后需要重启服务。确认升级吗？`,
+      '升级',
+      {
+        confirmButtonText: '确认升级',
+        cancelButtonText: '取消',
+        type: 'info',
+      },
+    )
+  } catch {
+    return
+  }
+
+  upgrading.value = true
+  try {
+    const res = await upgradeService()
+    ElMessage.success(res.message || '升级已启动')
+    ElMessage.info('请稍后刷新页面，然后重启服务')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    upgrading.value = false
+  }
+}
+
+onMounted(onUpdateCheck)
 
 async function onRestart() {
   try {
@@ -159,6 +207,41 @@ async function onRestart() {
     <el-card class="section">
       <template #header>
         <div class="card-header">
+          <span>版本更新</span>
+        </div>
+      </template>
+
+      <div v-if="updateChecking" class="update-status">
+        <el-skeleton :rows="1" animated />
+      </div>
+      <div v-else-if="updateResult?.update_available" class="update-available">
+        <el-alert type="success" :closable="false" show-icon
+          :title="`新版本 ${updateResult.latest_version} 可用`"
+          :description="`当前版本: ${updateResult.current_version}`"
+        />
+        <div class="update-actions">
+          <el-button type="primary" :loading="upgrading" @click="onUpgrade">
+            升级到 {{ updateResult.latest_version }}
+          </el-button>
+          <el-button @click="onUpdateCheck" :loading="updateChecking">
+            重新检查
+          </el-button>
+          <el-button v-if="updateResult.url" tag="a" :href="updateResult.url" target="_blank" link>
+            查看更新日志
+          </el-button>
+        </div>
+      </div>
+      <div v-else class="update-latest">
+        <el-alert type="info" :closable="false" show-icon title="已是最新版本" />
+        <el-button style="margin-top: 8px" @click="onUpdateCheck" :loading="updateChecking" size="small">
+          重新检查
+        </el-button>
+      </div>
+    </el-card>
+
+    <el-card class="section">
+      <template #header>
+        <div class="card-header">
           <span>服务</span>
         </div>
       </template>
@@ -170,7 +253,13 @@ async function onRestart() {
         title="重启服务会短暂中断连接"
         description="重启完成后需要刷新页面重新加载。"
       />
-      <el-button type="danger" :loading="restarting" @click="onRestart">重启服务</el-button>
+      <el-button
+        class="restart-button"
+        type="danger"
+        :loading="restarting"
+        @click="onRestart">
+          重启服务
+      </el-button>
     </el-card>
   </div>
 </template>
@@ -184,5 +273,21 @@ async function onRestart() {
   display: flex;
   align-items: center;
   gap: $space-2;
+}
+
+.restart-button {
+  margin-top: $space-2;
+}
+
+.update-actions {
+  display: flex;
+  gap: $space-2;
+  margin-top: $space-3;
+  align-items: center;
+}
+
+.update-latest {
+  display: flex;
+  flex-direction: column;
 }
 </style>

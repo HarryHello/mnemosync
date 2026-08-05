@@ -67,3 +67,27 @@ export interface RestartResponse {
 export async function restartService(): Promise<RestartResponse> {
   return apiPost<RestartResponse>('/admin/restart')
 }
+
+// ============================================================================
+// Update Check & Upgrade
+// ============================================================================
+
+export interface UpdateCheckResult {
+  update_available: boolean
+  latest_version?: string
+  current_version?: string
+  url?: string
+}
+
+export async function checkUpdate(): Promise<UpdateCheckResult> {
+  return apiGet<UpdateCheckResult>('/admin/check-update')
+}
+
+export interface UpgradeResult {
+  success: boolean
+  message: string
+}
+
+export async function upgradeService(): Promise<UpgradeResult> {
+  return apiPost<UpgradeResult>('/admin/upgrade')
+}

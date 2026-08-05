@@ -7,6 +7,7 @@
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
@@ -205,3 +206,28 @@ async def check_update() -> dict[str, Any]:
             "url": update["url"],
         }
     return {"update_available": False}
+
+
+@router.post("/upgrade")
+async def upgrade() -> dict[str, Any]:
+    """执行升级 (mnemosync upgrade).
+
+    通过 subprocess 触发, 因为升级会替换代码文件, 不能在当前进程内执行.
+    """
+    import subprocess
+    from src.cli.cli import get_project_root
+
+    project_root = get_project_root()
+    env = os.environ.copy()
+    env.setdefault("PYTHONPATH", project_root)
+    env["MNEMOSYNC_DIR"] = project_root
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "src.cli.cli", "upgrade"],
+        cwd=project_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    return {"success": True, "message": f"升级已启动 (PID: {proc.pid}), 请稍后刷新页面"}
