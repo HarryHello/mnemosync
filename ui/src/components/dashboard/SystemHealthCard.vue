@@ -28,6 +28,14 @@ const running = computed(() => {
   return props.health?.status === 'ok'
 })
 
+// 优先用 backendStatus 里的 health (面板模式, 启停后实时), 回退到 props.health (单进程模式)
+const displayHealth = computed(() => {
+  if (isPanelMode.value && backendStatus.value?.health) {
+    return backendStatus.value.health
+  }
+  return props.health
+})
+
 async function refreshBackendStatus() {
   backendLoading.value = true
   backendError.value = null
@@ -124,11 +132,11 @@ onMounted(refreshBackendStatus)
       </div>
     </template>
 
-    <el-descriptions v-if="props.health" :column="2" border>
-      <el-descriptions-item label="状态">{{ props.health.status }}</el-descriptions-item>
-      <el-descriptions-item label="版本">{{ props.health.version }}</el-descriptions-item>
+    <el-descriptions v-if="displayHealth" :column="2" border>
+      <el-descriptions-item label="状态">{{ displayHealth.status }}</el-descriptions-item>
+      <el-descriptions-item label="版本">{{ displayHealth.version }}</el-descriptions-item>
       <el-descriptions-item label="检查时间" :span="2">
-        <span class="mono">{{ new Date(props.health.timestamp).toLocaleString() }}</span>
+        <span class="mono">{{ new Date(displayHealth.timestamp).toLocaleString() }}</span>
       </el-descriptions-item>
     </el-descriptions>
 
@@ -140,7 +148,7 @@ onMounted(refreshBackendStatus)
     />
 
     <el-alert
-      v-else-if="!props.health && !running"
+      v-else-if="!displayHealth && !running"
       type="warning"
       :closable="false"
       :title="isPanelMode ? '后端进程未在运行, 无法获取健康数据' : '无法获取健康数据'"
