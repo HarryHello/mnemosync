@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,24 +18,20 @@ from src.api.routes.auth import get_current_user
 from src.api.state import AppState
 from src.core.memory.models import Relationship
 from src.persistence.auth_store import User
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 
 @pytest.fixture
-def app(tmp_path: Path) -> Iterator[FastAPI]:
-    import asyncio
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+async def app(tmp_path: Path) -> AsyncIterator[FastAPI]:
     memory_store = SqliteMemoryStore(str(tmp_path / "mem.db"))
-    loop.run_until_complete(memory_store.connect())
+    await memory_store.connect()
     relationship_store = SqliteRelationshipStore(str(tmp_path / "mem.db"))
-    loop.run_until_complete(relationship_store.connect())
+    await relationship_store.connect()
 
     from src.persistence.identity_store import SqliteIdentityStore
     identity_store = SqliteIdentityStore(str(tmp_path / "identity.db"))
-    loop.run_until_complete(identity_store.connect())
+    await identity_store.connect()
 
     app = FastAPI()
     outer = APIRouter(prefix="/panel")
@@ -51,10 +47,9 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
     yield app
 
-    loop.run_until_complete(memory_store.close())
-    loop.run_until_complete(relationship_store.close())
-    loop.run_until_complete(identity_store.close())
-    loop.close()
+    await memory_store.close()
+    await relationship_store.close()
+    await identity_store.close()
 
 
 def test_relationship_missing_returns_default_stranger(app: FastAPI) -> None:
@@ -71,10 +66,8 @@ def test_relationship_missing_returns_default_stranger(app: FastAPI) -> None:
     assert body["updated_at"] == ""  # 前端据此显示 "尚未建立" 提示
 
 
-def test_relationship_returns_stored_row_when_present(app: FastAPI) -> None:
+async def test_relationship_returns_stored_row_when_present(app: FastAPI) -> None:
     """存在真实行时应返回该行, 不被默认值覆盖."""
-    import asyncio
-    loop = asyncio.new_event_loop()
     relationship_store: SqliteRelationshipStore = app.state.relationship_store
 
     rel = Relationship.create("default", "test-user")
@@ -82,10 +75,7 @@ def test_relationship_returns_stored_row_when_present(app: FastAPI) -> None:
     rel.trust_level = 0.31
     rel.type = "acquaintance"
     rel.last_active = datetime(2026, 7, 18, 10, 0, 0, tzinfo=UTC)
-    try:
-        loop.run_until_complete(relationship_store.save_relationship(rel))
-    finally:
-        loop.close()
+    await relationship_store.save_relationship(rel)
 
     client = TestClient(app)
     resp = client.get("/panel/admin/relationship?user_id=test-user")
@@ -194,33 +184,23 @@ def test_relationship_requires_user_or_actor_id(app: FastAPI) -> None:
     assert resp.status_code == 400
 
 
-def test_relationship_resolves_actor_to_group(app: FastAPI) -> None:
+async def test_relationship_resolves_actor_to_group(app: FastAPI) -> None:
     """绑定 UserGroup 的 Actor → 查到的是组关系 (effective_user_id 收敛)."""
-    import asyncio
-
     from src.persistence.identity_store import SqliteIdentityStore
 
-    loop = asyncio.new_event_loop()
     identity_store: SqliteIdentityStore = app.state.identity_store
     relationship_store: SqliteRelationshipStore = app.state.relationship_store
-    try:
-        actor_qq = loop.run_until_complete(
-            identity_store.find_or_create_actor("12345", "astrbot", "小明")
-        )
-        actor_dc = loop.run_until_complete(
-            identity_store.find_or_create_actor("67890", "maibot", "小明")
-        )
-        group = loop.run_until_complete(identity_store.create_group("张三"))
-        loop.run_until_complete(identity_store.bind_actor_to_group(actor_qq.id, group.id))
-        loop.run_until_complete(identity_store.bind_actor_to_group(actor_dc.id, group.id))
+    actor_qq = await identity_store.find_or_create_actor("12345", "astrbot", "小明")
+    actor_dc = await identity_store.find_or_create_actor("67890", "maibot", "小明")
+    group = await identity_store.create_group("张三")
+    await identity_store.bind_actor_to_group(actor_qq.id, group.id)
+    await identity_store.bind_actor_to_group(actor_dc.id, group.id)
 
-        # 在组 (effective_user_id) 上写关系
-        rel = Relationship.create("default", group.id)
-        rel.intimacy_score = 0.55
-        rel.type = "friend"
-        loop.run_until_complete(relationship_store.save_relationship(rel))
-    finally:
-        loop.close()
+    # 在组 (effective_user_id) 上写关系
+    rel = Relationship.create("default", group.id)
+    rel.intimacy_score = 0.55
+    rel.type = "friend"
+    await relationship_store.save_relationship(rel)
 
     client = TestClient(app)
     # 两个平台的 Actor 都查到同一份组关系
@@ -233,20 +213,12 @@ def test_relationship_resolves_actor_to_group(app: FastAPI) -> None:
         assert body["relationship_type"] == "friend"
 
 
-def test_relationship_actor_without_group_uses_actor_id(app: FastAPI) -> None:
+async def test_relationship_actor_without_group_uses_actor_id(app: FastAPI) -> None:
     """未绑组的 Actor → effective_user_id 就是 actor_id 本身."""
-    import asyncio
-
     from src.persistence.identity_store import SqliteIdentityStore
 
-    loop = asyncio.new_event_loop()
     identity_store: SqliteIdentityStore = app.state.identity_store
-    try:
-        actor = loop.run_until_complete(
-            identity_store.find_or_create_actor("99999", "chatbox", "独行侠")
-        )
-    finally:
-        loop.close()
+    actor = await identity_store.find_or_create_actor("99999", "chatbox", "独行侠")
 
     client = TestClient(app)
     resp = client.get(f"/panel/admin/relationship?actor_id={actor.id}")
@@ -256,20 +228,12 @@ def test_relationship_actor_without_group_uses_actor_id(app: FastAPI) -> None:
     assert body["relationship_type"] == "stranger"  # 尚未建立 → 默认值
 
 
-def test_put_and_audit_by_actor_id(app: FastAPI) -> None:
+async def test_put_and_audit_by_actor_id(app: FastAPI) -> None:
     """PUT 支持 actor_id 定位; 审计也能按 actor_id 查."""
-    import asyncio
-
     from src.persistence.identity_store import SqliteIdentityStore
 
-    loop = asyncio.new_event_loop()
     identity_store: SqliteIdentityStore = app.state.identity_store
-    try:
-        actor = loop.run_until_complete(
-            identity_store.find_or_create_actor("54321", "web", "面板用户")
-        )
-    finally:
-        loop.close()
+    actor = await identity_store.find_or_create_actor("54321", "web", "面板用户")
 
     client = TestClient(app)
     resp = client.put(
@@ -309,18 +273,13 @@ def test_list_relationships_empty(app: FastAPI) -> None:
     assert body["page_size"] == 20
 
 
-def test_list_relationships_returns_all(app: FastAPI) -> None:
+async def test_list_relationships_returns_all(app: FastAPI) -> None:
     """写入多条 → 全部返回, 默认按亲密度降序."""
-    import asyncio
-    loop = asyncio.new_event_loop()
     store: SqliteRelationshipStore = app.state.relationship_store
-    try:
-        for _i, (uid, intimacy) in enumerate([("alice", 0.42), ("bob", 0.91), ("carol", 0.15)]):
-            rel = Relationship.create("default", uid)
-            rel.intimacy_score = intimacy
-            loop.run_until_complete(store.save_relationship(rel))
-    finally:
-        loop.close()
+    for _i, (uid, intimacy) in enumerate([("alice", 0.42), ("bob", 0.91), ("carol", 0.15)]):
+        rel = Relationship.create("default", uid)
+        rel.intimacy_score = intimacy
+        await store.save_relationship(rel)
 
     client = TestClient(app)
     resp = client.get("/panel/admin/relationships")
@@ -335,23 +294,15 @@ def test_list_relationships_returns_all(app: FastAPI) -> None:
     assert all(item["identity"] is None for item in body["items"])
 
 
-def test_list_relationships_enriches_actor_identity(app: FastAPI) -> None:
+async def test_list_relationships_enriches_actor_identity(app: FastAPI) -> None:
     """Actor 关系应包含平台、外部账号和昵称，而不是只暴露内部 ID."""
-    import asyncio
-
     from src.persistence.identity_store import SqliteIdentityStore
 
-    loop = asyncio.new_event_loop()
     identity_store: SqliteIdentityStore = app.state.identity_store
     relationship_store: SqliteRelationshipStore = app.state.relationship_store
-    try:
-        actor = loop.run_until_complete(
-            identity_store.find_or_create_actor("123456", "astrbot", "小明")
-        )
-        rel = Relationship.create("default", actor.id)
-        loop.run_until_complete(relationship_store.save_relationship(rel))
-    finally:
-        loop.close()
+    actor = await identity_store.find_or_create_actor("123456", "astrbot", "小明")
+    rel = Relationship.create("default", actor.id)
+    await relationship_store.save_relationship(rel)
 
     body = TestClient(app).get("/panel/admin/relationships").json()
     identity = body["items"][0]["identity"]
@@ -365,29 +316,19 @@ def test_list_relationships_enriches_actor_identity(app: FastAPI) -> None:
     }]
 
 
-def test_relationship_enriches_group_identity(app: FastAPI) -> None:
+async def test_relationship_enriches_group_identity(app: FastAPI) -> None:
     """UserGroup 关系应显示组名及其全部跨平台账号."""
-    import asyncio
-
     from src.persistence.identity_store import SqliteIdentityStore
 
-    loop = asyncio.new_event_loop()
     identity_store: SqliteIdentityStore = app.state.identity_store
     relationship_store: SqliteRelationshipStore = app.state.relationship_store
-    try:
-        qq = loop.run_until_complete(
-            identity_store.find_or_create_actor("10001", "astrbot", "小明QQ")
-        )
-        discord = loop.run_until_complete(
-            identity_store.find_or_create_actor("discord-1", "discord", "小明DC")
-        )
-        group = loop.run_until_complete(identity_store.create_group("张三"))
-        loop.run_until_complete(identity_store.bind_actor_to_group(qq.id, group.id))
-        loop.run_until_complete(identity_store.bind_actor_to_group(discord.id, group.id))
-        rel = Relationship.create("default", group.id)
-        loop.run_until_complete(relationship_store.save_relationship(rel))
-    finally:
-        loop.close()
+    qq = await identity_store.find_or_create_actor("10001", "astrbot", "小明QQ")
+    discord = await identity_store.find_or_create_actor("discord-1", "discord", "小明DC")
+    group = await identity_store.create_group("张三")
+    await identity_store.bind_actor_to_group(qq.id, group.id)
+    await identity_store.bind_actor_to_group(discord.id, group.id)
+    rel = Relationship.create("default", group.id)
+    await relationship_store.save_relationship(rel)
 
     body = TestClient(app).get(
         f"/panel/admin/relationship?user_id={group.id}"
@@ -399,18 +340,13 @@ def test_relationship_enriches_group_identity(app: FastAPI) -> None:
     }
 
 
-def test_list_relationships_pagination(app: FastAPI) -> None:
+async def test_list_relationships_pagination(app: FastAPI) -> None:
     """page_size=2 第一页 2 条, 第二页 1 条."""
-    import asyncio
-    loop = asyncio.new_event_loop()
     store: SqliteRelationshipStore = app.state.relationship_store
-    try:
-        for i in range(5):
-            rel = Relationship.create("default", f"user_{i}")
-            rel.intimacy_score = round(i * 0.1, 3)
-            loop.run_until_complete(store.save_relationship(rel))
-    finally:
-        loop.close()
+    for i in range(5):
+        rel = Relationship.create("default", f"user_{i}")
+        rel.intimacy_score = round(i * 0.1, 3)
+        await store.save_relationship(rel)
 
     client = TestClient(app)
     # 第一页
@@ -437,20 +373,15 @@ def test_list_relationships_pagination(app: FastAPI) -> None:
     assert b3["page"] == 3
 
 
-def test_list_relationships_invalid_sort_falls_back(app: FastAPI) -> None:
+async def test_list_relationships_invalid_sort_falls_back(app: FastAPI) -> None:
     """非法 sort_by 退回 intimacy_score 降序."""
-    import asyncio
-    loop = asyncio.new_event_loop()
     store: SqliteRelationshipStore = app.state.relationship_store
-    try:
-        rel = Relationship.create("default", "alice")
-        rel.intimacy_score = 0.5
-        loop.run_until_complete(store.save_relationship(rel))
-        rel2 = Relationship.create("default", "bob")
-        rel2.intimacy_score = 0.9
-        loop.run_until_complete(store.save_relationship(rel2))
-    finally:
-        loop.close()
+    rel = Relationship.create("default", "alice")
+    rel.intimacy_score = 0.5
+    await store.save_relationship(rel)
+    rel2 = Relationship.create("default", "bob")
+    rel2.intimacy_score = 0.9
+    await store.save_relationship(rel2)
 
     client = TestClient(app)
     resp = client.get("/panel/admin/relationships?sort_by=nonexistent")
@@ -461,18 +392,13 @@ def test_list_relationships_invalid_sort_falls_back(app: FastAPI) -> None:
     assert body["items"][1]["user_id"] == "alice"
 
 
-def test_list_relationships_trust_sort(app: FastAPI) -> None:
+async def test_list_relationships_trust_sort(app: FastAPI) -> None:
     """按 trust_level 升序."""
-    import asyncio
-    loop = asyncio.new_event_loop()
     store: SqliteRelationshipStore = app.state.relationship_store
-    try:
-        for uid, trust in [("alice", 0.3), ("bob", 0.9), ("carol", 0.1)]:
-            rel = Relationship.create("default", uid)
-            rel.trust_level = trust
-            loop.run_until_complete(store.save_relationship(rel))
-    finally:
-        loop.close()
+    for uid, trust in [("alice", 0.3), ("bob", 0.9), ("carol", 0.1)]:
+        rel = Relationship.create("default", uid)
+        rel.trust_level = trust
+        await store.save_relationship(rel)
 
     client = TestClient(app)
     resp = client.get("/panel/admin/relationships?sort_by=trust_level&sort_order=asc")

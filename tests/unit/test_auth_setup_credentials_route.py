@@ -6,8 +6,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -19,13 +18,10 @@ from src.persistence.auth_store import SqliteAuthStore
 
 
 @pytest.fixture
-def app_and_store(tmp_path: Path) -> Iterator[tuple[FastAPI, SqliteAuthStore]]:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+async def app_and_store(tmp_path: Path) -> AsyncIterator[tuple[FastAPI, SqliteAuthStore]]:
     auth_store = SqliteAuthStore(str(tmp_path / "auth.db"))
-    loop.run_until_complete(auth_store.connect())
-    loop.run_until_complete(auth_store.create_default_user("mnemosync"))
+    await auth_store.connect()
+    await auth_store.create_default_user("mnemosync")
 
     app = FastAPI()
     app.include_router(api_router)
@@ -33,8 +29,7 @@ def app_and_store(tmp_path: Path) -> Iterator[tuple[FastAPI, SqliteAuthStore]]:
 
     yield app, auth_store
 
-    loop.run_until_complete(auth_store.close())
-    loop.close()
+    await auth_store.close()
 
 
 def _login(client: TestClient, username: str, password: str) -> str:
@@ -46,7 +41,7 @@ def _login(client: TestClient, username: str, password: str) -> str:
     return resp.json()["access_token"]
 
 
-def test_setup_credentials_success_flips_must_change(
+async def test_setup_credentials_success_flips_must_change(
     app_and_store: tuple[FastAPI, SqliteAuthStore],
 ) -> None:
     """must_change_password=True 时, 成功修改并翻位到 False."""
@@ -66,11 +61,7 @@ def test_setup_credentials_success_flips_must_change(
     assert resp.status_code == 200, resp.text
     assert resp.json()["success"] is True
 
-    loop = asyncio.new_event_loop()
-    try:
-        user = loop.run_until_complete(store.get_user_by_username("harry"))
-    finally:
-        loop.close()
+    user = await store.get_user_by_username("harry")
     assert user is not None
     assert user.must_change_password is False
 

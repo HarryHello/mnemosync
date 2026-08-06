@@ -22,10 +22,10 @@ from src.core.memory.short_term import (
 from src.persistence.conversation_store import ConversationTurn, SqliteConversationStore
 
 
-def _turn(role: str, content: str, ts: datetime) -> ConversationTurn:
+def _turn(role: str, content: str, ts: datetime, **kwargs) -> ConversationTurn:
     return ConversationTurn(
         id=None, role=role, content=content, ts=ts,
-        token_count=estimate_tokens(content), source_frontend=None,
+        token_count=estimate_tokens(content), source_frontend=None, **kwargs,
     )
 
 
@@ -71,17 +71,18 @@ async def test_build_short_term_history_time_and_model_windows(tmp_path: Path) -
     await store.connect()
     try:
         now = datetime.now(UTC)
-        # 3 条窗内, 1 条窗外
-        await store.append("user", "太老了", token_count=10, ts=now - timedelta(days=10))
-        await store.append("user", "内-1", token_count=10, ts=now - timedelta(days=5))
-        await store.append("assistant", "内-2", token_count=10, ts=now - timedelta(days=2))
-        await store.append("user", "刚才", token_count=10, ts=now - timedelta(hours=1))
+        uid = "user-test"
+        # 3 条窗内, 1 条窗外 (全部归属同一用户)
+        await store.append("user", "太老了", token_count=10, ts=now - timedelta(days=10), effective_user_id=uid)
+        await store.append("user", "内-1", token_count=10, ts=now - timedelta(days=5), effective_user_id=uid)
+        await store.append("assistant", "内-2", token_count=10, ts=now - timedelta(days=2), effective_user_id=uid)
+        await store.append("user", "刚才", token_count=10, ts=now - timedelta(hours=1), effective_user_id=uid)
 
         # 大 ctx: 3 条都留下 (窗外那条直接被时间窗过滤)
         built = await build_short_term_history(
             store=store, now=now, window_days=7,
             context_length=32_000, system_text="sys", new_user_text="q",
-            max_tokens_hint=1024,
+            max_tokens_hint=1024, source_user=uid,
         )
         assert built.total_candidates == 3
         assert built.kept == 3
@@ -93,7 +94,7 @@ async def test_build_short_term_history_time_and_model_windows(tmp_path: Path) -
             store=store, now=now, window_days=7,
             context_length=500,  # 500 - 9 - 8 - 512 < 0 → budget=0
             system_text="sys", new_user_text="q",
-            max_tokens_hint=None,
+            max_tokens_hint=None, source_user=uid,
         )
         assert built2.budget == 0
         assert built2.kept == 0
@@ -106,6 +107,7 @@ async def test_build_short_term_history_time_and_model_windows(tmp_path: Path) -
             context_length=2048,
             system_text="sys", new_user_text="q",
             max_tokens_hint=512,  # 保留区 = 512, 剩下装 history 的预算 ~1500
+            source_user=uid,
         )
         assert built3.kept >= 1
         # 最新那条一定在
@@ -121,30 +123,32 @@ async def test_build_short_term_history_space_isolation(tmp_path: Path) -> None:
     await store.connect()
     try:
         now = datetime.now(UTC)
+        uid = "user-space-test"
         await store.append("user", "群A的话", token_count=10, space_id="group-a",
-                           ts=now - timedelta(hours=2))
+                           ts=now - timedelta(hours=2), effective_user_id=uid)
         await store.append("assistant", "群A回复", token_count=10, space_id="group-a",
-                           ts=now - timedelta(hours=1))
+                           ts=now - timedelta(hours=1), effective_user_id=uid)
         await store.append("user", "群B的话", token_count=10, space_id="group-b",
-                           ts=now - timedelta(minutes=30))
-        await store.append("user", "私聊的话", token_count=10, ts=now - timedelta(minutes=10))
+                           ts=now - timedelta(minutes=30), effective_user_id=uid)
+        await store.append("user", "私聊的话", token_count=10,
+                           ts=now - timedelta(minutes=10), effective_user_id=uid)
 
         # 指定 group-a: 只看到群A的两条
         built = await build_short_term_history(
             store=store, now=now, window_days=7,
             context_length=32_000, system_text="sys", new_user_text="q",
             max_tokens_hint=1024,
-            space_id="group-a",
+            space_id="group-a", source_user=uid,
         )
         assert [m["content"] for m in built.conversation_history] == ["群A的话", "群A回复"]
 
-        # 不指定 space: 退化为全局流水 (单用户私聊场景, 四条全见)
-        built_all = await build_short_term_history(
+        # 不指定 space 但指定 user: 该用户的所有流水
+        built_user = await build_short_term_history(
             store=store, now=now, window_days=7,
             context_length=32_000, system_text="sys", new_user_text="q",
-            max_tokens_hint=1024,
+            max_tokens_hint=1024, source_user=uid,
         )
-        assert built_all.total_candidates == 4
+        assert built_user.total_candidates == 4
     finally:
         await store.close()
 
@@ -197,11 +201,12 @@ async def test_build_short_term_history_context_length_fallback(tmp_path: Path) 
     await store.connect()
     try:
         now = datetime.now(UTC)
-        await store.append("user", "hi", token_count=10, ts=now - timedelta(hours=1))
+        uid = "user-fallback"
+        await store.append("user", "hi", token_count=10, ts=now - timedelta(hours=1), effective_user_id=uid)
         built = await build_short_term_history(
             store=store, now=now, window_days=7,
             context_length=None, system_text="sys", new_user_text="q",
-            max_tokens_hint=512,
+            max_tokens_hint=512, source_user=uid,
         )
         # 兜底后预算合理, 应该能装下
         assert built.kept == 1

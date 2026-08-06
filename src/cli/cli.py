@@ -10,6 +10,10 @@ import os
 import subprocess
 import sys
 from importlib.metadata import version as _get_version
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 # ============================================================================
 # 工具函数
@@ -58,7 +62,8 @@ def is_docker_installed() -> bool:
             text=True
         )
         return result.returncode == 0
-    except Exception:
+    except Exception as e:
+        logger.debug("Docker 检测失败: %s", e)
         return False
 
 
@@ -73,11 +78,12 @@ def is_container_running() -> bool:
         if result.returncode != 0:
             return False
         return "running" in result.stdout.lower()
-    except Exception:
+    except Exception as e:
+        logger.debug("容器状态检测失败: %s", e)
         return False
 
 
-def run_docker_command(args: list[str], capture: bool = False) -> subprocess.CompletedProcess:
+def run_docker_command(args: list[str], capture: bool = False) -> subprocess.CompletedProcess[Any]:
     """运行 Docker Compose 命令."""
     project_root = get_project_root()
     cmd = ["docker", "compose", "-f", f"{project_root}/docker-compose.yml"] + args
@@ -91,38 +97,22 @@ def run_docker_command(args: list[str], capture: bool = False) -> subprocess.Com
 # 本地模式命令
 # ============================================================================
 
-def cmd_serve(args: argparse.Namespace) -> int:
-    """启动服务（本地模式）."""
-    project_root = get_project_root()
+def _build_api_app(args: argparse.Namespace) -> "FastAPI":
+    """创建 Mnemosync API FastAPI app (不含静态文件挂载).
 
-    # 设置环境变量
-    os.chdir(project_root)
-    os.environ.setdefault("PYTHONPATH", project_root)
+    供 ``cmd_serve`` (单进程模式) 与 ``cmd_backend`` (分离模式后端) 复用.
+    """
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
 
-    # 设置调试模式环境变量
-    if args.debug:
-        os.environ["MNEMOSYNC_DEBUG"] = "1"
-        print("🔍 Debug mode enabled - logging all HTTP requests/responses")
-
-    # 导入并运行服务器
-    try:
-        import uvicorn
-        from fastapi import FastAPI
-        from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.staticfiles import StaticFiles
-        from starlette.responses import FileResponse
-
-        from src.api import api_router, forward_router
-        from src.api.lifespan import app_lifespan
-        from src.api.middleware import HttpLogMiddleware
-    except ImportError as e:
-        print(f"❌ 依赖未安装: {e}")
-        print("请运行: uv sync")
-        return 1
+    from src.api import api_router, forward_router
+    from src.api.lifespan import app_lifespan
+    from src.api.middleware import HttpLogMiddleware
 
     try:
         pkg_version = _get_version("mnemosync")
-    except Exception:
+    except Exception as e:
+        logger.debug("版本查询失败: %s", e)
         pkg_version = "0.0.0+unknown"
 
     app = FastAPI(
@@ -131,6 +121,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
         version=pkg_version,
         lifespan=app_lifespan,
     )
+
+    # 公开健康检查端点 (无需认证, 面板状态检测/负载均衡器使用)
+    @app.get("/health", tags=["Health"])
+    async def _health():
+        from datetime import UTC, datetime
+        return {"status": "ok", "version": pkg_version, "timestamp": datetime.now(UTC).isoformat()}
 
     # 添加 CORS 中间件 (开发模式允许 localhost)
     app.add_middleware(
@@ -148,65 +144,108 @@ def cmd_serve(args: argparse.Namespace) -> int:
     app.include_router(api_router)
     app.include_router(forward_router)
 
-    # 前端静态文件
+    return app
+
+
+def _mount_static(app: "FastAPI", project_root: str) -> None:
+    """挂载前端静态文件 (ui/dist) 到 app."""
+    import os
+
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import FileResponse, Response
+
     ui_dist = os.path.join(project_root, "ui", "dist")
-    if os.path.exists(ui_dist):
-        app.mount("/assets", StaticFiles(directory=os.path.join(ui_dist, "assets")), name="assets")
-
-        from fastapi import HTTPException as _HTTPException
-
-        @app.get("/{full_path:path}")
-        async def serve_spa(full_path: str):
-            """SPA 路由: 未注册的非 API 路径返回 index.html.
-
-            /panel/* 与 /v1/* 属于 API 命名空间, 若未命中已注册路由必须直接 404,
-            否则前端 fetch 拿到 HTML, response.json() 会抛 "Unexpected token '<'".
-            """
-            if full_path.startswith(("panel/", "v1/")) or full_path in ("panel", "v1"):
-                raise _HTTPException(status_code=404, detail="Not Found")
-            file_path = os.path.join(ui_dist, full_path)
-            if os.path.isfile(file_path):
-                return FileResponse(file_path)
-            return FileResponse(os.path.join(ui_dist, "index.html"))
-    else:
+    if not os.path.exists(ui_dist):
         print("⚠️  前端未构建, 仅提供 API 服务")
+        return
+
+    app.mount("/assets", StaticFiles(directory=os.path.join(ui_dist, "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str) -> Response:
+        """SPA 路由: 未注册的非 API 路径返回 index.html.
+
+        /panel/* 与 /v1/* 属于 API 命名空间, 若未命中已注册路由必须直接 404,
+        否则前端 fetch 拿到 HTML, response.json() 会抛 "Unexpected token '<'".
+        """
+        if full_path.startswith(("panel/", "v1/")) or full_path in ("panel", "v1"):
+            from fastapi import HTTPException as _HTTPException
+            raise _HTTPException(status_code=404, detail="Not Found")
+        file_path = os.path.join(ui_dist, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(ui_dist, "index.html"))
+
+
+def _run_daemon(project_root: str, pid_file: str, log_file: str, cmd: list[str],
+                host: str = "", port: int = 0) -> int:
+    """以守护进程方式启动子进程, 写 PID 文件, 返回父进程退出码.
+
+    cmd: 子进程命令行 (sys.executable -m src.cli.cli <cmd>)
+    """
+    import subprocess
+
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = project_root
+    env["MNEMOSYNC_DIR"] = project_root  # 子进程复用同一安装目录
+
+    log_fh = open(log_file, "a")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "src.cli.cli", *cmd],
+        cwd=project_root,
+        env=env,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    log_fh.close()
+
+    os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+    with open(pid_file, "w") as f:
+        f.write(str(proc.pid))
+
+    print(f"🚀 已启动 (PID: {proc.pid})")
+    if host and port:
+        print(f"   地址: http://{host}:{port}")
+    print(f"   日志: {log_file}")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """启动服务（本地模式）."""
+    project_root = get_project_root()
+
+    # 设置环境变量
+    os.chdir(project_root)
+    os.environ.setdefault("PYTHONPATH", project_root)
+
+    # 设置调试模式环境变量
+    if args.debug:
+        os.environ["MNEMOSYNC_DEBUG"] = "1"
+        print("🔍 Debug mode enabled - logging all HTTP requests/responses")
+
+    # 导入并运行服务器
+    try:
+        import uvicorn
+    except ImportError as e:
+        print(f"❌ 依赖未安装: {e}")
+        print("请运行: uv sync")
+        return 1
+
+    app = _build_api_app(args)
+    _mount_static(app, project_root)
 
     host = args.host or os.getenv("HOST", "0.0.0.0")
     port = args.port or int(os.getenv("PORT", "16125"))
     pid_file = os.path.join(project_root, "data", "mnemosync.pid")
 
     if args.daemon:
-        # 后台模式: 用 subprocess 代替 os.fork() (macOS 不支持不带 exec 的 fork)
-        import subprocess
-
         log_file = os.path.join(project_root, "data", "mnemosync.log")
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
-
-        env = os.environ.copy()
-        env["PYTHONPATH"] = project_root
-        env["MNEMOSYNC_DIR"] = project_root  # 子进程复用同一安装目录
-
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "src.cli.cli", "serve"],
-            cwd=project_root,
-            env=env,
-            stdout=open(log_file, "a"),
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-
-        # 写入 PID 文件
-        os.makedirs(os.path.dirname(pid_file), exist_ok=True)
-        with open(pid_file, "w") as f:
-            f.write(str(proc.pid))
-
-        print(f"🚀 Mnemosync 已启动 (PID: {proc.pid})")
-        print(f"   日志: {log_file}")
-        print("   停止: mnemosync stop")
-        return 0
+        return _run_daemon(project_root, pid_file, log_file, ["serve"],
+                           host=host, port=port)
     else:
         # 前台模式
-        # 保存 PID 以便 stop 命令使用
         os.makedirs(os.path.dirname(pid_file), exist_ok=True)
         with open(pid_file, "w") as f:
             f.write(str(os.getpid()))
@@ -216,6 +255,49 @@ def cmd_serve(args: argparse.Namespace) -> int:
             uvicorn.run(app, host=host, port=port, log_level=args.log_level)
         finally:
             # 清理 PID 文件
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+
+    return 0
+
+
+def cmd_backend(args: argparse.Namespace) -> int:
+    """后端服务进程 (分离模式): 提供 /panel/admin/* 与 /v1/* API, 不挂静态文件.
+
+    默认端口 16126, 写 data/backend.pid.
+    """
+    project_root = get_project_root()
+    os.chdir(project_root)
+    os.environ.setdefault("PYTHONPATH", project_root)
+
+    if args.debug:
+        os.environ["MNEMOSYNC_DEBUG"] = "1"
+
+    try:
+        import uvicorn
+    except ImportError as e:
+        print(f"❌ 依赖未安装: {e}")
+        return 1
+
+    app = _build_api_app(args)
+
+    host = args.host or os.getenv("MNEMOSYNC_BACKEND_HOST", "127.0.0.1")
+    port = args.port or int(os.getenv("MNEMOSYNC_BACKEND_PORT", "16126"))
+    pid_file = os.path.join(project_root, "data", "backend.pid")
+
+    if args.daemon:
+        log_file = os.path.join(project_root, "data", "backend.log")
+        return _run_daemon(project_root, pid_file, log_file, ["backend"],
+                           host=host, port=port)
+    else:
+        os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+        with open(pid_file, "w") as f:
+            f.write(str(os.getpid()))
+
+        print(f"🔧 Mnemosync 后端启动中... http://{host}:{port}")
+        try:
+            uvicorn.run(app, host=host, port=port, log_level=args.log_level)
+        finally:
             if os.path.exists(pid_file):
                 os.remove(pid_file)
 
@@ -274,7 +356,7 @@ def cmd_init_docker(args: argparse.Namespace) -> int:
 
     # 构建
     print("📦 构建 Docker 镜像...")
-    result = run_docker_command(["build"])
+    result: subprocess.CompletedProcess[Any] = run_docker_command(["build"])
     if result.returncode != 0:
         print("❌ 构建失败")
         return 1
@@ -321,47 +403,59 @@ def cmd_login_docker(args: argparse.Namespace) -> int:
 # 通用命令
 # ============================================================================
 
-def cmd_stop(args: argparse.Namespace) -> int:
-    """停止服务."""
-    project_root = get_project_root()
-    pid_file = os.path.join(project_root, "data", "mnemosync.pid")
+def _stop_pid_file(pid_file: str, label: str = "服务") -> bool:
+    """尝试停止 PID 文件指向的进程. 返回是否成功停止."""
+    if not os.path.exists(pid_file):
+        return False
+    try:
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
 
-    # 检查本地进程
-    if os.path.exists(pid_file):
-        try:
-            with open(pid_file) as f:
-                pid = int(f.read().strip())
+        # 检查进程是否存在
+        os.kill(pid, 0)
+        # 进程存在，发送终止信号
+        print(f"⏹  停止{label} (PID: {pid})...")
+        os.kill(pid, 15)  # SIGTERM
 
-            # 检查进程是否存在
-            os.kill(pid, 0)
-            # 进程存在，发送终止信号
-            print(f"⏹  停止服务 (PID: {pid})...")
-            os.kill(pid, 15)  # SIGTERM
-
-            # 等待进程退出
-            import time
-            for _ in range(10):
-                try:
-                    os.kill(pid, 0)
-                    time.sleep(0.5)
-                except OSError:
-                    break
-
-            # 检查是否还在运行
+        # 等待进程退出
+        import time
+        for _ in range(10):
             try:
                 os.kill(pid, 0)
-                print("⚠️  进程未响应，强制终止...")
-                os.kill(pid, 9)  # SIGKILL
+                time.sleep(0.5)
             except OSError:
-                pass
+                break
 
-            # 清理 PID 文件
+        # 检查是否还在运行
+        try:
+            os.kill(pid, 0)
+            print("⚠️  进程未响应，强制终止...")
+            os.kill(pid, 9)  # SIGKILL
+        except OSError:
+            pass
+
+        # 清理 PID 文件
+        os.remove(pid_file)
+        print(f"✅ {label}已停止")
+        return True
+    except (ValueError, OSError):
+        # PID 文件无效或进程不存在
+        if os.path.exists(pid_file):
             os.remove(pid_file)
-            print("✅ 服务已停止")
-            return 0
-        except (ValueError, OSError):
-            # PID 文件无效或进程不存在
-            os.remove(pid_file)
+        return False
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    """停止服务 (单进程模式 + 分离模式后端/面板)."""
+    project_root = get_project_root()
+    data_dir = os.path.join(project_root, "data")
+
+    stopped = False
+    # 单进程模式
+    stopped |= _stop_pid_file(os.path.join(data_dir, "mnemosync.pid"), "服务")
+    # 分离模式: 后端 + 面板
+    stopped |= _stop_pid_file(os.path.join(data_dir, "backend.pid"), "后端")
+    stopped |= _stop_pid_file(os.path.join(data_dir, "panel.pid"), "面板")
 
     # 检查 Docker 容器
     if is_container_running():
@@ -372,9 +466,74 @@ def cmd_stop(args: argparse.Namespace) -> int:
         else:
             print("❌ 停止失败")
             return 1
-    else:
+    elif not stopped:
         print("ℹ️  服务未运行")
     return 0
+
+
+def cmd_backend_stop(args: argparse.Namespace) -> int:
+    """停止后端进程 (分离模式)."""
+    project_root = get_project_root()
+    pid_file = os.path.join(project_root, "data", "backend.pid")
+    if not _stop_pid_file(pid_file, "后端"):
+        print("ℹ️  后端未运行")
+    return 0
+
+
+def cmd_panel(args: argparse.Namespace) -> int:
+    """面板进程 (分离模式): 静态文件 + 后端管理 + 反向代理, 常驻 16125."""
+    project_root = get_project_root()
+    os.chdir(project_root)
+    os.environ.setdefault("PYTHONPATH", project_root)
+
+    try:
+        import uvicorn
+    except ImportError as e:
+        print(f"❌ 依赖未安装: {e}")
+        return 1
+
+    from src.panel.app import build_panel_app
+
+    app = build_panel_app()
+
+    host = args.host or os.getenv("HOST", "0.0.0.0")
+    port = args.port or int(os.getenv("PORT", "16125"))
+    pid_file = os.path.join(project_root, "data", "panel.pid")
+
+    if args.daemon:
+        log_file = os.path.join(project_root, "data", "panel.log")
+        return _run_daemon(project_root, pid_file, log_file, ["panel"],
+                           host=host, port=port)
+    else:
+        os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+        with open(pid_file, "w") as f:
+            f.write(str(os.getpid()))
+
+        print(f"🖥️  Mnemosync 面板启动中... http://{host}:{port}")
+        print("   后端请用: mnemosync backend --daemon")
+        try:
+            uvicorn.run(app, host=host, port=port, log_level=args.log_level)
+        finally:
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+
+    return 0
+
+
+def cmd_restart(args: argparse.Namespace) -> int:
+    """重启服务: 停止现有进程, 再后台启动."""
+    # 停止现有服务 (复用 cmd_stop 逻辑)
+    cmd_stop(argparse.Namespace())
+
+    # 后台启动 (复用 cmd_serve 的 daemon 分支)
+    serve_args = argparse.Namespace(
+        host=args.host,
+        port=args.port,
+        daemon=True,
+        debug=args.debug,
+        log_level=args.log_level,
+    )
+    return cmd_serve(serve_args)
 
 
 def cmd_upgrade(args: argparse.Namespace) -> int:
@@ -567,6 +726,35 @@ def main(argv: list[str] | None = None) -> int:
     stop_parser = subparsers.add_parser("stop", help="停止服务 (Docker 模式)")
     stop_parser.set_defaults(func=cmd_stop)
 
+    # ── restart ──
+    restart_parser = subparsers.add_parser("restart", help="重启服务")
+    restart_parser.add_argument("--host", default=None, help="监听地址 (默认: 0.0.0.0)")
+    restart_parser.add_argument("--port", type=int, default=None, help="监听端口 (默认: 16125)")
+    restart_parser.add_argument("--debug", action="store_true", help="调试模式")
+    restart_parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    restart_parser.set_defaults(func=cmd_restart)
+
+    # ── backend (前后端分离: 后端进程, 可启停) ──
+    backend_parser = subparsers.add_parser("backend", help="后端服务进程 (分离模式, 端口 16126)")
+    backend_parser.add_argument("--host", default=None, help="监听地址 (默认: 127.0.0.1)")
+    backend_parser.add_argument("--port", type=int, default=None, help="监听端口 (默认: 16126)")
+    backend_parser.add_argument("--daemon", "-d", action="store_true", help="后台运行")
+    backend_parser.add_argument("--debug", action="store_true", help="调试模式")
+    backend_parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    backend_parser.set_defaults(func=cmd_backend)
+
+    # ── backend stop──
+    backend_stop_parser = subparsers.add_parser("backend-stop", help="停止后端进程 (分离模式)")
+    backend_stop_parser.set_defaults(func=cmd_backend_stop)
+
+    # ── panel (前后端分离: 轻量面板, 常驻) ──
+    panel_parser = subparsers.add_parser("panel", help="面板进程 (分离模式, 端口 16125)")
+    panel_parser.add_argument("--host", default=None, help="监听地址 (默认: 0.0.0.0)")
+    panel_parser.add_argument("--port", type=int, default=None, help="监听端口 (默认: 16125)")
+    panel_parser.add_argument("--daemon", "-d", action="store_true", help="后台运行")
+    panel_parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    panel_parser.set_defaults(func=cmd_panel)
+
     # ── ask ──
     ask_parser = subparsers.add_parser("ask", help="命令行直连主对话 (调试用)")
     ask_parser.add_argument("question", nargs="?", default=None, help="问题内容 (不填则从 stdin 读入)")
@@ -604,7 +792,7 @@ def main(argv: list[str] | None = None) -> int:
         cmd_help(args)
         return 0
 
-    return args.func(args)
+    return int(args.func(args))
 
 
 if __name__ == "__main__":

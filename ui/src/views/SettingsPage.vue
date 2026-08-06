@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox, ElCol, ElRow } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { changePassword, setToken } from '@/api/client'
+import { changePassword, checkUpdate, restartService, setToken, upgradeService } from '@/api/client'
+import type { UpdateCheckResult } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 
@@ -11,6 +12,10 @@ const authStore = useAuthStore()
 
 const formRef = ref<FormInstance | null>(null)
 const submitting = ref(false)
+const restarting = ref(false)
+const upgrading = ref(false)
+const updateChecking = ref(false)
+const updateResult = ref<UpdateCheckResult | null>(null)
 
 const form = reactive({
   old_password: '',
@@ -54,6 +59,77 @@ async function onSubmit() {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   } finally {
     submitting.value = false
+  }
+}
+
+async function onUpdateCheck() {
+  updateChecking.value = true
+  try {
+    updateResult.value = await checkUpdate()
+    if (!updateResult.value.update_available) {
+      ElMessage.success('已是最新版本')
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    updateChecking.value = false
+  }
+}
+
+async function onUpgrade() {
+  if (!updateResult.value?.update_available) return
+  try {
+    await ElMessageBox.confirm(
+      `将升级到 ${updateResult.value.latest_version}，升级后需要重启服务。确认升级吗？`,
+      '升级',
+      {
+        confirmButtonText: '确认升级',
+        cancelButtonText: '取消',
+        type: 'info',
+      },
+    )
+  } catch {
+    return
+  }
+
+  upgrading.value = true
+  try {
+    const res = await upgradeService()
+    ElMessage.success(res.message || '升级已启动')
+    ElMessage.info('请稍后刷新页面，然后重启服务')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    upgrading.value = false
+  }
+}
+
+onMounted(onUpdateCheck)
+
+async function onRestart() {
+  try {
+    await ElMessageBox.confirm(
+      '重启服务会中断当前连接, 请稍后刷新页面。确认重启吗?',
+      '重启服务',
+      {
+        confirmButtonText: '确认重启',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return // 用户取消
+  }
+
+  restarting.value = true
+  try {
+    const res = await restartService()
+    ElMessage.success(res.message || '服务重启中...')
+    ElMessage.info('请稍后重启完成后刷新页面')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    restarting.value = false
   }
 }
 </script>
@@ -127,6 +203,71 @@ async function onSubmit() {
         </el-form-item>
       </el-form>
     </el-card>
+
+    <el-row :gutter="16" class="settings-row">
+      <el-col :span="12">
+        <el-card class="section settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>服务</span>
+            </div>
+          </template>
+
+          <el-alert
+            type="warning"
+            :closable="false"
+            show-icon
+            title="重启服务会短暂中断连接"
+            description="重启完成后需要刷新页面重新加载。"
+          />
+          <div class="restart-wrapper">
+            <el-button
+              type="danger"
+              :loading="restarting"
+              @click="onRestart">
+                重启服务
+            </el-button>
+          </div>
+        </el-card>
+      </el-col>
+
+      <el-col :span="12">
+        <el-card class="section settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>版本更新</span>
+            </div>
+          </template>
+
+          <div v-if="updateChecking" class="update-status">
+            <el-skeleton :rows="1" animated />
+          </div>
+          <div v-else-if="updateResult?.update_available" class="update-available">
+            <el-alert type="success" :closable="false" show-icon
+              :title="`新版本 ${updateResult.latest_version} 可用`"
+              :description="`当前版本: ${updateResult.current_version}`"
+            />
+            <div class="update-actions">
+              <el-button type="primary" :loading="upgrading" @click="onUpgrade">
+                升级到 {{ updateResult.latest_version }}
+              </el-button>
+              <el-button @click="onUpdateCheck" :loading="updateChecking">
+                重新检查
+              </el-button>
+              <el-button v-if="updateResult.url" tag="a" :href="updateResult.url" target="_blank" link>
+                查看更新日志
+              </el-button>
+            </div>
+          </div>
+          <div v-else class="update-latest">
+            <el-alert type="info" :closable="false" show-icon title="已是最新版本" />
+            <el-button style="margin-top: 8px" @click="onUpdateCheck" :loading="updateChecking" size="medium">
+              重新检查
+            </el-button>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
@@ -135,9 +276,37 @@ async function onSubmit() {
   margin-bottom: $space-4;
 }
 
+.settings-row {
+  align-items: stretch;
+}
+
+.settings-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .card-header {
   display: flex;
   align-items: center;
   gap: $space-2;
+}
+
+.restart-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-top: $space-3;
+}
+
+.update-actions {
+  display: flex;
+  gap: $space-2;
+  margin-top: $space-3;
+  align-items: center;
+}
+
+.update-latest {
+  display: flex;
+  flex-direction: column;
 }
 </style>

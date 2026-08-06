@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from src.core.agents.base import (
     run_react_loop,
@@ -58,14 +58,14 @@ class MemoryAnalysisOutput:
     new_memories: list[CandidateMemory]
     decay_evaluations: list[DecayEvaluation]
     raw_output: str
-    steps: list
+    steps: list[Any]
 
     @property
     def succeeded(self) -> bool:
         return bool(self.raw_output)
 
 
-def _extract_json(content: str) -> dict | None:
+def _extract_json(content: str) -> dict[str, Any] | None:
     """从模型输出中提取 JSON, 支持代码围栏与嵌套对象."""
     TRIPLE = "```"
     if TRIPLE in content:
@@ -107,17 +107,17 @@ def _extract_json(content: str) -> dict | None:
 
     json_str = content[start : end + 1]
     try:
-        return json.loads(json_str)
+        return cast(dict[str, Any] | None, json.loads(json_str))
     except json.JSONDecodeError:
         import re
         fixed = re.sub(r'(\s*)(\w+)(\s*:)', r'\1"\2"\3', json_str)
         try:
-            return json.loads(fixed)
+            return cast(dict[str, Any] | None, json.loads(fixed))
         except json.JSONDecodeError:
             return None
 
 
-def _parse_candidate(d: dict) -> CandidateMemory:
+def _parse_candidate(d: dict[str, Any]) -> CandidateMemory:
     memory_type_str = d.get("memory_type", "NORMAL").upper()
     try:
         memory_type = MemoryType(memory_type_str.lower())
@@ -137,7 +137,7 @@ def _parse_candidate(d: dict) -> CandidateMemory:
     )
 
 
-def _parse_decay_eval(d: dict) -> DecayEvaluation:
+def _parse_decay_eval(d: dict[str, Any]) -> DecayEvaluation:
     decision_str = d.get("decision", "ACTIVE").upper()
     try:
         decision = DecayState(decision_str.lower())
@@ -267,7 +267,7 @@ async def run_memory_analysis(
     forwarder: MultiForwarder,
     source_user: str,
     conversation: str,
-    tools: list,
+    tools: list[Any],
     max_iterations: int = 4,
     *,
     persona_name: str,
@@ -330,7 +330,7 @@ async def run_relationship_analysis(
     forwarder: MultiForwarder,
     current_relationship: str,
     conversation: str,
-    tools: list,
+    tools: list[Any],
     max_iterations: int = 2,
     *,
     persona_name: str,
@@ -388,7 +388,7 @@ class PromptCleaningOutput:
     clean_prompt: str
     reasoning: str
     raw_output: str
-    steps: list
+    steps: list[Any]
 
 
 async def run_prompt_cleaning(
@@ -443,7 +443,7 @@ async def run_proxy_thinking(
     relationship: str,
     memories: str,
     user_message: str,
-    tools: list | None = None,
+    tools: list[Any] | None = None,
     max_iterations: int = 3,
     channel_type: str | None = None,
 ) -> str:

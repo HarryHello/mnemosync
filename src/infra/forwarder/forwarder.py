@@ -11,11 +11,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from types import TracebackType
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -25,8 +27,10 @@ from src.infra.debug_context import get_agent_name, get_correlation_id
 from .connection_pool import ConnectionPool
 from .debug_hook import get_debug_bus
 
+logger = logging.getLogger(__name__)
 
-def _emit_debug(direction: str, url: str, **fields) -> str | None:
+
+def _emit_debug(direction: str, url: str, **fields: Any) -> str | None:
     bus = get_debug_bus()
     if bus is None or not bus.should_emit():
         return None
@@ -44,29 +48,25 @@ def _emit_debug(direction: str, url: str, **fields) -> str | None:
     )
 
 
-def _print_upstream(direction: str, base_url: str, data: Any, status: int = None):
-    """打印上游请求/响应到控制台."""
-    colors = {
-        "REQUEST": "\033[95m",   # 紫色 (Mnemosync → LLM)
-        "RESPONSE": "\033[92m",  # 绿色 (LLM → Mnemosync)
-        "ERROR": "\033[91m",     # 红色
-        "TIMEOUT": "\033[93m",   # 黄色
-        "RESET": "\033[0m",
-    }
+def _log_upstream(direction: str, base_url: str, data: Any, status: int | None = None) -> None:
+    """记录上游请求/响应到日志 (DEBUG 级别).
 
-    color = colors.get(direction, colors["RESET"])
-    reset = colors["RESET"]
-
-    print(f"\n{color}{'='*60}")
-    print(f"[UPSTREAM {direction}] {base_url}")
-    if status:
-        print(f"  Status: {status}")
+    仅当 MNEMOSYNC_DEBUG=1 时输出, 与 serve --debug 共用同一开关.
+    """
+    if os.getenv("MNEMOSYNC_DEBUG") != "1":
+        return
     if isinstance(data, dict) or isinstance(data, list):
         data_str = json.dumps(data, indent=2, ensure_ascii=False)
     else:
         data_str = str(data)
-    print(f"  Data: {data_str[:2000]}")
-    print(f"{'='*60}{reset}\n")
+    status_str = str(status) if status is not None else "-"
+    logger.debug(
+        "[UPSTREAM %s] %s\nStatus: %s\nData: %s",
+        direction,
+        base_url,
+        status_str,
+        data_str[:2000],
+    )
 
 
 class UpstreamError(Exception):
@@ -131,11 +131,11 @@ class Forwarder:
         model: str | None = None,
         temperature: float = 1.0,
         max_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        tool_choice: str | dict | None = None,
-        response_format: dict | None = None,
-        extra_body: dict | None = None,
-        **kwargs,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """非流式对话. 支持 function_call.
 
@@ -164,9 +164,8 @@ class Forwarder:
         client = await self._get_client()
         chat_url = f"{self.config.base_url}/chat/completions"
 
-        # Debug: 打印上游请求
-        if os.getenv("MNEMOSYNC_DEBUG") == "1":
-            _print_upstream("REQUEST", self.config.base_url, payload)
+        # Debug: 记录上游请求
+        _log_upstream("REQUEST", self.config.base_url, payload)
         _emit_debug("upstream_request", chat_url, method="POST", body=payload)
 
         started = time.time()
@@ -179,9 +178,8 @@ class Forwarder:
             resp.raise_for_status()
             result = resp.json()
 
-            # Debug: 打印上游响应
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                _print_upstream("RESPONSE", self.config.base_url, result, status=resp.status_code)
+            # Debug: 记录上游响应
+            _log_upstream("RESPONSE", self.config.base_url, result, status=resp.status_code)
             _emit_debug(
                 "upstream_response",
                 chat_url,
@@ -191,10 +189,9 @@ class Forwarder:
                 body=result,
             )
 
-            return result
+            return cast(dict[str, Any], result)
         except httpx.HTTPStatusError as e:
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                _print_upstream("ERROR", self.config.base_url, {"error": e.response.text}, status=e.response.status_code)
+            _log_upstream("ERROR", self.config.base_url, {"error": e.response.text}, status=e.response.status_code)
             _emit_debug(
                 "upstream_response",
                 chat_url,
@@ -205,8 +202,7 @@ class Forwarder:
             )
             raise UpstreamError(e.response.status_code, e.response.text) from e
         except httpx.TimeoutException as e:
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                _print_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
+            _log_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
             _emit_debug(
                 "upstream_response",
                 chat_url,
@@ -223,7 +219,7 @@ class Forwarder:
         model: str | None = None,
         temperature: float = 1.0,
         max_tokens: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> AsyncIterator[bytes]:
         """流式对话, yield SSE 原始字节.
 
@@ -245,9 +241,8 @@ class Forwarder:
         client = await self._get_client()
         stream_url = f"{self.config.base_url}/chat/completions"
 
-        # Debug: 打印上游请求
-        if os.getenv("MNEMOSYNC_DEBUG") == "1":
-            _print_upstream("REQUEST (STREAM)", self.config.base_url, payload)
+        # Debug: 记录上游请求
+        _log_upstream("REQUEST (STREAM)", self.config.base_url, payload)
         event_id = _emit_debug(
             "upstream_request", stream_url, method="POST", body=payload
         )
@@ -283,10 +278,8 @@ class Forwarder:
                         duration_ms=(time.time() - started) * 1000,
                     )
         except httpx.HTTPStatusError as e:
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                body = await e.response.aread()
-                _print_upstream("ERROR", self.config.base_url, {"error": body.decode()}, status=e.response.status_code)
             body = await e.response.aread()
+            _log_upstream("ERROR", self.config.base_url, {"error": body.decode()}, status=e.response.status_code)
             if event_id and bus is not None:
                 bus.finalize_stream(
                     event_id,
@@ -296,8 +289,7 @@ class Forwarder:
                 )
             raise UpstreamError(e.response.status_code, body.decode()) from e
         except httpx.TimeoutException as e:
-            if os.getenv("MNEMOSYNC_DEBUG") == "1":
-                _print_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
+            _log_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
             if event_id and bus is not None:
                 bus.finalize_stream(
                     event_id,
@@ -405,7 +397,7 @@ class Forwarder:
                 for r in results:
                     if "document" not in r or r.get("document") is None:
                         r["document"] = documents[r["index"]]
-                return results
+                return cast(list[dict[str, Any]], results)
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404 and endpoint == "/rerank":
                     continue
@@ -433,6 +425,7 @@ class Forwarder:
     # ============ 生命周期 ============
 
     async def close(self) -> None:
+        """关闭自建的 HTTP 客户端 (使用外部 pool 时无需关闭)."""
         if self._client and not self._pool:
             await self._client.aclose()
             self._client = None
@@ -440,7 +433,12 @@ class Forwarder:
     async def __aenter__(self) -> Forwarder:
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         await self.close()
 
 
@@ -452,7 +450,7 @@ class StreamResult:
     """
 
     text: str
-    tool_calls: list[dict] | None  # 累积合并后的完整 tool_calls; None = 无工具调用
+    tool_calls: list[dict[str, Any]] | None  # 累积合并后的完整 tool_calls; None = 无工具调用
     finish_reason: str | None
 
 
@@ -471,7 +469,7 @@ def parse_sse_stream_full(chunks: list[bytes]) -> StreamResult:
     同一 index 的 function.arguments 按帧顺序拼接, 处理跨帧分片.
     """
     content_parts: list[str] = []
-    tool_calls: dict[int, dict] = {}
+    tool_calls: dict[int, dict[str, Any]] = {}
     finish_reason: str | None = None
 
     # HTTP 分块边界可能切在 JSON 或 UTF-8 字符中; 先合并原始字节再解码.
@@ -519,7 +517,7 @@ def parse_sse_stream_full(chunks: list[bytes]) -> StreamResult:
         except (json.JSONDecodeError, KeyError, IndexError):
             continue
 
-    result_tool_calls: list[dict] | None = None
+    result_tool_calls: list[dict[str, Any]] | None = None
     if tool_calls:
         result_tool_calls = [tool_calls[i] for i in sorted(tool_calls)]
 

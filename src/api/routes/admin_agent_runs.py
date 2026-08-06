@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from src.api.deps import get_agent_run_store
-from src.persistence.agent_run_store import AgentRunStore
+from src.persistence.agent_run_store import AgentRunRecord, AgentRunStore
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class AgentRunListResponse(BaseModel):
 # ── Helpers ─────────────────────────────────────────────────────────
 
 
-def _duration_ms(record) -> float | None:
+def _duration_ms(record: AgentRunRecord) -> float | None:
     if record.finished_at and record.started_at:
         return round(
             (record.finished_at - record.started_at).total_seconds() * 1000, 1
@@ -68,7 +68,7 @@ def _duration_ms(record) -> float | None:
     return None
 
 
-def _to_summary(record) -> AgentRunSummary:
+def _to_summary(record: AgentRunRecord) -> AgentRunSummary:
     return AgentRunSummary(
         run_id=record.run_id,
         parent_request_id=record.parent_request_id,
@@ -81,7 +81,7 @@ def _to_summary(record) -> AgentRunSummary:
     )
 
 
-def _to_detail(record) -> AgentRunDetail:
+def _to_detail(record: AgentRunRecord) -> AgentRunDetail:
     return AgentRunDetail(
         run_id=record.run_id,
         parent_request_id=record.parent_request_id,
@@ -109,7 +109,7 @@ async def list_agent_runs(
     agent_name: str | None = None,
     status: str | None = None,
     store: AgentRunStore = Depends(get_agent_run_store),
-):
+) -> AgentRunListResponse:
     """列出最近的 Agent 运行记录."""
     total = await store.count(agent_name=agent_name, status=status)
     records = await store.list_recent(
@@ -130,7 +130,7 @@ async def list_agent_runs(
 async def get_agent_run(
     run_id: str,
     store: AgentRunStore = Depends(get_agent_run_store),
-):
+) -> AgentRunDetail:
     """获取单条 Agent 运行记录详情."""
     record = await store.get_by_id(run_id)
     if not record:

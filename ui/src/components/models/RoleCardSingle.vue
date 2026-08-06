@@ -3,7 +3,7 @@ import { Plus, Refresh, Delete } from '@element-plus/icons-vue'
 import RoleCardShell from './RoleCardShell.vue'
 import type { RoleBindingItem, UpstreamModelType } from '@/types/api'
 
-const props = defineProps<{
+defineProps<{
   role: UpstreamModelType
   title: string
   desc: string

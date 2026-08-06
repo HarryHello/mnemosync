@@ -21,9 +21,9 @@ from src.api.tool_policies import filter_tool_calls, validate_tool_arguments
 from src.api.tool_transactions import append_tool_transaction_context
 from src.core.agents import run_proxy_thinking
 from src.core.agents.tracking import run_agent_tracked
-from src.core.config import get_settings
+from src.core.config import Settings, get_settings
 from src.core.constants import VIRTUAL_MODEL_ANY
-from src.core.memory import format_relationship
+from src.core.memory import MemoryEntry, Relationship, format_relationship
 from src.core.memory.context import (
     build_main_dialogue_messages,
     render_main_dialogue_system,
@@ -32,9 +32,10 @@ from src.core.memory.short_term import build_short_term_history, token_count_for
 from src.core.models.resolver import NoCandidateForRoleError
 from src.core.utils import last_user_message
 from src.infra.debug_context import emit_pipeline, use_agent
-from src.infra.forwarder import UpstreamError, UpstreamTimeout, parse_sse_stream_full
-from src.infra.forwarder.multi import UpstreamAllCandidatesFailed
+from src.infra.forwarder import StreamResult, UpstreamError, UpstreamTimeout, parse_sse_stream_full
+from src.infra.forwarder.multi import MultiForwarder, UpstreamAllCandidatesFailed
 from src.infra.llm_service.models import ModelType
+from src.persistence.conversation_store import SqliteConversationStore
 from src.tools import MemoryRetriever
 
 from ._accessors import _build_graph_config, _get_conversation_store, _get_multi_forwarder
@@ -63,7 +64,7 @@ class _StreamAssemblyResult:
     errored: bool = False
 
 
-def _parse_sse_event(collected_chunks: list[bytes]):
+def _parse_sse_event(collected_chunks: list[bytes]) -> StreamResult:
     """Parse accumulated SSE byte-chunks into a structured ``StreamResult``.
 
     Thin wrapper around ``parse_sse_stream_full`` that gives the streaming
@@ -97,14 +98,14 @@ def _handle_stream_errors(exc: Exception) -> bytes:
 async def _assemble_deltas(
     result: _StreamAssemblyResult,
     *,
-    multi_forwarder,
-    messages_with_memory,
-    temperature,
-    max_tokens,
-    passthrough,
-    reasoning_text,
-    chatcmpl_id,
-    main_model,
+    multi_forwarder: MultiForwarder,
+    messages_with_memory: list[dict[str, Any]],
+    temperature: float | None,
+    max_tokens: int | None,
+    passthrough: dict[str, Any],
+    reasoning_text: str | None,
+    chatcmpl_id: str,
+    main_model: str,
 ) -> AsyncGenerator[bytes, None]:
     """Yield SSE frames: proxy-reasoning deltas followed by upstream content.
 
@@ -150,10 +151,10 @@ async def _dispatch_callbacks(
     chatcmpl_id: str,
     main_model: str,
     new_user_content: str,
-    conversation_store,
+    conversation_store: SqliteConversationStore,
     collected_chunks: list[bytes],
     reasoning_text: str | None,
-    stream_result,
+    stream_result: StreamResult,
 ) -> None:
     """Post-stream: filter tool calls, persist events, record idempotency,
     and trigger the background memory graph.
@@ -250,41 +251,35 @@ async def _dispatch_callbacks(
 # ── Main stream entry point ─────────────────────────────────────
 
 
-async def _handle_stream(
+async def _load_memory_context(
     http_request: Request,
     initial_state: dict[str, Any],
-    request: ChatCompletionRequest,
-    use_proxy_thinking: bool,
-) -> StreamingResponse:
-    """流式: 加载记忆 → (可选) 代理推理 → 合成 reasoning_content SSE
-    → 转发上游 → 后台记忆图.
+    *,
+    settings: Settings,
+    multi_forwarder: MultiForwarder,
+) -> tuple[Relationship | None, list[MemoryEntry], list[MemoryEntry], str]:
+    """加载 permanent + retrieved 记忆, 并解析当前轮的唯一 user 输入.
 
-    代理推理结果 (a) 作为 system prompt 注入主对话, (b) 拆帧作为
-    delta.reasoning_content 提前吐给客户端, 与上游正文流拼接成完整回复.
+    Returns ``(rel, perms, retrieved_entries, new_user_content)``. 客户端
+    history 视为"不可信": 服务器有自己的跨前端流水。普通请求只取最后一条
+    user 消息；工具续轮没有新的 user 输入，只接入已校验事务尾部。
     """
-    settings = get_settings()
     source_user = initial_state.get("source_user") or ""
-    current_speaker = initial_state.get("current_speaker") or "未知参与者"
     space_id = initial_state.get("space_id")
     actor_id = initial_state.get("actor_id")
-    main_candidate = await _resolve_main_candidate(
-        http_request,
-        require_tools=bool(initial_state.get("tools")),
-        streaming=True,
-    )
-    main_model = main_candidate.model if main_candidate else VIRTUAL_MODEL_ANY
-    main_ctx_length = main_candidate.context_length if main_candidate else None
-    multi_forwarder = _get_multi_forwarder(http_request)
-    conversation_store = _get_conversation_store(http_request)
 
     logger.debug("🧠 加载记忆上下文...")
     _st = _state(http_request)
     memory_store = _st.memory_store
     vector_store = _st.vector_store
+    relationship_store = _st.relationship_store
+    assert memory_store is not None
+    assert vector_store is not None
+    assert relationship_store is not None
 
     from src.core.memory.audience import AudienceFilter, RetrievalContext
 
-    rel = await _st.relationship_store.get_relationship(
+    rel = await relationship_store.get_relationship(
         initial_state["persona_id"], source_user,
     ) if source_user else None
     logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
@@ -304,8 +299,6 @@ async def _handle_stream(
     perms = AudienceFilter.filter(perms, retrieval_ctx)
     logger.debug("  📚 永久记忆: %d 条", len(perms))
 
-    # 客户端 history 视为"不可信": 服务器有自己的跨前端流水. 普通请求只取
-    # 最后一条 user 消息；工具续轮没有新的 user 输入，只接入已校验事务尾部。
     client_messages = initial_state.get("messages", [])
     tool_transaction = initial_state.get("tool_transaction")
     new_user_content = ""
@@ -315,7 +308,7 @@ async def _handle_stream(
     retrieval_query = (
         tool_transaction.root_user_content if tool_transaction else new_user_content
     )
-    retrieved_entries: list = []
+    retrieved_entries: list[MemoryEntry] = []
     if retrieval_query:
         retriever = MemoryRetriever(multi_forwarder, vector_store, memory_store)
         results = await retriever.search(
@@ -329,7 +322,21 @@ async def _handle_stream(
                 retrieved_entries.append(entry)
         logger.debug("  🔍 检索结果: %d 条", len(retrieved_entries))
 
-    # 4. 代理推理 (可选, 同步, 与检索串行)
+    return rel, perms, retrieved_entries, new_user_content
+
+
+async def _run_proxy_thinking(
+    http_request: Request,
+    initial_state: dict[str, Any],
+    *,
+    use_proxy_thinking: bool,
+    multi_forwarder: MultiForwarder,
+    current_speaker: str,
+    rel: Relationship | None,
+    perms: list[MemoryEntry],
+    new_user_content: str,
+) -> str | None:
+    """(可选) 代理推理, 与检索串行; 失败时退化为普通转发."""
     reasoning_text: str | None = None
     if use_proxy_thinking:
         logger.debug("🤔 [代理推理] 开始 (ASSIST role)")
@@ -355,10 +362,29 @@ async def _handle_stream(
         except Exception as e:
             logger.warning("代理推理失败, 退化为普通转发: %s", e)
             reasoning_text = None
+    return reasoning_text
 
-    # 5. 装填: 服务器侧跨前端对话流水 → 双窗口裁剪 → 拼装 messages
+
+async def _build_stream_messages(
+    initial_state: dict[str, Any],
+    request: ChatCompletionRequest,
+    *,
+    settings: Settings,
+    main_ctx_length: int | None,
+    conversation_store: SqliteConversationStore,
+    current_speaker: str,
+    rel: Relationship | None,
+    perms: list[MemoryEntry],
+    retrieved_entries: list[MemoryEntry],
+    reasoning_text: str | None,
+    new_user_content: str,
+    space_id: str | None,
+    source_user: str,
+) -> list[dict[str, Any]]:
+    """装填短期对话历史 + 拼装最终 messages (system + trimmed 历史 + 当前输入)."""
     persona = initial_state.get("persona") or settings.persona.prompt
     persona_name = initial_state.get("persona_name") or settings.persona.name
+    tool_transaction = initial_state.get("tool_transaction")
 
     system_text = render_main_dialogue_system(
         persona_prompt=persona,
@@ -385,6 +411,7 @@ async def _handle_stream(
         new_user_text=budget_input_text,
         max_tokens_hint=request.max_tokens,
         space_id=space_id,
+        source_user=source_user or None,
     )
     logger.debug(
         "  🧵 短期对话装填: %d/%d 条 (预算 %d tok, 已用 %d, 因预算丢弃 %d)",
@@ -428,7 +455,26 @@ async def _handle_stream(
         )
 
     logger.debug("  📝 构建消息数: %d (含记忆上下文)", len(messages_with_memory))
+    return messages_with_memory
 
+
+def _make_streaming_response(
+    http_request: Request,
+    initial_state: dict[str, Any],
+    request: ChatCompletionRequest,
+    *,
+    main_model: str,
+    multi_forwarder: MultiForwarder,
+    conversation_store: SqliteConversationStore,
+    messages_with_memory: list[dict[str, Any]],
+    new_user_content: str,
+    reasoning_text: str | None,
+) -> StreamingResponse:
+    """构造 SSE 流式响应: stream_generator 转发 + locked_stream 后处理.
+
+    后台记忆图任务在此创建 (``locked_stream``), 避免 finally 块立即取消它;
+    空间锁也在流结束后释放。
+    """
     chatcmpl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     passthrough: dict[str, Any] = {}
@@ -450,7 +496,7 @@ async def _handle_stream(
     # Shared container: generator populates, locked_stream reads after it finishes.
     _gen_result: dict[str, Any] = {}
 
-    async def stream_generator():
+    async def stream_generator() -> AsyncGenerator[bytes, None]:
         result = _StreamAssemblyResult()
 
         # Phase 1-2: Assemble deltas (reasoning frames + upstream content).
@@ -492,7 +538,7 @@ async def _handle_stream(
         _gen_result["assistant_finish_reason"] = stream_result.finish_reason
         _gen_result["assistant_text"] = stream_result.text or ""
 
-    async def _trigger_memory_graph() -> asyncio.Task | None:
+    async def _trigger_memory_graph() -> asyncio.Task[Any] | None:
         """Create background memory graph task (called after stream ends).
 
         Returns the task so the caller can wait for it, or None if skipped.
@@ -519,11 +565,11 @@ async def _handle_stream(
             _run_memory_graph(initial_state, collected_chunks, graph_config),
             name=task_key,
         )
-        bg_tasks: dict = getattr(http_request.app.state, "active_bg_tasks", {})
+        bg_tasks: dict[str, asyncio.Task[Any]] = getattr(http_request.app.state, "active_bg_tasks", {})
         if bg_tasks is not None:
             bg_tasks[task_key] = task
 
-            def _on_done(t: asyncio.Task, _key: str = task_key) -> None:
+            def _on_done(t: asyncio.Task[Any], _key: str = task_key) -> None:
                 bg_tasks.pop(_key, None)
                 status = "ok"
                 err_msg: str | None = None
@@ -550,8 +596,8 @@ async def _handle_stream(
         return task
 
     # 包装: 流结束后触发记忆图 + 等待完成 + 释放空间锁
-    async def locked_stream():
-        bg_task: asyncio.Task | None = None
+    async def locked_stream() -> AsyncGenerator[bytes, None]:
+        bg_task: asyncio.Task[Any] | None = None
         try:
             async for chunk in stream_generator():
                 yield chunk
@@ -576,4 +622,81 @@ async def _handle_stream(
     return StreamingResponse(
         locked_stream(),
         media_type="text/event-stream",
+    )
+
+
+async def _handle_stream(
+    http_request: Request,
+    initial_state: dict[str, Any],
+    request: ChatCompletionRequest,
+    use_proxy_thinking: bool,
+) -> StreamingResponse:
+    """流式: 加载记忆 → (可选) 代理推理 → 合成 reasoning_content SSE
+    → 转发上游 → 后台记忆图.
+
+    代理推理结果 (a) 作为 system prompt 注入主对话, (b) 拆帧作为
+    delta.reasoning_content 提前吐给客户端, 与上游正文流拼接成完整回复.
+    """
+    settings = get_settings()
+    source_user = initial_state.get("source_user") or ""
+    current_speaker = initial_state.get("current_speaker") or "未知参与者"
+    space_id = initial_state.get("space_id")
+    main_candidate = await _resolve_main_candidate(
+        http_request,
+        require_tools=bool(initial_state.get("tools")),
+        streaming=True,
+    )
+    main_model = main_candidate.model if main_candidate else VIRTUAL_MODEL_ANY
+    main_ctx_length = main_candidate.context_length if main_candidate else None
+    multi_forwarder = _get_multi_forwarder(http_request)
+    conversation_store = _get_conversation_store(http_request)
+
+    # 1. 加载记忆上下文 (permanent + retrieved) 并解析本轮 user 输入.
+    rel, perms, retrieved_entries, new_user_content = await _load_memory_context(
+        http_request,
+        initial_state,
+        settings=settings,
+        multi_forwarder=multi_forwarder,
+    )
+
+    # 2. (可选) 代理推理.
+    reasoning_text = await _run_proxy_thinking(
+        http_request,
+        initial_state,
+        use_proxy_thinking=use_proxy_thinking,
+        multi_forwarder=multi_forwarder,
+        current_speaker=current_speaker,
+        rel=rel,
+        perms=perms,
+        new_user_content=new_user_content,
+    )
+
+    # 3. 装填短期历史 + 拼装 messages.
+    messages_with_memory = await _build_stream_messages(
+        initial_state,
+        request,
+        settings=settings,
+        main_ctx_length=main_ctx_length,
+        conversation_store=conversation_store,
+        current_speaker=current_speaker,
+        rel=rel,
+        perms=perms,
+        retrieved_entries=retrieved_entries,
+        reasoning_text=reasoning_text,
+        new_user_content=new_user_content,
+        space_id=space_id,
+        source_user=source_user,
+    )
+
+    # 4. 构造 SSE 流式响应.
+    return _make_streaming_response(
+        http_request,
+        initial_state,
+        request,
+        main_model=main_model,
+        multi_forwarder=multi_forwarder,
+        conversation_store=conversation_store,
+        messages_with_memory=messages_with_memory,
+        new_user_content=new_user_content,
+        reasoning_text=reasoning_text,
     )

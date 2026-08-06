@@ -32,8 +32,9 @@ from src.infra.llm_service.models import ModelType
 if TYPE_CHECKING:
     from src.core.memory.reindex import ReindexProgress
     from src.infra.vector_store import VectorStore
-    from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+    from src.persistence.memory_store import SqliteMemoryStore
     from src.persistence.notification_store import NotificationStore
+    from src.persistence.relationship_store import SqliteRelationshipStore
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +198,7 @@ class MemoryLifecycle:
                     ev.memory_id, ev.new_priority, is_forgotten
                 )
                 # 遗忘的记忆从向量库移除（不删 SQLite, 搜索可恢复）
-                if is_forgotten:
+                if is_forgotten and self.vector_store is not None:
                     self.vector_store.delete(ev.memory_id)
                 count += 1
             except (aiosqlite.Error, RuntimeError) as e:
@@ -239,7 +240,7 @@ class MemoryLifecycle:
                 await self.memory_store.update_priority(
                     entry.id, new_priority, is_forgotten
                 )
-                if is_forgotten:
+                if is_forgotten and self.vector_store is not None:
                     self.vector_store.delete(entry.id)
                     forgotten_count += 1
                 count += 1
@@ -263,6 +264,8 @@ class MemoryLifecycle:
         notes: str | None,
     ) -> Relationship:
         """应用关系分析 Agent 的结果."""
+        if self.relationship_store is None:
+            raise RuntimeError("relationship_store 未配置")
         rel = await self.relationship_store.get_relationship(persona_id, user_id)
         if rel is None:
             rel = Relationship.create(persona_id, user_id)
@@ -285,7 +288,8 @@ class MemoryLifecycle:
         except aiosqlite.Error as e:
             logger.error("SQLite 删除记忆失败 %s: %s", memory_id, e)
         try:
-            self.vector_store.delete(memory_id)
+            if self.vector_store is not None:
+                self.vector_store.delete(memory_id)
         except RuntimeError as e:
             logger.error("ChromaDB 删除记忆失败 %s: %s", memory_id, e)
 
@@ -316,5 +320,5 @@ class MemoryLifecycle:
                 message=str(error) or type(error).__name__,
                 meta=meta,
             )
-        except Exception as notify_err:
+        except aiosqlite.Error as notify_err:
             logger.warning("写入通知中心失败: %s", notify_err)

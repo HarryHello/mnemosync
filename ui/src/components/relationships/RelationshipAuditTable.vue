@@ -2,12 +2,12 @@
 import type { RelationshipAuditEntry } from '@/types/api'
 import { formatDate } from '@/utils/format'
 
-const props = defineProps<{
+defineProps<{
   items: RelationshipAuditEntry[]
   loading?: boolean
 }>()
 
-const emit = defineEmits<{
+defineEmits<{
   refresh: []
   revert: [entry: RelationshipAuditEntry]
 }>()

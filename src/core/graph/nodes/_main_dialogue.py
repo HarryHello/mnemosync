@@ -7,15 +7,18 @@ Pipeline stages:
 4. _extract_metadata -- assemble return dict
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
+import aiosqlite
 from langchain_core.runnables import RunnableConfig
 
 from src.core.agents import run_main_dialogue
 from src.core.config import get_settings
+from src.core.graph.state import AgentState
+
+if TYPE_CHECKING:
+    from src.core.config import Settings
 from src.core.memory import build_main_dialogue_messages, format_relationship
 from src.core.memory.trigger_reason import infer_trigger_reason
 from src.core.utils import last_user_message
@@ -24,11 +27,7 @@ from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.tools import MemoryRetriever
 
-from ._helpers import _compute_emotion, _retrieval_context
-
-if TYPE_CHECKING:
-    from src.core.graph.nodes import StoresDict
-    from src.core.graph.state import AgentState
+from ._helpers import StoresDict, _compute_emotion, _retrieval_context
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,7 @@ logger = logging.getLogger(__name__)
 async def _prepare_context(
     state: AgentState,
     config: RunnableConfig | None,
-    settings: Any,
+    settings: "Settings",
     forwarder: MultiForwarder,
     memory_store: SqliteMemoryStore,
     vector_store: VectorStore,
@@ -72,7 +71,7 @@ async def _prepare_context(
 
     logger.debug("  🔍 检索查询: %s", query[:100] if query else "(空)")
 
-    retrieved_entries: list = []
+    retrieved_entries: list[Any] = []
     if query:
         retriever = MemoryRetriever(forwarder, vector_store, memory_store)
         results = await retriever.search(
@@ -111,14 +110,14 @@ async def _prepare_context(
     )
 
     # Load Lorebook entries (keyword matching)
-    lorebook_entries: list = []
+    lorebook_entries: list[Any] = []
     lorebook_store = stores.get("lorebook_store")
     if lorebook_store is not None and query:
         try:
             lorebook_entries = await lorebook_store.match_for_space(
                 query, space_id=state.get("space_id"), limit=5,
             )
-        except Exception:
+        except aiosqlite.Error:
             logger.warning("Lorebook match failed", exc_info=True)
 
     messages = build_main_dialogue_messages(
@@ -152,7 +151,7 @@ async def _prepare_context(
 
 async def _invoke_llm(
     forwarder: MultiForwarder,
-    messages: list,
+    messages: list[Any],
     state: AgentState,
     stores: StoresDict,
 ) -> Any:
@@ -209,6 +208,8 @@ async def _invoke_llm(
                         identity_store=identity_store,
                         **args,
                     )
+                # 内部 tool handler 是任意业务代码, 其异常需转成 model 可见的
+                # tool_result, 不能中断对话. 保留裸捕获兜底.
                 except Exception as e:
                     result = {"success": False, "error": str(e)}
                 messages_with_tools.append({
@@ -264,7 +265,7 @@ async def _process_response(
         if space_policy_store is not None and space_id:
             try:
                 space_policy = await space_policy_store.get(space_id)
-            except Exception:
+            except aiosqlite.Error:
                 logger.warning("Failed to load space policy for expressor", exc_info=True)
 
         expressor_cfg = ExpressorConfig(
@@ -307,7 +308,7 @@ async def _process_response(
 def _extract_metadata(
     response: str,
     dialogue: Any,
-    emotion_analysis: dict,
+    emotion_analysis: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble final return dict from dialogue result."""
     logger.debug(

@@ -1,6 +1,10 @@
 """身份/模型解析: API Key 验证, 模型候选, 身份上下文."""
 import json
 import logging
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.infra.llm_service.models import ResolvedCandidate
 
 from fastapi import Request
 
@@ -22,7 +26,7 @@ async def _resolve_main_candidate(
     *,
     require_tools: bool = False,
     streaming: bool = False,
-):
+) -> "ResolvedCandidate | None":
     """解析 MAIN 角色首选候选.
 
     当请求携带 tools 时 (require_tools=True), 优先选择支持工具的候选;
@@ -30,6 +34,8 @@ async def _resolve_main_candidate(
     """
     from src.api.deps import _state
     resolver = _state(http_request).resolver
+    if resolver is None:
+        return None
     try:
         if require_tools:
             return await resolver.first_for_tools(ModelType.MAIN, streaming=streaming)
@@ -67,7 +73,8 @@ async def _resolve_source_frontend(request: Request, api_key_id: str | None) -> 
         store = _get_api_key_store()
     try:
         ak: ApiKey | None = await store.get_by_id(api_key_id)
-    except Exception:
+    except Exception as e:
+        logger.debug("API Key 查询失败: %s", e)
         return None
     return ak.note if ak else None
 
@@ -76,7 +83,7 @@ async def _resolve_identity_context(
     http_request: Request,
     api_key: ApiKey | None,
     request_user: str | None,
-    messages: list,
+    messages: list[dict[str, Any]],
 ) -> IdentityContext | None:
     """解析请求中的身份信息。
 

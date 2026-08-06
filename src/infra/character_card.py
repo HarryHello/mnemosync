@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -34,42 +34,52 @@ class CharacterCard:
 
     @property
     def name(self) -> str:
-        return self.data.get("name", "")
+        """角色名称."""
+        return cast(str, self.data.get("name", ""))
 
     @property
     def description(self) -> str:
-        return self.data.get("description", "")
+        """角色描述（最主要的身份陈述）."""
+        return cast(str, self.data.get("description", ""))
 
     @property
     def personality(self) -> str:
-        return self.data.get("personality", "")
+        """角色性格（映射为说话风格）."""
+        return cast(str, self.data.get("personality", ""))
 
     @property
     def scenario(self) -> str:
-        return self.data.get("scenario", "")
+        """初始场景设定."""
+        return cast(str, self.data.get("scenario", ""))
 
     @property
     def first_mes(self) -> str:
-        return self.data.get("first_mes", "")
+        """角色开场白."""
+        return cast(str, self.data.get("first_mes", ""))
 
     @property
     def mes_example(self) -> str:
-        return self.data.get("mes_example", "")
+        """对话示例."""
+        return cast(str, self.data.get("mes_example", ""))
 
     @property
     def system_prompt(self) -> str:
-        return self.data.get("system_prompt", "")
+        """系统提示词."""
+        return cast(str, self.data.get("system_prompt", ""))
 
     @property
     def post_history_instructions(self) -> str:
-        return self.data.get("post_history_instructions", "")
+        """历史后置指令（映射为 context）."""
+        return cast(str, self.data.get("post_history_instructions", ""))
 
     @property
     def creator_notes(self) -> str:
-        return self.data.get("creator_notes", "")
+        """作者备注."""
+        return cast(str, self.data.get("creator_notes", ""))
 
     @property
     def character_book(self) -> dict[str, Any] | None:
+        """角色卡自带的对话书（Lorebook）."""
         return self.data.get("character_book")
 
 
@@ -156,7 +166,7 @@ def _parse_text_chunk(data: bytes) -> dict[str, Any] | None:
                 text = chunk_data[null_pos + 1:].decode("latin-1", errors="replace")
                 if keyword == "chara":
                     try:
-                        return json.loads(text)
+                        return cast(dict[str, Any] | None, json.loads(text))
                     except json.JSONDecodeError:
                         pass
 
@@ -194,7 +204,7 @@ def _parse_v1_with_length_prefix(payload: bytes) -> dict[str, Any] | None:
         # JSON 部分用 UTF-8 解码
         json_bytes = payload[json_start:json_start + json_len]
         try:
-            return json.loads(json_bytes.decode("utf-8"))
+            return cast(dict[str, Any] | None, json.loads(json_bytes.decode("utf-8")))
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass
     return None
@@ -208,7 +218,7 @@ def _parse_v1_direct_json(payload: bytes) -> dict[str, Any] | None:
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         try:
-            return json.loads(text[start:end + 1])
+            return cast(dict[str, Any] | None, json.loads(text[start:end + 1]))
         except json.JSONDecodeError:
             pass
     return None

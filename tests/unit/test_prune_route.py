@@ -9,7 +9,7 @@ Reindex 是异步背景任务, 完整测试太重, 这里只覆盖:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -59,17 +59,12 @@ def _mk_entry(
 
 
 @pytest.fixture
-def app(tmp_path: Path) -> Iterator[FastAPI]:
-    import asyncio
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+async def app(tmp_path: Path) -> AsyncIterator[FastAPI]:
     memory_store = SqliteMemoryStore(str(tmp_path / "mem.db"))
-    loop.run_until_complete(memory_store.connect())
+    await memory_store.connect()
 
     llm_store = LLMServiceStore(str(tmp_path / "llm.db"))
-    loop.run_until_complete(llm_store.init_db())
+    await llm_store.init_db()
 
     vector_store = VectorStore(str(tmp_path / "chroma"), collection_name="route_test")
     resolver = RoleResolver(llm_store)
@@ -99,14 +94,13 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     app.dependency_overrides[get_current_user] = _fake_user
 
     # 预置记忆
-    loop.run_until_complete(memory_store.save(_mk_entry(1, memory_type=MemoryType.PERMANENT)))
-    loop.run_until_complete(memory_store.save(_mk_entry(2, is_forgotten=True)))
-    loop.run_until_complete(memory_store.save(_mk_entry(3, expires_at=NOW - timedelta(days=1))))
+    await memory_store.save(_mk_entry(1, memory_type=MemoryType.PERMANENT))
+    await memory_store.save(_mk_entry(2, is_forgotten=True))
+    await memory_store.save(_mk_entry(3, expires_at=NOW - timedelta(days=1)))
 
     yield app
 
-    loop.run_until_complete(memory_store.close())
-    loop.close()
+    await memory_store.close()
 
 
 def test_reindex_status_idle_initial(app: FastAPI) -> None:

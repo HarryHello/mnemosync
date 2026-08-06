@@ -1,7 +1,5 @@
 """Proxy thinking node: optional Chain-of-Thought agent."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

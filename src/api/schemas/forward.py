@@ -13,6 +13,10 @@ class ModelInfo(BaseModel):
     object: Literal["model"] = "model"
     created: int = Field(default_factory=lambda: int(time.time()), description="创建时间戳")
     owned_by: str = Field(..., description="模型所有者")
+    # v0.3.5: 模型元数据 (前向兼容, 数据源后续接 role_bindings)
+    context_length: int | None = Field(default=None, description="上下文长度 (tokens)")
+    capabilities: list[str] | None = Field(default=None, description="能力标签, 如 [chat, function_calling]")
+    modalities: list[str] | None = Field(default=None, description="模态, 如 [text, image]")
 
 
 class ModelList(BaseModel):
@@ -26,11 +30,11 @@ class ModelList(BaseModel):
 class ChatMessage(BaseModel):
     """聊天消息."""
     role: Literal["system","developer", "user", "assistant", "tool"] = Field(..., description="消息角色")
-    content: str | list[dict[str, Any]] | None = Field(None, description="消息内容 (支持 OpenAI content parts 数组格式)")
-    reasoning_content: str | None = Field(None, description="推理过程 (OpenAI 兼容扩展, DeepSeek/Qwen 等)")
-    name: str | None = Field(None, description="消息名称")
-    tool_calls: list[dict] | None = Field(None, description="工具调用")
-    tool_call_id: str | None = Field(None, description="工具调用 ID")
+    content: str | list[dict[str, Any]] | None = Field(default=None, description="消息内容 (支持 OpenAI content parts 数组格式)")
+    reasoning_content: str | None = Field(default=None, description="推理过程 (OpenAI 兼容扩展, DeepSeek/Qwen 等)")
+    name: str | None = Field(default=None, description="消息名称")
+    tool_calls: list[dict[str, Any]] | None = Field(default=None, description="工具调用")
+    tool_call_id: str | None = Field(default=None, description="工具调用 ID")
 
 
 class ChatCompletionRequest(BaseModel):
@@ -40,36 +44,36 @@ class ChatCompletionRequest(BaseModel):
 
     # 可选参数
     frequency_penalty: float | None = Field(0, ge=-2, le=2, description="频率惩罚")
-    logit_bias: dict[str, float] | None = Field(None, description="Logit 偏置")
+    logit_bias: dict[str, float] | None = Field(default=None, description="Logit 偏置")
     logprobs: bool | None = Field(False, description="是否返回 logprobs")
-    top_logprobs: int | None = Field(None, ge=0, le=20, description="返回的 logprobs 数量")
-    max_tokens: int | None = Field(None, ge=1, description="最大生成 token 数")
+    top_logprobs: int | None = Field(default=None, ge=0, le=20, description="返回的 logprobs 数量")
+    max_tokens: int | None = Field(default=None, ge=1, description="最大生成 token 数")
     n: int | None = Field(1, ge=1, le=128, description="生成多少个补全")
     presence_penalty: float | None = Field(0, ge=-2, le=2, description="存在性惩罚")
-    response_format: dict | None = Field(None, description="响应格式")
-    seed: int | None = Field(None, description="随机种子")
-    service_tier: str | None = Field(None, description="服务层级")
-    stop: str | list[str] | None = Field(None, description="停止序列")
+    response_format: dict[str, Any] | None = Field(default=None, description="响应格式")
+    seed: int | None = Field(default=None, description="随机种子")
+    service_tier: str | None = Field(default=None, description="服务层级")
+    stop: str | list[str] | None = Field(default=None, description="停止序列")
     stream: bool | None = Field(False, description="是否流式输出")
-    stream_options: dict | None = Field(None, description="流式选项")
+    stream_options: dict[str, Any] | None = Field(default=None, description="流式选项")
     temperature: float | None = Field(1, ge=0, le=2, description="温度")
     top_p: float | None = Field(1, ge=0, le=1, description="Top-p 采样")
-    tools: list[dict] | None = Field(None, description="工具列表")
-    tool_choice: str | dict | None = Field(None, description="工具选择")
+    tools: list[dict[str, Any]] | None = Field(default=None, description="工具列表")
+    tool_choice: str | dict[str, Any] | None = Field(default=None, description="工具选择")
     parallel_tool_calls: bool | None = Field(True, description="是否并行工具调用")
-    user: str | None = Field(None, description="用户 ID")
+    user: str | None = Field(default=None, description="用户 ID")
 
     # 推理触发字段 (前台显式要求原生推理时提交, 命中即跳过代理推理)
-    reasoning_effort: str | None = Field(None, description="OpenAI o-series 推理力度")
-    reasoning: dict | None = Field(None, description="OpenAI Responses 风格 reasoning 参数")
-    thinking: dict | None = Field(None, description="Anthropic / Qwen thinking 参数")
+    reasoning_effort: str | None = Field(default=None, description="OpenAI o-series 推理力度")
+    reasoning: dict[str, Any] | None = Field(default=None, description="OpenAI Responses 风格 reasoning 参数")
+    thinking: dict[str, Any] | None = Field(default=None, description="Anthropic / Qwen thinking 参数")
 
 
 class ChatCompletionChoice(BaseModel):
     """聊天补全选项."""
     index: int = Field(..., description="选项索引")
     message: ChatMessage = Field(..., description="回复消息")
-    logprobs: dict | None = Field(None, description="Logprobs")
+    logprobs: dict[str, Any] | None = Field(default=None, description="Logprobs")
     finish_reason: str | None = Field(
         None,
         description=(
@@ -93,8 +97,8 @@ class ChatCompletionResponse(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()), description="创建时间戳")
     model: str = Field(..., description="使用的模型")
     choices: list[ChatCompletionChoice] = Field(..., description="补全选项")
-    usage: UsageInfo | None = Field(None, description="Token 使用信息")
-    system_fingerprint: str | None = Field(None, description="系统指纹")
+    usage: UsageInfo | None = Field(default=None, description="Token 使用信息")
+    system_fingerprint: str | None = Field(default=None, description="系统指纹")
 
 
 # ============== Stream Response ==============
@@ -103,8 +107,8 @@ class ChatCompletionChunkChoice(BaseModel):
     """聊天补全分块选项."""
     index: int = Field(..., description="选项索引")
     delta: ChatMessage = Field(..., description="消息增量")
-    logprobs: dict | None = Field(None, description="Logprobs")
-    finish_reason: str | None = Field(None, description="结束原因")
+    logprobs: dict[str, Any] | None = Field(default=None, description="Logprobs")
+    finish_reason: str | None = Field(default=None, description="结束原因")
 
 
 class ChatCompletionChunk(BaseModel):
@@ -114,4 +118,4 @@ class ChatCompletionChunk(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()), description="创建时间戳")
     model: str = Field(..., description="使用的模型")
     choices: list[ChatCompletionChunkChoice] = Field(..., description="补全选项")
-    system_fingerprint: str | None = Field(None, description="系统指纹")
+    system_fingerprint: str | None = Field(default=None, description="系统指纹")

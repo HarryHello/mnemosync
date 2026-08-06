@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Request
 
-from src.core.graph import build_graph
+from src.core.graph import CompiledGraph, build_graph
 from src.infra.forwarder.multi import MultiForwarder
 from src.persistence.api_key_store import SqliteApiKeyStore
 from src.persistence.conversation_store import SqliteConversationStore
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 # 全局缓存
 _api_key_store: SqliteApiKeyStore | None = None
-_compiled_graph = None
+_compiled_graph: CompiledGraph | None = None
 
 
 def _get_api_key_store() -> SqliteApiKeyStore:
@@ -36,7 +36,7 @@ def _get_api_key_store() -> SqliteApiKeyStore:
     return _api_key_store
 
 
-def _get_compiled_graph():
+def _get_compiled_graph() -> CompiledGraph:
     global _compiled_graph
     if _compiled_graph is None:
         _compiled_graph = build_graph()
@@ -46,13 +46,19 @@ def _get_compiled_graph():
 def _get_multi_forwarder(http_request: Request) -> MultiForwarder:
     """从 AppState 取共享 MultiForwarder (由 lifespan 建立)."""
     from src.api.deps import _state
-    return _state(http_request).multi_forwarder
+    fwd = _state(http_request).multi_forwarder
+    if fwd is None:
+        raise RuntimeError("AppState.multi_forwarder 未初始化")
+    return fwd
 
 
 def _get_conversation_store(http_request: Request) -> SqliteConversationStore:
     """从 AppState 取共享 SqliteConversationStore (由 lifespan 建立)."""
     from src.api.deps import _state
-    return _state(http_request).conversation_store
+    store = _state(http_request).conversation_store
+    if store is None:
+        raise RuntimeError("AppState.conversation_store 未初始化")
+    return store
 
 
 def _get_identity_store(http_request: Request) -> SqliteIdentityStore | None:

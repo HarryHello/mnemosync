@@ -27,6 +27,11 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
+def _dt(v: datetime | None) -> str | None:
+    """datetime → ISO 字符串."""
+    return v.isoformat() if v else None
+
+
 class SqliteStore:
     """SQLite 存储基类, 提供长连接/短连接双模式和统一 PRAGMA 配置."""
 

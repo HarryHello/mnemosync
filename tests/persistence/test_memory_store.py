@@ -15,7 +15,8 @@ from src.core.memory.models import (
     Relationship,
     Visibility,
 )
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 
 @pytest.fixture

@@ -23,7 +23,8 @@ from src.core.memory.models import (
     MemoryType,
 )
 from src.infra.forwarder.forwarder import UpstreamError
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 # ---------------------------------------------------------------------------
 # store_candidate

@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import aiosqlite
 
@@ -55,6 +57,8 @@ class SqliteLorebookStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS lorebook_entries (
                 id TEXT PRIMARY KEY,
@@ -67,10 +71,16 @@ class SqliteLorebookStore(SqliteStore):
                 updated_at TIMESTAMP NOT NULL
             )
         """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_lorebook_space "
-            "ON lorebook_entries(space_id)"
-        )
+
+        async def _idx_space(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_lorebook_space "
+                "ON lorebook_entries(space_id)"
+            )
+
+        await MigrationRunner([
+            ("001_create_idx_space", _idx_space),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         async with self._conn() as db:
@@ -195,9 +205,7 @@ class SqliteLorebookStore(SqliteStore):
                 return row[0] if row else 0
 
     @staticmethod
-    def _row_to_entry(row) -> LorebookEntry | None:
-        if row is None:
-            return None
+    def _row_to_entry(row: Sequence[Any]) -> LorebookEntry:
         try:
             keywords = json.loads(row[2]) if isinstance(row[2], str) else []
         except (json.JSONDecodeError, TypeError):

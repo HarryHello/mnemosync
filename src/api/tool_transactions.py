@@ -103,10 +103,10 @@ def extract_tool_transaction_tail(
             continue
 
         if role == "tool":
-            call_id = message.get("tool_call_id")
-            if not isinstance(call_id, str) or call_id not in pending:
+            supplied_call_id = message.get("tool_call_id")
+            if not isinstance(supplied_call_id, str) or supplied_call_id not in pending:
                 raise ToolTransactionError("tool_call_id 未引用当前待完成的工具调用")
-            expected_name = pending.pop(call_id)
+            expected_name = pending.pop(supplied_call_id)
             supplied_name = message.get("name")
             if supplied_name is not None and supplied_name != expected_name:
                 raise ToolTransactionError("tool 消息名称与 tool_call_id 对应函数不一致")
@@ -117,7 +117,7 @@ def extract_tool_transaction_tail(
             clean_tool: dict[str, Any] = {
                 "role": "tool",
                 "content": content,
-                "tool_call_id": call_id,
+                "tool_call_id": supplied_call_id,
             }
             if supplied_name is not None:
                 clean_tool["name"] = supplied_name

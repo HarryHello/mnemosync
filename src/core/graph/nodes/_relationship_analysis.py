@@ -1,7 +1,5 @@
 """Relationship analysis node: CoT agent that computes intimacy delta."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -14,7 +12,8 @@ from src.core.config import get_settings
 from src.core.graph.state import AgentState
 from src.core.memory import MemoryLifecycle, format_relationship
 from src.infra.forwarder.multi import MultiForwarder
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 from src.tools import make_update_addressing_tool
 
 from ._helpers import _format_emotion_text, _resolve_addressing
@@ -97,7 +96,7 @@ async def relationship_analysis_node(
         logger.debug("  ✅ 关系分析完成: 亲密 %+.2f, 信任 %+.2f",
                      out.intimacy_delta, out.trust_delta)
 
-        lifecycle = MemoryLifecycle(memory_store, None, forwarder, relationship_store=relationship_store)  # type: ignore[arg-type]
+        lifecycle = MemoryLifecycle(memory_store, None, forwarder, relationship_store=relationship_store)
         await lifecycle.apply_relationship_update(
             persona_id=state["persona_id"],
             user_id=source_user,

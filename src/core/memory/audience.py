@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.core.memory.models import Visibility
 
@@ -93,7 +93,7 @@ class AudienceFilter:
         return [e for e in entries if AudienceFilter.is_visible(e, ctx)]
 
     @staticmethod
-    def build_chromadb_where(ctx: RetrievalContext) -> dict | None:
+    def build_chromadb_where(ctx: RetrievalContext) -> dict[str, Any] | None:
         """构建 ChromaDB 粗筛 where 子句 (可见超集, 精筛交给 is_visible).
 
         非归属: 仅 public.
@@ -101,7 +101,7 @@ class AudienceFilter:
         """
         if not ctx.effective_user_id:
             return {"visibility": Visibility.PUBLIC.value}
-        conditions: list[dict] = [
+        conditions: list[dict[str, Any]] = [
             {"source_user": ctx.effective_user_id},
             {"visibility": Visibility.PUBLIC.value},
         ]

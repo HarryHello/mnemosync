@@ -23,9 +23,12 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import aiosqlite
 
 from src.core.memory.models import MemoryEntry, MemoryType
+from src.core.models.resolver import NoCandidateForRoleError
 from src.infra.llm_service.models import ModelType
 
 if TYPE_CHECKING:
@@ -60,7 +63,7 @@ class ReindexProgress:
     def is_running(self) -> bool:
         return self.state == ReindexState.RUNNING
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "state": self.state.value,
             "total": self.total,
@@ -104,7 +107,7 @@ class PruneBreakdown:
     def total(self) -> int:
         return self.forgotten + self.expired + self.low_priority
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "forgotten": self.forgotten,
             "expired": self.expired,
@@ -163,7 +166,7 @@ class Reindexer:
             self._reset_progress()
             try:
                 cand = await self.resolver.first(ModelType.EMBEDDING)
-            except Exception as e:
+            except (NoCandidateForRoleError, aiosqlite.Error) as e:
                 self._fail(f"无可用嵌入模型: {e}")
                 raise
 
@@ -215,12 +218,14 @@ class Reindexer:
                     "reindex 完成: total=%d processed=%d pruned=%d",
                     self.progress.total, self.progress.processed, self.progress.pruned,
                 )
+            # 整个 reindex 是跨子系统操作 (SQLite / ChromaDB / 上游嵌入), 任一阶段失败
+            # 都必须中止整轮并标记 ERROR, 因此保留裸捕获兜底 (日志已带堆栈).
             except Exception as e:
                 logger.exception("reindex 失败")
                 self._fail(str(e))
                 raise
 
-    def _flush_batch(self, batch, cand):
+    def _flush_batch(self, batch: list[tuple[MemoryEntry, list[float]]], cand: Any) -> None:
         for entry, vec in batch:
             self.vector_store.add(entry, vec)
 
@@ -290,7 +295,7 @@ class Pruner:
                 await self.memory_store.delete(mid)
                 self.vector_store.delete(mid)
                 deleted += 1
-            except Exception as e:
+            except (aiosqlite.Error, RuntimeError) as e:
                 logger.error("prune 删除失败 %s: %s", mid, e)
         return PruneResult(
             total_before=total_before,

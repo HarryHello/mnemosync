@@ -18,13 +18,14 @@ import asyncio
 import json
 import os
 import sys
-from typing import Any
+from collections.abc import Callable, Coroutine, Sequence
+from typing import Any, cast
 
 from src.cli.cli import get_project_root
 from src.core.config import get_settings
 from src.core.constants import DEFAULT_PERSONA_ID
 from src.persistence.identity_store import SqliteIdentityStore
-from src.persistence.memory_store import SqliteRelationshipStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 _IDENTITY_DB_PATH = "data/identity.db"
 
@@ -39,12 +40,12 @@ def _store() -> SqliteIdentityStore:
     return SqliteIdentityStore(_IDENTITY_DB_PATH)
 
 
-def _run(coro):
+def _run(coro: Coroutine[Any, Any, int]) -> int:
     """运行协程并确保 store 连接关闭."""
     return asyncio.run(coro)
 
 
-def _print_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
+def _print_table(headers: tuple[str, ...], rows: Sequence[tuple[str, ...]]) -> None:
     if not rows:
         print("(空)")
         return
@@ -72,7 +73,7 @@ def _build_config(args: argparse.Namespace) -> str:
     优先级: --config > --config-file > 类型便捷参数。
     """
     if args.config:
-        raw = args.config
+        raw: str = args.config
     elif args.config_file:
         from pathlib import Path
 
@@ -453,10 +454,10 @@ def cmd_identity(args: argparse.Namespace) -> int:
     if handler is None:
         print("❌ 请指定子命令, 例如: mnemosync identity strategy list", file=sys.stderr)
         return 2
-    return handler(args)
+    return cast(Callable[[argparse.Namespace], int], handler)(args)
 
 
-def build_parser(sub: argparse._SubParsersAction) -> None:
+def build_parser(sub: argparse._SubParsersAction[Any]) -> None:
     """在 mnemosync 主 parser 上注册 `identity` 子命令树."""
     p = sub.add_parser(
         "identity",

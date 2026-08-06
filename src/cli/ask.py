@@ -23,6 +23,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 
 def _get_default_persona() -> tuple[str, str]:
@@ -62,10 +63,10 @@ def _apply_debug(debug: bool) -> None:
 
 
 async def _run_non_stream(question: str, source_user: str, persona: str, persona_name: str) -> int:
-    from src.core.graph import build_graph
+    from src.core.graph import AgentState, build_graph
 
     graph = build_graph()
-    initial_state = {
+    initial_state: AgentState = {
         "messages": [{"role": "user", "content": question}],
         "source_user": source_user,
         "current_speaker": source_user,
@@ -102,7 +103,8 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
     from src.infra.llm_service.models import ModelType
     from src.infra.llm_service.store import LLMServiceStore
     from src.infra.vector_store import VectorStore
-    from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+    from src.persistence.memory_store import SqliteMemoryStore
+    from src.persistence.relationship_store import SqliteRelationshipStore
     from src.tools import MemoryRetriever
 
     settings = get_settings()
@@ -118,7 +120,7 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
     resolver = RoleResolver(llm_store)
     multi_forwarder = MultiForwarder(resolver)
 
-    retrieved_entries: list = []
+    retrieved_entries: list[Any] = []
     try:
         retriever = MemoryRetriever(multi_forwarder, vector_store, memory_store)
         results = await retriever.search(
@@ -194,8 +196,10 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
     response_text = parse_sse_stream(chunks)
 
     print("🔄 触发记忆图 (记忆分析 + 关系分析)...", file=sys.stderr)
+    from src.core.graph import AgentState as _AgentState
+
     graph = build_graph()
-    memory_state = {
+    memory_state: _AgentState = {
         "messages": [{"role": "user", "content": question}],
         "source_user": source_user,
         "current_speaker": source_user,

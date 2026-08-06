@@ -8,10 +8,12 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  getPluginProxy,
   installPlugin,
   listAvailablePlugins,
   listInstalledPlugins,
   removePlugin,
+  setPluginProxy,
 } from '@/api/identity'
 import type { AvailablePluginInfo, InstalledPluginInfo } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -24,9 +26,38 @@ const installedLoading = ref(false)
 const available = ref<AvailablePluginInfo[]>([])
 const availableLoading = ref(false)
 
+// 代理配置
+const proxy = ref('')
+const proxySaving = ref(false)
+const proxyLoaded = ref(false)
+
 // 安装/删除中
 const installing = ref<Set<string>>(new Set())
 const removing = ref<Set<string>>(new Set())
+
+async function loadProxy() {
+  try {
+    const res = await getPluginProxy()
+    proxy.value = res.plugin_proxy || ''
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    proxyLoaded.value = true
+  }
+}
+
+async function saveProxy() {
+  proxySaving.value = true
+  try {
+    const res = await setPluginProxy(proxy.value.trim())
+    proxy.value = res.plugin_proxy || ''
+    ElMessage.success('代理设置已保存')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    proxySaving.value = false
+  }
+}
 
 async function refresh() {
   await Promise.all([refreshInstalled(), refreshAvailable()])
@@ -103,7 +134,10 @@ async function handleRemove(file_name: string, display_name: string) {
   }
 }
 
-onMounted(refresh)
+onMounted(() => {
+  refresh()
+  loadProxy()
+})
 </script>
 
 <template>
@@ -119,6 +153,28 @@ onMounted(refresh)
         </el-button>
       </template>
     </PageHeader>
+
+    <!-- 代理设置 -->
+    <el-card class="section-card">
+      <template #header>
+        <div class="section-header">
+          <span class="section-title">代理设置</span>
+          <span class="section-subtitle">GitHub 无法直接访问时, 配置前缀代理 (如 gh-proxy.org) 用于检索与下载插件</span>
+        </div>
+      </template>
+      <div class="proxy-row">
+        <el-input
+          v-model="proxy"
+          placeholder="https://gh-proxy.org/... 留空不使用"
+          clearable
+          class="proxy-input"
+          :disabled="!proxyLoaded"
+        />
+        <el-button type="primary" :loading="proxySaving" @click="saveProxy">
+          保存
+        </el-button>
+      </div>
+    </el-card>
 
     <!-- 可用插件 -->
     <el-card class="section-card">
@@ -242,6 +298,16 @@ onMounted(refresh)
 .section-subtitle {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+.proxy-row {
+  display: flex;
+  gap: $space-2;
+  align-items: center;
+}
+
+.proxy-input {
+  max-width: 480px;
 }
 
 .plugin-name {

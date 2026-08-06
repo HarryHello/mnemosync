@@ -9,7 +9,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from .nodes import (
     main_dialogue_node,
@@ -42,7 +45,7 @@ def _route_after_main_dialogue(state: AgentState) -> str:
 # ── 图构建 ─────────────────────────────────────────────────────
 
 
-def build_graph() -> StateGraph:
+def build_graph() -> CompiledStateGraph[AgentState, Any, AgentState, AgentState]:
     """构建并返回编译好的 LangGraph 图.
 
     Returns:
@@ -85,4 +88,4 @@ def build_graph() -> StateGraph:
 
 
 # 便于类型提示
-CompiledGraph = StateGraph
+CompiledGraph = CompiledStateGraph[AgentState, Any, AgentState, AgentState]

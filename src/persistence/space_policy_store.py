@@ -40,13 +40,20 @@ class SqliteSpacePolicyStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS space_policies (
-                space_id TEXT PRIMARY KEY,
-                config TEXT NOT NULL DEFAULT '{}',
-                updated_at TIMESTAMP NOT NULL
-            )
-        """)
+        from src.persistence.migrations import MigrationRunner
+
+        async def _migrate(db: aiosqlite.Connection) -> None:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS space_policies (
+                    space_id TEXT PRIMARY KEY,
+                    config TEXT NOT NULL DEFAULT '{}',
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """)
+
+        await MigrationRunner([
+            ("001_create_space_policies", _migrate),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         async with self._conn() as db:

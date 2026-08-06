@@ -245,7 +245,7 @@ watch(
       <el-col :xs="24" :lg="12" class="equal-col">
         <ReindexCard
           :status="status"
-          :reindex-form="reindexForm"
+          v-model:reindex-form="reindexForm"
           :reindex-starting="reindexStarting"
           @start-reindex="onStartReindex"
         />
@@ -253,7 +253,7 @@ watch(
 
       <el-col :xs="24" :lg="12" class="equal-col">
         <PruneCard
-          :prune-form="pruneForm"
+          v-model:prune-form="pruneForm"
           :prune-preview="prunePreview"
           :preview-loading="previewLoading"
           :prune-running="pruneRunning"

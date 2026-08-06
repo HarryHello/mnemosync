@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import type { PruneResponse } from '@/types/api'
 
-const props = defineProps<{
-  pruneForm: {
-    priority_threshold: number
-  }
+const pruneForm = defineModel<{
+  priority_threshold: number
+}>('pruneForm', { required: true })
+
+defineProps<{
   prunePreview: PruneResponse | null
   previewLoading: boolean
   pruneRunning: boolean
   isRunning: boolean
 }>()
 
-const emit = defineEmits<{
+defineEmits<{
   'preview-prune': []
   'run-prune': []
 }>()

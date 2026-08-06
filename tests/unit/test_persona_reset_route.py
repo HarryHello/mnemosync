@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -30,7 +30,8 @@ from src.core.memory.reindex import ReindexProgress, ReindexState
 from src.infra.vector_store import VectorStore
 from src.persistence.auth_store import User
 from src.persistence.conversation_store import SqliteConversationStore
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 NOW = datetime(2026, 7, 18, tzinfo=UTC)
 
@@ -57,19 +58,14 @@ def _mk_entry(idx: int, memory_type: MemoryType = MemoryType.NORMAL) -> MemoryEn
 
 
 @pytest.fixture
-def app(tmp_path: Path) -> Iterator[FastAPI]:
-    import asyncio
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+async def app(tmp_path: Path) -> AsyncIterator[FastAPI]:
     memory_store = SqliteMemoryStore(str(tmp_path / "mem.db"))
-    loop.run_until_complete(memory_store.connect())
+    await memory_store.connect()
     relationship_store = SqliteRelationshipStore(str(tmp_path / "mem.db"))
-    loop.run_until_complete(relationship_store.connect())
+    await relationship_store.connect()
 
     conversation_store = SqliteConversationStore(str(tmp_path / "conv.db"))
-    loop.run_until_complete(conversation_store.connect())
+    await conversation_store.connect()
 
     vector_store = VectorStore(str(tmp_path / "chroma"), collection_name="reset_test")
     progress = ReindexProgress()
@@ -96,17 +92,13 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
     app.dependency_overrides[get_current_user] = _fake_user
 
     # 预置数据: 1 条 PERMANENT + 2 条 NORMAL, 1 条 relationship, 3 条 conversation_turns
-    loop.run_until_complete(memory_store.save(_mk_entry(1, MemoryType.PERMANENT)))
-    loop.run_until_complete(memory_store.save(_mk_entry(2)))
-    loop.run_until_complete(memory_store.save(_mk_entry(3)))
-    loop.run_until_complete(
-        relationship_store.save_relationship(Relationship.create("default", "default"))
-    )
+    await memory_store.save(_mk_entry(1, MemoryType.PERMANENT))
+    await memory_store.save(_mk_entry(2))
+    await memory_store.save(_mk_entry(3))
+    await relationship_store.save_relationship(Relationship.create("default", "default"))
     for i, role in enumerate(["user", "assistant", "user"]):
-        loop.run_until_complete(
-            conversation_store.append(
-                role=role, content=f"turn-{i}", token_count=10, source_frontend="test"
-            )
+        await conversation_store.append(
+            role=role, content=f"turn-{i}", token_count=10, source_frontend="test"
         )
 
     # 也写一条向量, 确认 reset_collection 会清掉
@@ -114,9 +106,8 @@ def app(tmp_path: Path) -> Iterator[FastAPI]:
 
     yield app
 
-    loop.run_until_complete(memory_store.close())
-    loop.run_until_complete(conversation_store.close())
-    loop.close()
+    await memory_store.close()
+    await conversation_store.close()
 
 
 def test_reset_dry_run_returns_counts_without_deletion(app: FastAPI) -> None:
@@ -136,7 +127,7 @@ def test_reset_dry_run_returns_counts_without_deletion(app: FastAPI) -> None:
     assert resp2.json()["deleted_memories"] == 3
 
 
-def test_reset_wipes_all_including_permanent(app: FastAPI) -> None:
+async def test_reset_wipes_all_including_permanent(app: FastAPI) -> None:
     client = TestClient(app)
     resp = client.post("/panel/admin/persona/reset", json={"dry_run": False})
     assert resp.status_code == 200, resp.text
@@ -149,18 +140,13 @@ def test_reset_wipes_all_including_permanent(app: FastAPI) -> None:
     assert body["errors"] == []
 
     # 后续状态: 全空
-    import asyncio
-    loop = asyncio.new_event_loop()
     memory_store: SqliteMemoryStore = app.state.memory_store
     relationship_store: SqliteRelationshipStore = app.state.relationship_store
     conversation_store: SqliteConversationStore = app.state.conversation_store
     vector_store: VectorStore = app.state.vector_store
-    try:
-        assert loop.run_until_complete(memory_store.count_all()) == 0
-        assert loop.run_until_complete(relationship_store.count_relationships()) == 0
-        assert loop.run_until_complete(conversation_store.count()) == 0
-    finally:
-        loop.close()
+    assert await memory_store.count_all() == 0
+    assert await relationship_store.count_relationships() == 0
+    assert await conversation_store.count() == 0
     assert vector_store.count() == 0
 
 
@@ -196,17 +182,12 @@ def test_reset_partial_failure_reports_errors(app: FastAPI, monkeypatch) -> None
     assert "conversation_turns" in body["errors"][0]
 
 
-def test_reset_leaves_relationship_absent_for_lifecycle_to_recreate(app: FastAPI) -> None:
+async def test_reset_leaves_relationship_absent_for_lifecycle_to_recreate(app: FastAPI) -> None:
     """决策 4: 重置后 get_relationship 返 None, 由后续 lifecycle.update_relationship 自动补."""
     client = TestClient(app)
     resp = client.post("/panel/admin/persona/reset", json={"dry_run": False})
     assert resp.status_code == 200
 
-    import asyncio
-    loop = asyncio.new_event_loop()
     relationship_store: SqliteRelationshipStore = app.state.relationship_store
-    try:
-        rel = loop.run_until_complete(relationship_store.get_relationship("default", "default"))
-    finally:
-        loop.close()
+    rel = await relationship_store.get_relationship("default", "default")
     assert rel is None

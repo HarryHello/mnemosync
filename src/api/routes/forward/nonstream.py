@@ -2,7 +2,7 @@
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -22,6 +22,7 @@ from src.api.tool_policies import (
 )
 from src.api.tool_transactions import append_tool_transaction_context
 from src.core.config import get_settings
+from src.core.graph import AgentState
 from src.core.memory.short_term import build_short_term_history, token_count_for_storage
 from src.core.utils import last_user_message
 from src.infra.debug_context import emit_pipeline
@@ -87,6 +88,7 @@ async def _handle_non_stream(
         new_user_text=budget_input_text,
         max_tokens_hint=request.max_tokens,
         space_id=space_id,
+        source_user=source_user or None,
     )
     initial_state["active_participants"] = built.active_participants
     logger.debug(
@@ -115,7 +117,7 @@ async def _handle_non_stream(
 
     logger.debug("🚀 开始执行图 (非流式)...")
     try:
-        final_state = await graph.ainvoke(initial_state, config=graph_config)
+        final_state = await graph.ainvoke(cast(AgentState, initial_state), config=cast(Any, graph_config))
         logger.debug("✅ 图执行完成")
         logger.debug("  response 长度: %d", len(final_state.get("response", "")))
     except Exception as e:

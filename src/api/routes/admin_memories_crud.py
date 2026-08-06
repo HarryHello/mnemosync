@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from src.api.deps import (
     get_memory_store,
     get_multi_forwarder,
     get_resolver,
+    get_vector_store,
 )
 from src.api.routes.auth import get_current_user
+from src.core.models.resolver import RoleResolver
+from src.infra.forwarder.multi import MultiForwarder
 from src.persistence.memory_store import SqliteMemoryStore
 
 from .admin_mem_shared import (
@@ -40,7 +44,7 @@ class MemoryCorrectBody(BaseModel):
 @router.get("/memories/sources")
 async def list_memory_sources(
     store: SqliteMemoryStore = Depends(get_memory_store),
-):
+) -> dict[str, Any]:
     """列出 memory_entries 中出现过的 source_user, 供下拉框使用."""
     return {"items": await store.list_distinct_source_users()}
 
@@ -56,7 +60,7 @@ async def list_memories(
     before: str | None = Query(None, description="ISO 时间，仅返回此时间之前创建的记忆"),
     after: str | None = Query(None, description="ISO 时间，仅返回此时间之后创建的记忆"),
     store: SqliteMemoryStore = Depends(get_memory_store),
-):
+) -> MemoryListResponse:
     """查询记忆列表 (服务器端分页 + 排序)."""
     before_dt = None
     after_dt = None
@@ -92,7 +96,7 @@ async def list_memories(
 @router.get("/memories/{memory_id}", response_model=MemoryResponse)
 async def get_memory(
     memory_id: str, store: SqliteMemoryStore = Depends(get_memory_store)
-):
+) -> MemoryResponse:
     """获取单条记忆详情."""
     memory = await store.get_by_id(memory_id)
     if not memory:
@@ -103,7 +107,7 @@ async def get_memory(
 @router.delete("/memories/{memory_id}")
 async def delete_memory(
     memory_id: str, store: SqliteMemoryStore = Depends(get_memory_store)
-):
+) -> dict[str, Any]:
     """删除记忆."""
     success = await store.delete(memory_id)
     if not success:
@@ -115,10 +119,11 @@ async def delete_memory(
 async def correct_memory(
     memory_id: str,
     body: MemoryCorrectBody,
+    request: Request,
     store: SqliteMemoryStore = Depends(get_memory_store),
-    forwarder=Depends(get_multi_forwarder),
-    resolver=Depends(get_resolver),
-):
+    forwarder: MultiForwarder = Depends(get_multi_forwarder),
+    resolver: RoleResolver = Depends(get_resolver),
+) -> MemoryResponse:
     """纠正一条记忆: 创建新记忆替代旧记忆 (软替代)."""
     old = await store.get_by_id(memory_id)
     if not old:
@@ -152,8 +157,7 @@ async def correct_memory(
     from src.infra.llm_service.models import ModelType
     from src.infra.vector_store import VectorStoreLockError
     try:
-        from src.api.deps import get_vector_store
-        vector_store = get_vector_store()
+        vector_store = get_vector_store(request)
         cand = await resolver.first(ModelType.EMBEDDING)
         vector_store.assert_embedding_matches(cand.service_id, cand.model, len(vecs[0]))
     except VectorStoreLockError as e:
@@ -182,7 +186,7 @@ async def correct_memory(
 @router.get("/memories/{memory_id}/supersede-chain")
 async def get_supersede_chain(
     memory_id: str, store: SqliteMemoryStore = Depends(get_memory_store)
-):
+) -> dict[str, Any]:
     """获取记忆的替代链 (原始 -> 替代版本 -> 更新的替代 -> ...)."""
     chain = await store.get_supersede_chain(memory_id)
     if not chain:
@@ -207,7 +211,7 @@ async def delete_memories_batch(
     memory_type: str | None = Query(None, description="可选: 仅删除指定类型 (permanent/normal)"),
     before: str | None = Query(None, description="可选: 仅删除此 ISO 时间之前创建的记忆"),
     store: SqliteMemoryStore = Depends(get_memory_store),
-):
+) -> dict[str, Any]:
     """批量删除指定用户的记忆."""
     before_dt = None
     if before:

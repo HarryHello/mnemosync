@@ -18,6 +18,13 @@ from src.core.identity.models import (
 from src.persistence.base import SqliteStore, _parse_dt
 
 
+def _dt(value: str | None) -> datetime:
+    """解析 NOT NULL 时间戳列, 保证非空."""
+    parsed = _parse_dt(value)
+    assert parsed is not None
+    return parsed
+
+
 class SqliteIdentityStore(SqliteStore):
     """身份数据的 SQLite 存储."""
 
@@ -25,6 +32,8 @@ class SqliteIdentityStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS actors (
                 id TEXT PRIMARY KEY,
@@ -36,10 +45,6 @@ class SqliteIdentityStore(SqliteStore):
                 updated_at TIMESTAMP NOT NULL,
                 UNIQUE(frontend, external_key)
             )
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_actors_frontend_key
-            ON actors(frontend, external_key)
         """)
 
         await db.execute("""
@@ -71,6 +76,16 @@ class SqliteIdentityStore(SqliteStore):
                 updated_at TIMESTAMP NOT NULL
             )
         """)
+
+        async def _idx_actors_frontend_key(db: aiosqlite.Connection) -> None:
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_actors_frontend_key
+                ON actors(frontend, external_key)
+            """)
+
+        await MigrationRunner([
+            ("001_create_idx_actors_frontend_key", _idx_actors_frontend_key),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         async with self._conn() as db:
@@ -108,8 +123,8 @@ class SqliteIdentityStore(SqliteStore):
                     id=row[0], external_key=row[1], frontend=row[2],
                     display_name=updated_name if updated_name else display_name,
                     metadata=row[4] if row[4] != "{}" else metadata,
-                    created_at=_parse_dt(row[5]),
-                    updated_at=_parse_dt(row[6]),
+                    created_at=_dt(row[5]),
+                    updated_at=_dt(row[6]),
                 )
             # 不存在则创建
             now = datetime.now(UTC)
@@ -139,7 +154,7 @@ class SqliteIdentityStore(SqliteStore):
             return Actor(
                 id=row[0], external_key=row[1], frontend=row[2],
                 display_name=row[3], metadata=row[4],
-                created_at=_parse_dt(row[5]), updated_at=_parse_dt(row[6]),
+                created_at=_dt(row[5]), updated_at=_dt(row[6]),
             )
 
     async def find_unique_actor_by_display_name(
@@ -154,14 +169,14 @@ class SqliteIdentityStore(SqliteStore):
                 "FROM actors WHERE frontend = ? AND display_name = ? LIMIT 2",
                 (frontend, display_name),
             ) as cur:
-                rows = await cur.fetchall()
+                rows = list(await cur.fetchall())
         if len(rows) != 1:
             return None
         row = rows[0]
         return Actor(
             id=row[0], external_key=row[1], frontend=row[2],
             display_name=row[3], metadata=row[4],
-            created_at=_parse_dt(row[5]), updated_at=_parse_dt(row[6]),
+            created_at=_dt(row[5]), updated_at=_dt(row[6]),
         )
 
     async def list_actors(self, limit: int = 50, offset: int = 0) -> tuple[list[Actor], int]:
@@ -178,7 +193,7 @@ class SqliteIdentityStore(SqliteStore):
             actors = [
                 Actor(id=r[0], external_key=r[1], frontend=r[2],
                        display_name=r[3], metadata=r[4],
-                       created_at=_parse_dt(r[5]), updated_at=_parse_dt(r[6]))
+                       created_at=_dt(r[5]), updated_at=_dt(r[6]))
                 for r in rows
             ]
             return actors, total
@@ -207,7 +222,7 @@ class SqliteIdentityStore(SqliteStore):
                 return None
             return UserGroup(
                 id=row[0], name=row[1],
-                created_at=_parse_dt(row[2]), updated_at=_parse_dt(row[3]),
+                created_at=_dt(row[2]), updated_at=_dt(row[3]),
             )
 
     async def list_groups(self, limit: int = 50, offset: int = 0) -> tuple[list[UserGroup], int]:
@@ -222,7 +237,7 @@ class SqliteIdentityStore(SqliteStore):
                 rows = await cur.fetchall()
             groups = [
                 UserGroup(id=r[0], name=r[1],
-                          created_at=_parse_dt(r[2]), updated_at=_parse_dt(r[3]))
+                          created_at=_dt(r[2]), updated_at=_dt(r[3]))
                 for r in rows
             ]
             return groups, total
@@ -261,7 +276,7 @@ class SqliteIdentityStore(SqliteStore):
             ) as cur:
                 row = await cur.fetchone()
             if row:
-                return row[0]
+                return str(row[0])
             return actor_id
 
     async def list_actor_groups(self, actor_id: str) -> list[UserGroup]:
@@ -276,7 +291,7 @@ class SqliteIdentityStore(SqliteStore):
                 rows = await cur.fetchall()
             return [
                 UserGroup(id=r[0], name=r[1],
-                          created_at=_parse_dt(r[2]), updated_at=_parse_dt(r[3]))
+                          created_at=_dt(r[2]), updated_at=_dt(r[3]))
                 for r in rows
             ]
 
@@ -302,7 +317,7 @@ class SqliteIdentityStore(SqliteStore):
             return [
                 Actor(id=r[0], external_key=r[1], frontend=r[2],
                        display_name=r[3], metadata=r[4],
-                       created_at=_parse_dt(r[5]), updated_at=_parse_dt(r[6]))
+                       created_at=_dt(r[5]), updated_at=_dt(r[6]))
                 for r in rows
             ]
 
@@ -336,7 +351,7 @@ class SqliteIdentityStore(SqliteStore):
                     actor = Actor(
                         id=r[0], external_key=r[1], frontend=r[2],
                         display_name=r[3], metadata=r[4],
-                        created_at=_parse_dt(r[5]), updated_at=_parse_dt(r[6]),
+                        created_at=_dt(r[5]), updated_at=_dt(r[6]),
                     )
                     resolved[actor.id] = (None, [actor])
 
@@ -351,7 +366,7 @@ class SqliteIdentityStore(SqliteStore):
                 for r in group_rows:
                     group = UserGroup(
                         id=r[0], name=r[1],
-                        created_at=_parse_dt(r[2]), updated_at=_parse_dt(r[3]),
+                        created_at=_dt(r[2]), updated_at=_dt(r[3]),
                     )
                     resolved[group.id] = (group, [])
 
@@ -372,7 +387,7 @@ class SqliteIdentityStore(SqliteStore):
                     entry[1].append(Actor(
                         id=r[1], external_key=r[2], frontend=r[3],
                         display_name=r[4], metadata=r[5],
-                        created_at=_parse_dt(r[6]), updated_at=_parse_dt(r[7]),
+                        created_at=_dt(r[6]), updated_at=_dt(r[7]),
                     ))
 
         return resolved
@@ -409,7 +424,7 @@ class SqliteIdentityStore(SqliteStore):
             return IdentityStrategy(
                 id=row[0], name=row[1], strategy_type=row[2],
                 config=row[3], is_active=bool(row[4]),
-                created_at=_parse_dt(row[5]), updated_at=_parse_dt(row[6]),
+                created_at=_dt(row[5]), updated_at=_dt(row[6]),
             )
 
     async def list_strategies(self, limit: int = 50, offset: int = 0) -> tuple[list[IdentityStrategy], int]:
@@ -427,7 +442,7 @@ class SqliteIdentityStore(SqliteStore):
                 IdentityStrategy(
                     id=r[0], name=r[1], strategy_type=r[2],
                     config=r[3], is_active=bool(r[4]),
-                    created_at=_parse_dt(r[5]), updated_at=_parse_dt(r[6]),
+                    created_at=_dt(r[5]), updated_at=_dt(r[6]),
                 )
                 for r in rows
             ]

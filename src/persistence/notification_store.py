@@ -16,6 +16,7 @@ upstream_status 等), UI 按 category 决定是否展开。
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -46,6 +47,8 @@ class NotificationStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,14 +61,23 @@ class NotificationStore(SqliteStore):
                 read_at TIMESTAMP
             )
         """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_notifications_created_at "
-            "ON notifications(created_at DESC)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_notifications_unread "
-            "ON notifications(read_at) WHERE read_at IS NULL"
-        )
+
+        async def _idx_created_at(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_notifications_created_at "
+                "ON notifications(created_at DESC)"
+            )
+
+        async def _idx_unread(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_notifications_unread "
+                "ON notifications(read_at) WHERE read_at IS NULL"
+            )
+
+        await MigrationRunner([
+            ("001_create_idx_created_at", _idx_created_at),
+            ("002_create_idx_unread", _idx_unread),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         async with self._conn() as db:
@@ -181,7 +193,7 @@ class NotificationStore(SqliteStore):
                 return self._row_to_notification(row) if row else None
 
     @staticmethod
-    def _row_to_notification(row: tuple) -> Notification:
+    def _row_to_notification(row: Sequence[Any]) -> Notification:
         created = datetime.fromisoformat(row[1]) if row[1] else datetime.now(UTC)
         read = datetime.fromisoformat(row[7]) if row[7] else None
         meta_json = row[6]

@@ -1,6 +1,6 @@
 [project]
 name = "mnemosync"
-version = "0.3.4"
+version = "0.3.5"
 description = "基于 LangGraph 多 Agent 编排的跨平台人格记忆管理系统"
 readme = "README.md"
 license = { text = "MIT" }
@@ -19,39 +19,37 @@ classifiers = [
 
 dependencies = [
     # Web 框架
-    "fastapi~=0.115",
-    "uvicorn[standard]~=0.32",
+    "fastapi~=0.141",
+    "uvicorn[standard]~=0.52",
     # HTTP 客户端（Forwarder + DashScope API）
-    "httpx[socks]~=0.27",
+    "httpx[socks]~=0.28",
     # 数据校验与配置
-    "pydantic~=2.9",
-    "pydantic-settings~=2.6",
-    "python-dotenv~=1.0",
-    # Agent 编排（v0.2 核心）
-    "langgraph~=0.2",
-    "langchain~=0.3",
-    "langchain-core~=0.3",
-    "langchain-openai~=0.2",
+    "pydantic~=2.13",
+    "pydantic-settings~=2.14",
+    "python-dotenv~=1.2",
+    # Agent 编排（v0.3.5: 升级到 1.x, 移除未使用的 langchain/langchain-openai）
+    "langgraph~=1.2",
+    "langchain-core~=1.5",
     # 向量存储
-    "chromadb~=0.5",
+    "chromadb~=1.5",
     # 关系型存储
-    "aiosqlite~=0.20",
+    "aiosqlite~=0.22",
     # 加密（LLM 服务商 API Key 存储）
-    "cryptography~=42.0",
+    "cryptography~=50.0",
     # 日志
-    "structlog~=24.4",
+    "structlog~=26.1",
     # 认证（密码哈希）
-    "bcrypt~=4.2",
+    "bcrypt~=5.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest~=8.3",
-    "pytest-asyncio~=0.24",
-    "pytest-cov~=5.0",
-    "ruff~=0.7",
-    "mypy~=1.12",
-    "pre-commit~=4.0",
+    "pytest~=9.1",
+    "pytest-asyncio~=1.4",
+    "pytest-cov~=7.1",
+    "ruff~=0.16",
+    "mypy~=2.3",
+    "pre-commit~=4.6",
 ]
 
 [project.scripts]
@@ -95,10 +93,10 @@ addopts = "-v --cov=src --cov-report=term-missing"
 
 [dependency-groups]
 dev = [
-    "mypy~=1.12",
-    "pre-commit~=4.0",
-    "pytest~=8.3",
-    "pytest-asyncio~=0.24",
-    "pytest-cov~=5.0",
-    "ruff~=0.7",
+    "mypy~=2.3",
+    "pre-commit~=4.6",
+    "pytest~=9.1",
+    "pytest-asyncio~=1.4",
+    "pytest-cov~=7.1",
+    "ruff~=0.16",
 ]

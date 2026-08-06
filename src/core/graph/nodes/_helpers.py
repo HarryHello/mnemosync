@@ -6,19 +6,50 @@ Pure functions and lightweight helpers used across multiple node implementations
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from src.core.memory.audience import RetrievalContext
+from src.core.models.resolver import RoleResolver
 from src.core.utils import last_user_message
 from src.infra.forwarder.multi import MultiForwarder
+from src.infra.vector_store import VectorStore
+from src.persistence.memory_store import SqliteMemoryStore
+from src.persistence.notification_store import NotificationStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 
 if TYPE_CHECKING:
+    from src.core.config import Settings
     from src.core.graph.state import AgentState
+    from src.core.memory.models import Relationship
+    from src.infra.debug_bus import DebugEventBus
+    from src.persistence.agent_run_store import AgentRunStore
+    from src.persistence.identity_store import SqliteIdentityStore
+    from src.persistence.lorebook_store import SqliteLorebookStore
+    from src.persistence.persona_store import SqlitePersonaStore
+    from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 logger = logging.getLogger(__name__)
 
 
-def _format_emotion_text(emotion_analysis: dict) -> str:
+class StoresDict(TypedDict, total=False):
+    """Typed container for shared store instances passed via LangGraph config."""
+
+    multi_forwarder: MultiForwarder
+    resolver: RoleResolver
+    memory_store: SqliteMemoryStore
+    relationship_store: SqliteRelationshipStore
+    vector_store: VectorStore
+    notification_store: NotificationStore | None
+    debug_bus: DebugEventBus | None
+    identity_store: SqliteIdentityStore | None
+    persona_store: SqlitePersonaStore | None
+    lorebook_store: SqliteLorebookStore | None
+    space_policy_store: SqliteSpacePolicyStore | None
+    agent_run_store: AgentRunStore | None
+    _owns_forwarder: bool
+
+
+def _format_emotion_text(emotion_analysis: dict[str, Any]) -> str:
     """Format emotion analysis dict into human-readable text for agents."""
     return (
         f"情绪: {emotion_analysis.get('emotion', 'neutral')}, "
@@ -29,8 +60,8 @@ def _format_emotion_text(emotion_analysis: dict) -> str:
 
 async def _compute_emotion(
     forwarder: MultiForwarder,
-    extracted: list[dict],
-) -> dict:
+    extracted: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Pre-compute emotion analysis, shared across agents."""
     text = last_user_message(extracted)
     if not text:
@@ -44,7 +75,7 @@ async def _compute_emotion(
         return {"emotion": "neutral", "intensity": 0.0, "category": "other", "keywords": [], "summary": ""}
 
 
-def _resolve_addressing(rel, settings) -> tuple[str, str, str]:
+def _resolve_addressing(rel: Relationship | None, settings: Settings) -> tuple[str, str, str]:
     """Runtime addressing resolution: table values (non-None) take priority, else fallback to TOML baseline.
 
     v0.2.10 onwards relationships table has persona_addressing / user_addressing / context columns.
@@ -59,7 +90,7 @@ def _resolve_addressing(rel, settings) -> tuple[str, str, str]:
     )
 
 
-def _retrieval_context(state: AgentState, rel=None) -> RetrievalContext:
+def _retrieval_context(state: AgentState, rel: Relationship | None = None) -> RetrievalContext:
     """Build audience context from graph state (v0.3.0).
 
     rel is used for FRIENDS_ONLY / CONFIDENTIAL threshold checks;

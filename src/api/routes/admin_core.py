@@ -7,9 +7,11 @@
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -49,10 +51,10 @@ class HttpLogResponse(BaseModel):
     method: str
     path: str
     query_params: str | None
-    request_headers: dict | None
-    request_body: dict | str | list | None
+    request_headers: dict[str, Any] | None
+    request_body: dict[str, Any] | str | list[Any] | None
     response_status: int | None
-    response_body: dict | str | list | None
+    response_body: dict[str, Any] | str | list[Any] | None
     duration_ms: float | None
     client_ip: str | None
     created_at: str
@@ -81,7 +83,7 @@ class DashboardStatsResponse(BaseModel):
 # ============================================================================
 
 
-def _row_to_log(row: tuple) -> HttpLogResponse:
+def _row_to_log(row: tuple[Any, ...]) -> HttpLogResponse:
     return HttpLogResponse(
         id=row[0],
         method=row[1],
@@ -115,7 +117,7 @@ def _build_health() -> HealthResponse:
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check():
+async def health_check() -> HealthResponse:
     """健康检查."""
     return _build_health()
 
@@ -160,7 +162,7 @@ async def list_logs(
     since: str | None = Query(None, description="ISO 8601 时间, 只返回 >= 该时间的记录"),
     until: str | None = Query(None, description="ISO 8601 时间, 只返回 <= 该时间的记录"),
     store: HttpLogStore = Depends(get_http_log_store),
-):
+) -> HttpLogListResponse:
     """查询 HTTP 日志."""
     total = await store.count(method=method, path=path, status=status, since=since, until=until)
     rows = await store.list_paginated(
@@ -175,7 +177,7 @@ async def list_logs(
 @router.get("/logs/{log_id}", response_model=HttpLogResponse)
 async def get_log(
     log_id: int, store: HttpLogStore = Depends(get_http_log_store)
-):
+) -> HttpLogResponse:
     """获取单条日志详情."""
     row = await store.get_by_id(log_id)
     if not row:
@@ -184,7 +186,48 @@ async def get_log(
 
 
 @router.delete("/logs")
-async def clear_logs(store: HttpLogStore = Depends(get_http_log_store)):
+async def clear_logs(store: HttpLogStore = Depends(get_http_log_store)) -> dict[str, bool | str]:
     """清空所有日志."""
     await store.clear_all()
     return {"success": True, "message": "All logs cleared"}
+
+
+@router.get("/check-update")
+async def check_update() -> dict[str, Any]:
+    """检查是否有新版本可用."""
+    from src.infra.update_checker import check_for_update
+
+    update = await check_for_update()
+    if update:
+        return {
+            "update_available": True,
+            "latest_version": update["latest_version"],
+            "current_version": update["current_version"],
+            "url": update["url"],
+        }
+    return {"update_available": False}
+
+
+@router.post("/upgrade")
+async def upgrade() -> dict[str, Any]:
+    """执行升级 (mnemosync upgrade).
+
+    通过 subprocess 触发, 因为升级会替换代码文件, 不能在当前进程内执行.
+    """
+    import subprocess
+    from src.cli.cli import get_project_root
+
+    project_root = get_project_root()
+    env = os.environ.copy()
+    env.setdefault("PYTHONPATH", project_root)
+    env["MNEMOSYNC_DIR"] = project_root
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "src.cli.cli", "upgrade"],
+        cwd=project_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    return {"success": True, "message": f"升级已启动 (PID: {proc.pid}), 请稍后刷新页面"}

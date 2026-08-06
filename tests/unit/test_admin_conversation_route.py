@@ -10,8 +10,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -26,18 +25,16 @@ from src.persistence.conversation_store import SqliteConversationStore
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> Iterator[SqliteConversationStore]:
+async def store(tmp_path: Path) -> AsyncIterator[SqliteConversationStore]:
     s = SqliteConversationStore(str(tmp_path / "conv.db"))
-    asyncio.get_event_loop().run_until_complete(s.connect())
+    await s.connect()
     yield s
-    asyncio.get_event_loop().run_until_complete(s.close())
+    await s.close()
 
 
-def _seed(store: SqliteConversationStore, entries: list[tuple[str, str, datetime]]) -> None:
-    async def _run() -> None:
-        for role, content, ts in entries:
-            await store.append(role, content, token_count=len(content), ts=ts)
-    asyncio.get_event_loop().run_until_complete(_run())
+async def _seed(store: SqliteConversationStore, entries: list[tuple[str, str, datetime]]) -> None:
+    for role, content, ts in entries:
+        await store.append(role, content, token_count=len(content), ts=ts)
 
 
 @pytest.fixture
@@ -79,9 +76,9 @@ def test_conversation_routes_require_auth(app_unauth: FastAPI) -> None:
         assert resp.status_code == 401, f"{method} {path}: {resp.status_code}"
 
 
-def test_list_returns_descending_with_total(app: FastAPI, store: SqliteConversationStore) -> None:
+async def test_list_returns_descending_with_total(app: FastAPI, store: SqliteConversationStore) -> None:
     now = datetime.now(UTC)
-    _seed(store, [
+    await _seed(store, [
         ("user", "第一句", now - timedelta(minutes=3)),
         ("assistant", "回复 1", now - timedelta(minutes=2)),
         ("user", "第二句", now - timedelta(minutes=1)),
@@ -102,9 +99,9 @@ def test_list_returns_descending_with_total(app: FastAPI, store: SqliteConversat
     assert "observed_at" in body["items"][0]
 
 
-def test_list_respects_limit(app: FastAPI, store: SqliteConversationStore) -> None:
+async def test_list_respects_limit(app: FastAPI, store: SqliteConversationStore) -> None:
     now = datetime.now(UTC)
-    _seed(store, [
+    await _seed(store, [
         ("user", str(i), now - timedelta(seconds=10 - i))
         for i in range(5)
     ])
@@ -116,9 +113,9 @@ def test_list_respects_limit(app: FastAPI, store: SqliteConversationStore) -> No
     assert body["page_size"] == 2
 
 
-def test_list_page_two_offsets_correctly(app: FastAPI, store: SqliteConversationStore) -> None:
+async def test_list_page_two_offsets_correctly(app: FastAPI, store: SqliteConversationStore) -> None:
     now = datetime.now(UTC)
-    _seed(store, [
+    await _seed(store, [
         ("user", str(i), now - timedelta(seconds=10 - i))
         for i in range(5)
     ])
@@ -130,9 +127,9 @@ def test_list_page_two_offsets_correctly(app: FastAPI, store: SqliteConversation
     assert body["total"] == 5
 
 
-def test_list_role_filter(app: FastAPI, store: SqliteConversationStore) -> None:
+async def test_list_role_filter(app: FastAPI, store: SqliteConversationStore) -> None:
     now = datetime.now(UTC)
-    _seed(store, [
+    await _seed(store, [
         ("user", "u1", now - timedelta(minutes=3)),
         ("assistant", "a1", now - timedelta(minutes=2)),
         ("user", "u2", now - timedelta(minutes=1)),
@@ -143,7 +140,7 @@ def test_list_role_filter(app: FastAPI, store: SqliteConversationStore) -> None:
     assert [it["content"] for it in body["items"]] == ["u2", "u1"]
 
 
-def test_list_source_filter_and_sources_endpoint(
+async def test_list_source_filter_and_sources_endpoint(
     app: FastAPI, store: SqliteConversationStore
 ) -> None:
     """来源过滤 + /sources 列出去重列表."""
@@ -157,7 +154,7 @@ def test_list_source_filter_and_sources_endpoint(
                            ts=now - timedelta(minutes=1))
         await store.append("user", "d", 1, source_frontend=None,
                            ts=now)  # NULL 来源
-    asyncio.get_event_loop().run_until_complete(_seed_with_source())
+    await _seed_with_source()
 
     # /sources 排除 NULL/空串, 去重, 按字典序
     resp = TestClient(app).get("/panel/admin/conversation-turns/sources")
@@ -173,18 +170,18 @@ def test_list_source_filter_and_sources_endpoint(
     assert [it["content"] for it in body["items"]] == ["c", "a"]
 
 
-def test_delete_single_turn_by_id(app: FastAPI, store: SqliteConversationStore) -> None:
+async def test_delete_single_turn_by_id(app: FastAPI, store: SqliteConversationStore) -> None:
     now = datetime.now(UTC)
-    _seed(store, [
+    await _seed(store, [
         ("user", "keep", now - timedelta(minutes=2)),
         ("assistant", "remove", now - timedelta(minutes=1)),
     ])
-    turns = asyncio.get_event_loop().run_until_complete(store.list_recent())
+    turns = await store.list_recent()
     remove_id = next(t.id for t in turns if t.content == "remove")
     resp = TestClient(app).delete(f"/panel/admin/conversation-turns/{remove_id}")
     assert resp.status_code == 200
     assert resp.json()["success"] is True
-    remaining = asyncio.get_event_loop().run_until_complete(store.list_recent())
+    remaining = await store.list_recent()
     assert [t.content for t in remaining] == ["keep"]
 
 
@@ -193,21 +190,21 @@ def test_delete_single_turn_not_found(app: FastAPI) -> None:
     assert resp.status_code == 404
 
 
-def test_delete_without_since_wipes_all(app: FastAPI, store: SqliteConversationStore) -> None:
+async def test_delete_without_since_wipes_all(app: FastAPI, store: SqliteConversationStore) -> None:
     now = datetime.now(UTC)
-    _seed(store, [
+    await _seed(store, [
         ("user", "a", now - timedelta(days=10)),
         ("assistant", "b", now - timedelta(hours=1)),
     ])
     resp = TestClient(app).delete("/panel/admin/conversation-turns")
     assert resp.status_code == 200
     assert resp.json() == {"deleted": 2}
-    assert asyncio.get_event_loop().run_until_complete(store.count()) == 0
+    assert await store.count() == 0
 
 
-def test_delete_with_since_only_wipes_older(app: FastAPI, store: SqliteConversationStore) -> None:
+async def test_delete_with_since_only_wipes_older(app: FastAPI, store: SqliteConversationStore) -> None:
     now = datetime.now(UTC)
-    _seed(store, [
+    await _seed(store, [
         ("user", "old", now - timedelta(days=10)),
         ("assistant", "recent", now - timedelta(hours=1)),
     ])
@@ -217,7 +214,7 @@ def test_delete_with_since_only_wipes_older(app: FastAPI, store: SqliteConversat
     )
     assert resp.status_code == 200
     assert resp.json() == {"deleted": 1}
-    remaining = asyncio.get_event_loop().run_until_complete(store.list_recent())
+    remaining = await store.list_recent()
     assert len(remaining) == 1
     assert remaining[0].content == "recent"
 

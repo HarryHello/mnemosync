@@ -248,6 +248,23 @@ export interface HealthResponse {
 }
 
 // ============================================================================
+// Backend (Admin)
+// ============================================================================
+
+export interface BackendStatusResponse {
+  running: boolean
+  pid: number | null
+  health: HealthResponse | null
+  port: number
+}
+
+export interface BackendActionResponse {
+  success: boolean
+  message: string
+  running: boolean
+}
+
+// ============================================================================
 // Prompts (Admin)
 // ============================================================================
 
@@ -548,6 +565,14 @@ export interface PersonaVersionItem {
 export interface PersonaVersionListResponse {
   items: PersonaVersionItem[]
   total: number
+}
+
+export interface CharacterCardPreview {
+  name: string
+  source_format: string
+  identity: PersonaIdentityBody
+  has_lorebook: boolean
+  has_examples: boolean
 }
 
 // ============================================================================

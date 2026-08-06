@@ -14,10 +14,11 @@ import hashlib
 import hmac
 import os
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import aiosqlite
 import bcrypt
@@ -159,6 +160,8 @@ class SqliteAuthStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -182,8 +185,21 @@ class SqliteAuthStore(SqliteStore):
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_username ON users(username)")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_session_token ON sessions(token_hash)")
+
+        async def _idx_username(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_username ON users(username)"
+            )
+
+        async def _idx_session_token(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_session_token ON sessions(token_hash)"
+            )
+
+        await MigrationRunner([
+            ("001_create_idx_username", _idx_username),
+            ("002_create_idx_session_token", _idx_session_token),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         """兼容旧接口: 幂等地初始化 schema. 长连接模式下 connect() 已包含此步骤."""
@@ -350,7 +366,7 @@ class SqliteAuthStore(SqliteStore):
             await db.commit()
         return user
 
-    def _row_to_user(self, row: tuple) -> User:
+    def _row_to_user(self, row: Sequence[Any]) -> User:
         return User(
             id=row[0], username=row[1], password_hash=row[2],
             must_change_password=bool(row[3]),
@@ -360,7 +376,7 @@ class SqliteAuthStore(SqliteStore):
             is_active=bool(row[7]),
         )
 
-    def _row_to_session(self, row: tuple, raw_token: str) -> SessionToken:
+    def _row_to_session(self, row: Sequence[Any], raw_token: str) -> SessionToken:
         return SessionToken(
             id=row[0], user_id=row[1], token_hash=row[2], raw_token=raw_token,
             expires_at=datetime.fromisoformat(row[3]) if row[3] else datetime.now(UTC),

@@ -2,7 +2,7 @@
 
 import type { HealthResponse, HttpLog, HttpLogListResponse } from '@/types/api'
 import { API_BASE, buildQuery } from '@/utils/constants'
-import { apiDelete, apiGet, request } from './http'
+import { apiDelete, apiGet, apiPost, request } from './http'
 
 // ============================================================================
 // Health
@@ -53,4 +53,41 @@ export async function getLog(logId: number): Promise<HttpLog> {
 
 export async function clearLogs(): Promise<void> {
   await apiDelete('/admin/logs')
+}
+
+// ============================================================================
+// Restart
+// ============================================================================
+
+export interface RestartResponse {
+  success: boolean
+  message: string
+}
+
+export async function restartService(): Promise<RestartResponse> {
+  return apiPost<RestartResponse>('/admin/restart')
+}
+
+// ============================================================================
+// Update Check & Upgrade
+// ============================================================================
+
+export interface UpdateCheckResult {
+  update_available: boolean
+  latest_version?: string
+  current_version?: string
+  url?: string
+}
+
+export async function checkUpdate(): Promise<UpdateCheckResult> {
+  return apiGet<UpdateCheckResult>('/admin/check-update')
+}
+
+export interface UpgradeResult {
+  success: boolean
+  message: string
+}
+
+export async function upgradeService(): Promise<UpgradeResult> {
+  return apiPost<UpgradeResult>('/admin/upgrade')
 }

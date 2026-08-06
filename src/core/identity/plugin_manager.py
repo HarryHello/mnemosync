@@ -11,6 +11,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -23,6 +24,29 @@ DEFAULT_PLUGIN_SOURCE = "https://api.github.com/repos/HarryHello/mnemosync-plugi
 
 # GitHub raw 内容基址
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com"
+
+
+def _proxy_url() -> str | None:
+    """返回配置的插件代理 (空则 None).
+
+    来源优先级: data/plugin_proxy.toml > config.local.toml [runtime] plugin_proxy
+    > 环境变量 MNEMOSYNC_PLUGIN_PROXY.
+    """
+    from src.core.config import get_plugin_proxy
+
+    val = get_plugin_proxy().strip()
+    return val or None
+
+
+def _apply_proxy(url: str) -> str:
+    """把代理前缀应用到 GitHub URL (如 https://gh-proxy.org/ + url).
+
+    未配置代理时原样返回.
+    """
+    proxy = _proxy_url()
+    if not proxy:
+        return url
+    return proxy.rstrip("/") + "/" + url
 
 
 @dataclass
@@ -63,8 +87,8 @@ async def list_available(source_url: str | None = None) -> list[AvailablePlugin]
     plugins: list[AvailablePlugin] = []
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url, headers={"Accept": "application/vnd.github.v3+json"})
+        async with httpx.AsyncClient(timeout=15, proxy=_proxy_url()) as client:
+            resp = await client.get(_apply_proxy(url), headers={"Accept": "application/vnd.github.v3+json"})
             resp.raise_for_status()
             files = resp.json()
 
@@ -92,12 +116,13 @@ async def list_available(source_url: str | None = None) -> list[AvailablePlugin]
         )
 
         for (name, url), metadata in zip(candidates, metadata_list, strict=False):
-            if isinstance(metadata, Exception):
-                metadata = None
+            download_metadata: PluginMetadata | None = cast(
+                PluginMetadata | None, metadata
+            ) if not isinstance(metadata, Exception) else None
             plugins.append(AvailablePlugin(
                 file_name=name,
                 download_url=url,
-                metadata=metadata,
+                metadata=download_metadata,
             ))
     except httpx.HTTPStatusError as e:
         logger.warning("获取插件源失败 (%s): %s %s", url, e.response.status_code, e.response.text[:200])
@@ -151,12 +176,13 @@ async def install_plugin(file_name: str, download_url: str) -> Path:
         httpx.HTTPStatusError: 下载失败
     """
     _validate_file_name(file_name)
-    _validate_download_url(download_url)
+    url = _apply_proxy(download_url)
+    _validate_download_url(url)
     _ensure_plugin_dir()
 
     target = PLUGIN_DIR / file_name
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(download_url)
+    async with httpx.AsyncClient(timeout=30, proxy=_proxy_url()) as client:
+        resp = await client.get(url)
         resp.raise_for_status()
         target.write_bytes(resp.content)
 
@@ -196,9 +222,9 @@ def remove_plugin(file_name: str) -> bool:
 async def _fetch_metadata(url: str) -> PluginMetadata | None:
     """从远程 URL 获取文件头部并解析元数据."""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, proxy=_proxy_url()) as client:
             # 只下载前 4KB 足够读 class 定义
-            resp = await client.get(url, headers={"Range": "bytes=0-4096"})
+            resp = await client.get(_apply_proxy(url), headers={"Range": "bytes=0-4096"})
             if resp.status_code not in (200, 206):
                 return None
             content = resp.text
@@ -291,18 +317,36 @@ _ALLOWED_DOWNLOAD_HOSTS = [
 
 
 def _validate_download_url(url: str) -> None:
-    """校验下载 URL 来源可信."""
+    """校验下载 URL 来源可信.
+
+    允许两种来源:
+    1. 直接指向 GitHub (raw.githubusercontent.com / github.com, 含子域名)
+    2. 配置的代理域名 (如 gh-proxy.org), 但校验其路径部分仍指向
+       raw.githubusercontent.com 或 github.com, 防止代理被用来访问任意站点.
+    """
     from urllib.parse import urlparse
 
     parsed = urlparse(url)
     if not parsed.hostname:
         raise ValueError(f"无效 URL: {url}")
-    if not any(parsed.hostname == host or parsed.hostname.endswith("." + host)
-               for host in _ALLOWED_DOWNLOAD_HOSTS):
-        raise ValueError(
-            f"下载来源不受信任: {parsed.hostname}。"
-            f"仅允许: {', '.join(_ALLOWED_DOWNLOAD_HOSTS)}"
-        )
+    if any(parsed.hostname == host or parsed.hostname.endswith("." + host)
+           for host in _ALLOWED_DOWNLOAD_HOSTS):
+        return
+
+    # 代理域名: 校验路径仍指向 GitHub
+    proxy = _proxy_url()
+    if proxy:
+        proxy_host = urlparse(proxy).hostname
+        if proxy_host and (parsed.hostname == proxy_host
+                           or parsed.hostname.endswith("." + proxy_host)):
+            path = parsed.path.lstrip("/")
+            if path.startswith("https://raw.githubusercontent.com") or path.startswith("https://github.com"):
+                return
+
+    raise ValueError(
+        f"下载来源不受信任: {parsed.hostname}。"
+        f"仅允许: {', '.join(_ALLOWED_DOWNLOAD_HOSTS)} 或配置的代理域名"
+    )
 
 
 def _ensure_plugin_dir() -> None:

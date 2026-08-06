@@ -1,6 +1,7 @@
 """幂等缓存: 查询/写入/重放."""
 import json
 import logging
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -108,7 +109,7 @@ def _replay_json_response(record: IdempotencyRecord, model: str) -> JSONResponse
 def _replay_stream_response(record: IdempotencyRecord, model: str) -> StreamingResponse:
     """流式幂等重放: 把缓存响应拼成标准 SSE 序列 (内容帧 + finish 帧 + [DONE])."""
 
-    async def replay_generator():
+    async def replay_generator() -> AsyncGenerator[bytes, None]:
         created = int(datetime.now(UTC).timestamp())
         finish_reason = record.finish_reason or "stop"
         # 工具调用响应: 以 tool_calls 帧形式重放

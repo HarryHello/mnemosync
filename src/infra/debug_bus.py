@@ -67,7 +67,7 @@ class DebugEvent:
 @dataclass
 class _StoredEvent:
     summary: DebugEvent
-    body_full: bytes | str | dict | list | None
+    body_full: bytes | str | dict[str, Any] | list[Any] | None
     # 流式帧 assemble 结果 (只在 stream 起始事件保存)
     stream_chunks: list[bytes] = field(default_factory=list)
     stream_assembled: str | None = None
@@ -82,8 +82,8 @@ class DebugEventBus:
         self._grace_seconds = grace_seconds
         self._buffer: deque[_StoredEvent] = deque(maxlen=capacity)
         self._by_id: dict[str, _StoredEvent] = {}
-        self._subscribers: dict[str, asyncio.Queue] = {}
-        self._grace_task: asyncio.Task | None = None
+        self._subscribers: dict[str, asyncio.Queue[DebugEvent]] = {}
+        self._grace_task: asyncio.Task[None] | None = None
         self._on_grace_expired: Callable[[], Awaitable[None]] | None = None
         self._lock = asyncio.Lock()
 
@@ -95,10 +95,10 @@ class DebugEventBus:
 
     # ============ 订阅生命周期 ============
 
-    async def subscribe(self) -> tuple[str, asyncio.Queue]:
+    async def subscribe(self) -> tuple[str, asyncio.Queue[DebugEvent]]:
         """新订阅者. 返回 (id, queue). 会取消 pending grace timer."""
         sub_id = uuid.uuid4().hex[:12]
-        q: asyncio.Queue = asyncio.Queue(maxsize=200)
+        q: asyncio.Queue[DebugEvent] = asyncio.Queue(maxsize=200)
         async with self._lock:
             self._subscribers[sub_id] = q
             if self._grace_task and not self._grace_task.done():

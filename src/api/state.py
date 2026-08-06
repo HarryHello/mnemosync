@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import asyncio
@@ -39,9 +39,10 @@ if TYPE_CHECKING:
     from src.persistence.idempotency_store import SqliteIdempotencyStore
     from src.persistence.identity_store import SqliteIdentityStore
     from src.persistence.lorebook_store import SqliteLorebookStore
-    from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+    from src.persistence.memory_store import SqliteMemoryStore
     from src.persistence.notification_store import NotificationStore
     from src.persistence.persona_store import SqlitePersonaStore
+    from src.persistence.relationship_store import SqliteRelationshipStore
     from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 
@@ -67,7 +68,7 @@ class AppState:
     lorebook_store: SqliteLorebookStore | None = None
     space_policy_store: SqliteSpacePolicyStore | None = None
     agent_run_store: AgentRunStore | None = None
-    active_bg_tasks: dict[str, asyncio.Task] | None = None
+    active_bg_tasks: dict[str, asyncio.Task[Any]] | None = None
 
     # ── 服务 / 管理器 ──────────────────────────────────
     resolver: RoleResolver | None = None

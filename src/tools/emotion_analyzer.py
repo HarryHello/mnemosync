@@ -76,7 +76,7 @@ async def analyze_emotion(
     )
 
 
-def make_emotion_analyzer_tool(forwarder: MultiForwarder):
+def make_emotion_analyzer_tool(forwarder: MultiForwarder) -> Any:
     """创建 emotion_analyzer LangChain Tool."""
 
     @tool

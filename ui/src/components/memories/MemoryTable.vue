@@ -2,7 +2,7 @@
 import type { Memory } from '@/types/api'
 import { formatDate } from '@/utils/format'
 
-const props = defineProps<{
+defineProps<{
   items: Memory[]
   loading?: boolean
   sortBy?: string

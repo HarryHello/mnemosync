@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import aiosqlite
 
@@ -251,7 +252,7 @@ class LLMServiceStore:
                     "context_length, embedding_dim, send_dimensions "
                     "FROM role_bindings ORDER BY role, priority"
                 )
-                params: tuple = ()
+                params: tuple[Any, ...] = ()
             else:
                 query = (
                     "SELECT role, priority, service_id, model, created_at, "
@@ -404,7 +405,7 @@ class LLMServiceStore:
                         raise ValueError(f"服务 '{service_id}' 不存在")
 
             sets: list[str] = []
-            params: list = []
+            params: list[Any] = []
             if service_id is not None:
                 sets.append("service_id = ?")
                 params.append(service_id)

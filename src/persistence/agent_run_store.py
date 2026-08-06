@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -13,6 +14,9 @@ from typing import Any, Literal
 import aiosqlite
 
 from src.persistence.base import SqliteStore
+
+# 清理时保留的最大记录数 (超出后删除最旧记录)
+MAX_RECORDS: int = 10000
 
 
 @dataclass
@@ -40,6 +44,8 @@ class AgentRunStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS agent_runs (
                 run_id TEXT PRIMARY KEY,
@@ -56,18 +62,30 @@ class AgentRunStore(SqliteStore):
                 error TEXT
             )
         """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_agent_runs_parent "
-            "ON agent_runs(parent_request_id)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_agent_runs_agent "
-            "ON agent_runs(agent_name)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_agent_runs_started "
-            "ON agent_runs(started_at DESC)"
-        )
+
+        async def _idx_parent(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_runs_parent "
+                "ON agent_runs(parent_request_id)"
+            )
+
+        async def _idx_agent(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_runs_agent "
+                "ON agent_runs(agent_name)"
+            )
+
+        async def _idx_started(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_runs_started "
+                "ON agent_runs(started_at DESC)"
+            )
+
+        await MigrationRunner([
+            ("001_create_idx_parent", _idx_parent),
+            ("002_create_idx_agent", _idx_agent),
+            ("003_create_idx_started", _idx_started),
+        ]).apply(db)
 
     async def init_db(self) -> None:
         async with self._conn() as db:
@@ -109,8 +127,8 @@ class AgentRunStore(SqliteStore):
         run_id: str,
         *,
         status: str,
-        tool_trace: list[dict] | None = None,
-        usage: dict | None = None,
+        tool_trace: list[dict[str, Any]] | None = None,
+        usage: dict[str, Any] | None = None,
         structured_result: Any | None = None,
         error: str | None = None,
     ) -> None:
@@ -162,6 +180,7 @@ class AgentRunStore(SqliteStore):
         if status:
             conditions.append("status = ?")
             params.append(status)
+        # where 由硬编码条件 + "?" 占位符组成, 无 SQL 注入风险
         where = " AND ".join(conditions) if conditions else "1=1"
         async with self._conn() as db:
             async with db.execute(
@@ -185,6 +204,7 @@ class AgentRunStore(SqliteStore):
         if status:
             conditions.append("status = ?")
             params.append(status)
+        # where 由硬编码条件 + "?" 占位符组成, 无 SQL 注入风险
         where = " AND ".join(conditions) if conditions else "1=1"
         async with self._conn() as db:
             async with db.execute(
@@ -194,7 +214,7 @@ class AgentRunStore(SqliteStore):
                 return row[0] if row else 0
 
     async def cleanup(
-        self, retention_days: int = 7, max_records: int = 10000
+        self, retention_days: int = 7, max_records: int = MAX_RECORDS
     ) -> int:
         """清理旧记录, 返回被删条数."""
         async with self._conn() as db:
@@ -217,7 +237,7 @@ class AgentRunStore(SqliteStore):
     # ── 行转换 ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _row_to_record(row: tuple) -> AgentRunRecord:
+    def _row_to_record(row: Sequence[Any]) -> AgentRunRecord:
         return AgentRunRecord(
             run_id=row[0],
             parent_request_id=row[1],

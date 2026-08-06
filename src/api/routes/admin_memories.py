@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -23,6 +24,7 @@ from src.api.schemas.admin import (
     LorebookEntryItem,
     LorebookEntryListResponse,
 )
+from src.persistence.lorebook_store import SqliteLorebookStore
 
 from .admin_memories_crud import router as crud_router
 from .admin_memories_maintenance import router as maintenance_router
@@ -53,8 +55,8 @@ async def list_lorebook_entries(
     space_id: str | None = Query(None),
     sort_by: str = Query("created_at", description="created_at | priority | content"),
     sort_order: str = Query("desc"),
-    lorebook_store=Depends(get_lorebook_store),
-):
+    lorebook_store: SqliteLorebookStore = Depends(get_lorebook_store),
+) -> LorebookEntryListResponse:
     """分页列出 Lorebook 条目."""
     offset = (page - 1) * page_size
     items, total = await lorebook_store.list_page(
@@ -81,8 +83,8 @@ async def list_lorebook_entries(
 @router.post("/lorebook")
 async def create_lorebook_entry(
     body: LorebookEntryCreateBody,
-    lorebook_store=Depends(get_lorebook_store),
-):
+    lorebook_store: SqliteLorebookStore = Depends(get_lorebook_store),
+) -> LorebookEntryItem:
     """创建 Lorebook 条目."""
     from src.persistence.lorebook_store import LorebookEntry
     entry = LorebookEntry.create(
@@ -107,8 +109,8 @@ async def create_lorebook_entry(
 @router.delete("/lorebook/{entry_id}")
 async def delete_lorebook_entry(
     entry_id: str,
-    lorebook_store=Depends(get_lorebook_store),
-):
+    lorebook_store: SqliteLorebookStore = Depends(get_lorebook_store),
+) -> dict[str, Any]:
     """删除 Lorebook 条目."""
     ok = await lorebook_store.delete(entry_id)
     if not ok:

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from src.persistence.api_key_store import ApiKey
+from src.persistence.api_key_store import ApiKey, SqliteApiKeyStore
 
 from ._input import check_exit_requested
 
 
 class KeyCommandsMixin:
     """cmd_ls_keys / cmd_show_key / cmd_generate_key."""
+
+    api_key_db: SqliteApiKeyStore
 
     async def cmd_ls_keys(self) -> None:
         """列出 API Keys (只展示用户手动创建的, 调试面板自动 key 不显示)."""

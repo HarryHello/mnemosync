@@ -7,7 +7,11 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+if TYPE_CHECKING:
+    from src.infra.debug_bus import DebugEventBus
+    from src.persistence.agent_run_store import AgentRunStore
 
 from src.core.agents.spec import get_spec
 from src.infra.debug_context import emit_pipeline
@@ -20,8 +24,8 @@ async def run_agent_tracked[T](
     spec_name: str,
     coro: Awaitable[T],
     *,
-    store: Any | None = None,
-    debug_bus: Any | None = None,
+    store: AgentRunStore | None = None,
+    debug_bus: DebugEventBus | None = None,
     parent_request_id: str | None = None,
     input_event_ids: list[str] | None = None,
     base_version: str | None = None,
@@ -66,7 +70,7 @@ async def run_agent_tracked[T](
             logger.warning("Failed to create agent run record: %s", exc)
 
     status = "ok"
-    result = None
+    result: T | None = None
     error_msg: str | None = None
 
     try:
@@ -108,4 +112,4 @@ async def run_agent_tracked[T](
             error=error_msg,
         )
 
-    return result
+    return cast(T, result)

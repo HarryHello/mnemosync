@@ -15,7 +15,7 @@ import type {
   UserGroupCreateBody,
   UserGroupListResponse,
 } from '@/types/api'
-import { apiDelete, apiGet, apiPatch, apiPost } from './http'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './http'
 
 // ============================================================================
 // 身份识别策略
@@ -175,4 +175,20 @@ export async function installPlugin(
 
 export async function removePlugin(fileName: string): Promise<void> {
   await apiDelete(`/admin/identity/plugins/${encodeURIComponent(fileName)}`)
+}
+
+export interface PluginProxyResponse {
+  plugin_proxy: string
+}
+
+export async function getPluginProxy(): Promise<PluginProxyResponse> {
+  return apiGet<PluginProxyResponse>('/admin/identity/plugins/proxy')
+}
+
+export async function setPluginProxy(
+  pluginProxy: string,
+): Promise<PluginProxyResponse> {
+  return apiPut<PluginProxyResponse>('/admin/identity/plugins/proxy', {
+    plugin_proxy: pluginProxy,
+  })
 }

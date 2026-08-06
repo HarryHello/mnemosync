@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -26,19 +26,17 @@ from src.persistence.auth_store import User
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> Iterator[LLMServiceStore]:
+async def store(tmp_path: Path) -> AsyncIterator[LLMServiceStore]:
     db = tmp_path / "llm_service.db"
     s = LLMServiceStore(str(db))
 
-    import asyncio
-
-    asyncio.get_event_loop().run_until_complete(s.init_db())
+    await s.init_db()
     # 预置两个 service
     for svc_id in ("s1", "s2"):
         svc = LLMServiceProvider.create(
             service_id=svc_id, base_url="https://x", api_key="k",
         )
-        asyncio.get_event_loop().run_until_complete(s.save_service(svc))
+        await s.save_service(svc)
     yield s
 
 
@@ -134,7 +132,7 @@ def test_delete_missing_returns_404(app: FastAPI) -> None:
     assert resp.status_code == 404
 
 
-def test_delete_shifts_priorities_and_invalidates_cache(app: FastAPI) -> None:
+async def test_delete_shifts_priorities_and_invalidates_cache(app: FastAPI) -> None:
     client = TestClient(app)
     for sid, model in [("s1", "m1"), ("s2", "m2")]:
         client.post(
@@ -144,8 +142,7 @@ def test_delete_shifts_priorities_and_invalidates_cache(app: FastAPI) -> None:
 
     # 预热 resolver 缓存
     resolver: RoleResolver = app.state.resolver
-    import asyncio
-    top = asyncio.get_event_loop().run_until_complete(resolver.first(ModelType.MAIN))
+    top = await resolver.first(ModelType.MAIN)
     assert top.service_id == "s1"
     initial_version = resolver.version
 
@@ -155,7 +152,7 @@ def test_delete_shifts_priorities_and_invalidates_cache(app: FastAPI) -> None:
 
     # 缓存应被 invalidate (version 提升)
     assert resolver.version > initial_version
-    top2 = asyncio.get_event_loop().run_until_complete(resolver.first(ModelType.MAIN))
+    top2 = await resolver.first(ModelType.MAIN)
     assert top2.service_id == "s2"
     assert top2.priority == 0
 
@@ -268,7 +265,7 @@ def test_probe_dimension_unknown_service_404(app: FastAPI) -> None:
     assert resp.status_code == 404
 
 
-def test_patch_updates_editable_fields_and_invalidates_cache(app: FastAPI) -> None:
+async def test_patch_updates_editable_fields_and_invalidates_cache(app: FastAPI) -> None:
     """PATCH 更新 service_id / model / metadata; resolver 缓存应被 invalidate."""
     client = TestClient(app)
     resp = client.post(
@@ -283,8 +280,7 @@ def test_patch_updates_editable_fields_and_invalidates_cache(app: FastAPI) -> No
     assert resp.status_code == 200
 
     resolver: RoleResolver = app.state.resolver
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(resolver.first(ModelType.MAIN))
+    await resolver.first(ModelType.MAIN)
     initial_version = resolver.version
 
     resp = client.patch(

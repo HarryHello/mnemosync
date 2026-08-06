@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse as _argparse
 
 from src.infra.llm_service.models import ModelType
+from src.infra.llm_service.store import LLMServiceStore
 
 
 class ModelCommandsMixin:
     """cmd_model 子命令族."""
 
     _VALID_ROLES = {mt.value for mt in ModelType}
+    llm_service_store: LLMServiceStore
 
     def _parse_role(self, role: str) -> ModelType | None:
         if role not in self._VALID_ROLES:

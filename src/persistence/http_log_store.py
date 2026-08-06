@@ -32,7 +32,7 @@ class HttpLogStore(SqliteStore):
     def __init__(self, db_path: str):
         super().__init__(db_path)
         self._queue: asyncio.Queue[dict[str, Any]] | None = None
-        self._writer_task: asyncio.Task | None = None
+        self._writer_task: asyncio.Task[None] | None = None
         self._writer_conn: aiosqlite.Connection | None = None
         self._stopping = False
 
@@ -68,6 +68,8 @@ class HttpLogStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
+        from src.persistence.migrations import MigrationRunner
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS http_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,12 +85,22 @@ class HttpLogStore(SqliteStore):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_http_logs_created_at ON http_logs(created_at)"
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_http_logs_path ON http_logs(path)"
-        )
+
+        async def _idx_created_at(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_http_logs_created_at "
+                "ON http_logs(created_at)"
+            )
+
+        async def _idx_path(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_http_logs_path ON http_logs(path)"
+            )
+
+        await MigrationRunner([
+            ("001_create_idx_created_at", _idx_created_at),
+            ("002_create_idx_path", _idx_path),
+        ]).apply(db)
 
     def enqueue(self, entry: dict[str, Any]) -> None:
         """非阻塞入队. 队列满时静默丢弃 (记录不应影响请求)."""
@@ -98,6 +110,18 @@ class HttpLogStore(SqliteStore):
             self._queue.put_nowait(entry)
         except asyncio.QueueFull:
             logger.warning("http_log queue full, dropping entry")
+
+    async def flush_sync(self) -> None:
+        """阻塞直到队列中已入队的所有条目都写盘.
+
+        供测试与需要"写后读"一致性的场景使用. 在队尾入队一个 flush 标记,
+        由 writer 处理完它 (FIFO 保证标记之前的所有条目都已落盘) 后唤醒.
+        """
+        if self._queue is None or self._writer_task is None:
+            return
+        event = asyncio.Event()
+        await self._queue.put({"__flush_request__": event})
+        await asyncio.wait_for(event.wait(), timeout=5.0)
 
     async def _get_writer_conn(self) -> aiosqlite.Connection:
         """Return a long-lived writer connection, creating it on first use."""
@@ -121,6 +145,10 @@ class HttpLogStore(SqliteStore):
                 if first.get("__sentinel__"):
                     await self._flush(batch)
                     return
+                if first.get("__flush_request__"):
+                    await self._flush(batch)
+                    first["__flush_request__"].set()
+                    continue
                 batch.append(first)
                 # 尽量凑齐一批
                 while len(batch) < self._BATCH_SIZE:
@@ -131,6 +159,11 @@ class HttpLogStore(SqliteStore):
                     if item.get("__sentinel__"):
                         await self._flush(batch)
                         return
+                    if item.get("__flush_request__"):
+                        await self._flush(batch)
+                        item["__flush_request__"].set()
+                        batch.clear()
+                        break
                     batch.append(item)
                 await self._flush(batch)
                 batch.clear()
@@ -210,7 +243,7 @@ class HttpLogStore(SqliteStore):
         status: int | None = None,
         since: str | None = None,
         until: str | None = None,
-    ) -> list[tuple]:
+    ) -> list[tuple[Any, ...]]:
         conditions, params = self._build_filter(method, path, status, since, until)
         where = " AND ".join(conditions) if conditions else "1=1"
         offset = (page - 1) * page_size
@@ -220,14 +253,16 @@ class HttpLogStore(SqliteStore):
                 f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 params + [page_size, offset],
             ) as cur:
-                return await cur.fetchall()
+                rows = await cur.fetchall()
+                return [tuple(r) for r in rows]
 
-    async def get_by_id(self, log_id: int) -> tuple | None:
+    async def get_by_id(self, log_id: int) -> tuple[Any, ...] | None:
         async with self._conn() as db:
             async with db.execute(
                 "SELECT * FROM http_logs WHERE id = ?", (log_id,)
             ) as cur:
-                return await cur.fetchone()
+                row = await cur.fetchone()
+                return tuple(row) if row is not None else None
 
     async def clear_all(self) -> None:
         async with self._conn() as db:

@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Relationship } from '@/types/api'
-import { formatDateOnly } from '@/utils/format'
 import {
   RELATIONSHIP_LEVEL_HIGH,
   RELATIONSHIP_LEVEL_MEDIUM,

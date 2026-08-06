@@ -12,12 +12,15 @@
 
 from __future__ import annotations
 
+import builtins
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from src.core.constants import PROMPT_VERSION_MAX_ATTEMPTS
 
 from .registry import PROMPT_REGISTRY, PromptSpec
 
@@ -85,7 +88,7 @@ class PromptStore:
         raw = m.group(1)
         body = text[m.end():]
         try:
-            import yaml
+            import yaml  # type: ignore[import-untyped]
         except ImportError:
             logger.warning("PyYAML 未安装, 忽略 frontmatter")
             return body, {}
@@ -161,7 +164,7 @@ class PromptStore:
         self._ensure_dirs()
         # 生成不冲突的时间戳文件名 (同秒计数器)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        for i in range(1, 1000):
+        for i in range(1, PROMPT_VERSION_MAX_ATTEMPTS):
             dst = self.history_dir / f"{name}-{ts}-{i:03d}.md"
             if not dst.exists():
                 break
@@ -251,7 +254,7 @@ class PromptStore:
             version=version,
         )
 
-    def list_history(self, name: str) -> list[dict[str, Any]]:
+    def list_history(self, name: str) -> builtins.list[dict[str, Any]]:
         """.history/ 下针对某 name 的备份列表 (按 mtime 倒序)."""
         self._spec(name)
         if not self.history_dir.is_dir():

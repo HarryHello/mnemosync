@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -51,7 +52,7 @@ router = APIRouter(
 
 def _get_debug_bus(request: Request) -> DebugEventBus:
     bus = getattr(request.app.state, "debug_bus", None)
-    if bus is None:
+    if not isinstance(bus, DebugEventBus):
         raise HTTPException(status_code=500, detail="debug bus not initialized")
     return bus
 
@@ -118,11 +119,11 @@ async def clear_events(request: Request) -> None:
 
 
 @router.get("/events/stream")
-async def stream_events(request: Request):
+async def stream_events(request: Request) -> StreamingResponse:
     """SSE: 订阅新事件. 订阅数用于 panel-debug key 生命周期管理."""
     bus = _get_debug_bus(request)
 
-    async def event_gen():
+    async def event_gen() -> AsyncIterator[bytes]:
         sub_id, q = await bus.subscribe()
         try:
             # 首帧: 发一个 ready 事件, 让前端知道订阅成功

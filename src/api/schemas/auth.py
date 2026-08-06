@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, Field
 
+from src.api.constants import ACCESS_TOKEN_EXPIRE_SECONDS
+
 
 class LoginRequest(BaseModel):
     """登录请求."""
@@ -15,7 +17,9 @@ class LoginResponse(BaseModel):
 
     access_token: str = Field(..., description="访问 Token")
     token_type: str = Field(default="bearer", description="Token 类型")
-    expires_in: int = Field(default=86400, description="过期时间 (秒)")
+    expires_in: int = Field(
+        default=ACCESS_TOKEN_EXPIRE_SECONDS, description="过期时间 (秒)"
+    )
     must_change_password: bool = Field(..., description="是否必须修改密码")
     username: str = Field(..., description="用户名")
 

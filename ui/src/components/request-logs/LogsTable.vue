@@ -4,7 +4,7 @@ import { Filter, Search } from '@element-plus/icons-vue'
 import type { HttpLog } from '@/types/api'
 import { formatDate } from '@/utils/format'
 
-const props = defineProps<{
+defineProps<{
   items: HttpLog[]
   total: number
   loading?: boolean
@@ -66,13 +66,6 @@ function applyPathFilter() {
   page.value = 1
   pathFilterVisible.value = false
   emit('filter', { path: filterStates.path.trim() || undefined })
-}
-
-function clearPathFilter() {
-  filterStates.path = ''
-  page.value = 1
-  pathFilterVisible.value = false
-  emit('filter', { path: undefined })
 }
 
 function applyTimeFilter() {

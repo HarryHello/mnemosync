@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 from fastapi import FastAPI
 
 from src.api.state import AppState
 from src.core.config import _load_default_persona, get_settings
-from src.core.constants import DEFAULT_PERSONA_ID
+from src.core.constants import AUDIT_LOG_RETENTION_INTERVAL, DEFAULT_PERSONA_ID
 from src.core.identity.plugin_registry import discover_plugins
 from src.core.memory.reindex import ReindexProgress
 from src.core.models.resolver import RoleResolver
@@ -35,9 +37,10 @@ from src.persistence.http_log_store import HttpLogStore
 from src.persistence.idempotency_store import SqliteIdempotencyStore
 from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.lorebook_store import SqliteLorebookStore
-from src.persistence.memory_store import SqliteMemoryStore, SqliteRelationshipStore
+from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 from src.persistence.persona_store import SqlitePersonaStore
+from src.persistence.relationship_store import SqliteRelationshipStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
 logger = logging.getLogger(__name__)
@@ -47,7 +50,7 @@ async def _conversation_prune_loop(
     store: SqliteConversationStore, window_days: int
 ) -> None:
     """每天清一次过期对话流水. 独立后台协程, 单进程单实例."""
-    interval = 24 * 3600
+    interval = AUDIT_LOG_RETENTION_INTERVAL
     try:
         cutoff = datetime.now(UTC) - timedelta(days=window_days)
         n = await store.delete_before(cutoff)
@@ -75,7 +78,7 @@ async def _conversation_prune_loop(
             logger.warning("conversation_turns 定时清理失败: %s", e)
 
 
-async def _connect_stores(settings) -> dict:
+async def _connect_stores(settings: Any) -> dict[str, Any]:
     """创建并连接所有 Store, 返回已连接实例的字典.
 
     任一 Store 连接失败时, 已连接的会在后续 ``_close_all`` 中被正确关闭.
@@ -97,7 +100,7 @@ async def _connect_stores(settings) -> dict:
     space_policy_store = SqliteSpacePolicyStore(str(storage.identity_db_abs))
     agent_run_store = AgentRunStore(str(storage.agent_run_db_abs))
 
-    instances = {
+    instances: dict[str, Any] = {
         "auth_store": auth_store,
         "api_key_store": api_key_store,
         "memory_store": memory_store,
@@ -128,7 +131,7 @@ async def _connect_stores(settings) -> dict:
     return instances
 
 
-async def _close_all(instances: dict) -> None:
+async def _close_all(instances: dict[str, Any]) -> None:
     """关闭所有已初始化的 Store, 每个独立 try/except 保证互不影响."""
     close_order = [
         "conversation_store", "notification_store", "identity_store",
@@ -145,7 +148,7 @@ async def _close_all(instances: dict) -> None:
 
 
 @asynccontextmanager
-async def app_lifespan(app: FastAPI):
+async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用启动 / 关闭钩子.
 
     启动:
@@ -224,7 +227,7 @@ async def app_lifespan(app: FastAPI):
         agent_run_store=instances["agent_run_store"],
         active_bg_tasks={},
     )
-    app.state = state
+    app.state = cast(Any, state)
 
     # ── 4. 自动迁移: legacy/config 人格到 DB ─────────
     active = await instances["persona_store"].get_active()
@@ -270,7 +273,55 @@ async def app_lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("启动关系迁移失败 (可忽略): %s", e)
 
-    # ── 6. 启动后台清理任务 ──────────────────────────
+    # ── 6. 版本升级一次性通知 ──────────────────────
+    notification_store = instances["notification_store"]
+    try:
+        from src.core.constants import UPGRADE_NOTIFICATION_VERSIONS
+        for ver, msg in UPGRADE_NOTIFICATION_VERSIONS.items():
+            cat = f"version_upgrade_{ver}"
+            # 检查是否已发过此版本的通知 (查全量)
+            all_notifs = await notification_store.list_page(limit=500, offset=0)
+            if not any(n.category == cat for n in all_notifs[0]):
+                await notification_store.add(
+                    level="warning",
+                    category=cat,
+                    title=f"升级到 v{ver} 注意事项",
+                    message=msg,
+                )
+                logger.info("已添加版本升级通知: v%s", ver)
+    except Exception as e:
+        logger.warning("版本升级通知失败 (可忽略): %s", e)
+
+    # ── 7. 版本更新检查 (异步, 不阻塞启动) ─────────
+    async def _check_update() -> None:
+        try:
+            from src.infra.update_checker import check_for_update
+            update = await check_for_update()
+            if update:
+                cat = "update_available"
+                all_notifs = await notification_store.list_page(limit=500, offset=0)
+                # 避免重复: 只在版本变更时发新通知
+                already = any(
+                    n.category == cat and update["latest_version"] in (n.title or "")
+                    for n in all_notifs[0]
+                )
+                if not already:
+                    await notification_store.add(
+                        level="info",
+                        category=cat,
+                        title=f"新版本 {update['latest_version']} 可用",
+                        message=(
+                            f"当前版本: {update['current_version']}。"
+                            f"运行 `mnemosync upgrade` 升级。"
+                        ),
+                    )
+                    logger.info("发现新版本: %s", update["latest_version"])
+        except Exception as e:
+            logger.debug("版本更新检查失败 (可忽略): %s", e)
+
+    asyncio.create_task(_check_update(), name="update-check")
+
+    # ── 8. 启动后台清理任务 ──────────────────────────
     prune_task = asyncio.create_task(
         _conversation_prune_loop(instances["conversation_store"], settings.storage.short_term_days),
         name="conversation-prune-loop",

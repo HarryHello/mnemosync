@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,15 +45,21 @@ class use_agent:
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self._token = None
+        self._token: Token[str | None] | None = None
 
-    def __enter__(self):
-        self._token = _agent_name.set(self.name)
+    def __enter__(self) -> use_agent:
+        token = _agent_name.set(self.name)
+        self._token = token
         return self
 
-    def __exit__(self, exc_type, exc, tb):
-        _agent_name.reset(self._token)
-        return False
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object,
+    ) -> None:
+        if self._token is not None:
+            _agent_name.reset(self._token)
 
 
 def emit_pipeline(

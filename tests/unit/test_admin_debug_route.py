@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -27,13 +27,11 @@ from src.persistence.auth_store import User
 
 
 @pytest.fixture
-def api_key_store(tmp_path: Path) -> Iterator[SqliteApiKeyStore]:
+async def api_key_store(tmp_path: Path) -> AsyncIterator[SqliteApiKeyStore]:
     s = SqliteApiKeyStore(str(tmp_path / "k.db"))
-    import asyncio
-
-    asyncio.get_event_loop().run_until_complete(s.connect())
+    await s.connect()
     yield s
-    asyncio.get_event_loop().run_until_complete(s.close())
+    await s.close()
 
 
 @pytest.fixture
@@ -83,7 +81,7 @@ def test_all_debug_endpoints_require_auth(app_unauth: FastAPI) -> None:
         assert resp.status_code == 401, f"{method} {path}: {resp.status_code}"
 
 
-def test_session_key_first_call_creates_key(app: FastAPI, api_key_store: SqliteApiKeyStore) -> None:
+async def test_session_key_first_call_creates_key(app: FastAPI, api_key_store: SqliteApiKeyStore) -> None:
     client = TestClient(app)
     resp = client.post("/panel/admin/debug/session-key")
     assert resp.status_code == 200
@@ -91,27 +89,19 @@ def test_session_key_first_call_creates_key(app: FastAPI, api_key_store: SqliteA
     assert data["key"].startswith("sk-")
     assert data["note"].startswith("panel-debug")
 
-    import asyncio
-
-    keys = asyncio.get_event_loop().run_until_complete(
-        api_key_store.list_all(source=API_KEY_SOURCE_PANEL_DEBUG)
-    )
+    keys = await api_key_store.list_all(source=API_KEY_SOURCE_PANEL_DEBUG)
     assert len(keys) == 1
     assert keys[0].source == API_KEY_SOURCE_PANEL_DEBUG
 
 
-def test_session_key_reuses_existing(app: FastAPI, api_key_store: SqliteApiKeyStore) -> None:
+async def test_session_key_reuses_existing(app: FastAPI, api_key_store: SqliteApiKeyStore) -> None:
     client = TestClient(app)
     r1 = client.post("/panel/admin/debug/session-key").json()
     r2 = client.post("/panel/admin/debug/session-key").json()
     assert r1["id"] == r2["id"]
     assert r1["key"] == r2["key"]
 
-    import asyncio
-
-    keys = asyncio.get_event_loop().run_until_complete(
-        api_key_store.list_all(source=API_KEY_SOURCE_PANEL_DEBUG)
-    )
+    keys = await api_key_store.list_all(source=API_KEY_SOURCE_PANEL_DEBUG)
     assert len(keys) == 1  # 未新建
 
 
@@ -124,7 +114,7 @@ def test_status_reports_zero_subscribers(app: FastAPI) -> None:
     assert data["buffer_capacity"] == 10
 
 
-def test_events_empty_and_after_emit(app: FastAPI) -> None:
+async def test_events_empty_and_after_emit(app: FastAPI) -> None:
     client = TestClient(app)
     resp = client.get("/panel/admin/debug/events")
     assert resp.status_code == 200
@@ -133,7 +123,6 @@ def test_events_empty_and_after_emit(app: FastAPI) -> None:
     # 手动 emit (但因 subscriber=0 会被 should_emit gate 挡掉 —— 这本身是设计)
     bus: DebugEventBus = app.state.debug_bus
     # 加个假订阅者绕过 gate
-    import asyncio
 
     async def _do():
         sub_id, _ = await bus.subscribe()
@@ -145,7 +134,7 @@ def test_events_empty_and_after_emit(app: FastAPI) -> None:
         )
         return sub_id, eid
 
-    sub_id, eid = asyncio.get_event_loop().run_until_complete(_do())
+    sub_id, eid = await _do()
     try:
         resp = client.get("/panel/admin/debug/events")
         items = resp.json()["items"]
@@ -163,7 +152,7 @@ def test_events_empty_and_after_emit(app: FastAPI) -> None:
         assert client.delete("/panel/admin/debug/events").status_code == 204
         assert client.get("/panel/admin/debug/events").json()["items"] == []
     finally:
-        asyncio.get_event_loop().run_until_complete(bus.unsubscribe(sub_id))
+        await bus.unsubscribe(sub_id)
 
 
 def test_events_stream_is_not_shadowed_by_event_detail(app: FastAPI) -> None:

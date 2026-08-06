@@ -7,6 +7,7 @@
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ from src.infra.llm_service.models import (
     LLMServiceProvider,
     ModelConfiguration,
     ModelType,
+    RoleBinding,
 )
 from src.infra.llm_service.store import LLMServiceStore
 
@@ -107,7 +109,7 @@ def _parse_role(role: str) -> ModelType:
         )
 
 
-def _binding_to_item(b) -> RoleBindingItem:
+def _binding_to_item(b: RoleBinding) -> RoleBindingItem:
     return RoleBindingItem(
         role=b.role.value,
         priority=b.priority,
@@ -128,7 +130,7 @@ def _binding_to_item(b) -> RoleBindingItem:
 @router.get("/upstream/services", response_model=list[UpstreamServiceResponse])
 async def list_upstream_services(
     store: LLMServiceStore = Depends(get_llm_service_store),
-):
+) -> list[UpstreamServiceResponse]:
     """列出全部上游服务商及其模型绑定."""
     services = await store.list_services()
     return [await _service_to_response(s, store) for s in services]
@@ -138,7 +140,7 @@ async def list_upstream_services(
 async def create_upstream_service(
     body: UpstreamServiceCreateBody,
     store: LLMServiceStore = Depends(get_llm_service_store),
-):
+) -> UpstreamServiceResponse:
     """新增服务商 (API Key 存加密)."""
     if not body.id.strip() or not body.base_url.strip() or not body.api_key.strip():
         raise HTTPException(status_code=400, detail="id / base_url / api_key 均不可为空")
@@ -158,7 +160,7 @@ async def create_upstream_service(
 async def get_upstream_service(
     service_id: str,
     store: LLMServiceStore = Depends(get_llm_service_store),
-):
+) -> UpstreamServiceResponse:
     """获取单个服务商详情."""
     service = await store.get_service(service_id)
     if not service:
@@ -171,7 +173,7 @@ async def update_upstream_service(
     service_id: str,
     body: UpstreamServiceUpdateBody,
     store: LLMServiceStore = Depends(get_llm_service_store),
-):
+) -> UpstreamServiceResponse:
     """更新 base_url / api_key. 未提供的字段保持不变.
 
     LLMServiceStore 无直接 update 接口, 只能删后重建 (同 id).
@@ -204,7 +206,7 @@ async def update_upstream_service(
 async def delete_upstream_service(
     service_id: str,
     store: LLMServiceStore = Depends(get_llm_service_store),
-):
+) -> dict[str, Any]:
     """删除服务商 (级联删除其模型绑定)."""
     ok = await store.delete_service(service_id)
     if not ok:
@@ -219,7 +221,7 @@ async def set_upstream_model(
     service_id: str,
     body: UpstreamModelBody,
     store: LLMServiceStore = Depends(get_llm_service_store),
-):
+) -> UpstreamServiceResponse:
     """绑定/更新指定角色 (main/assist/embedding/rerank) 的模型名."""
     service = await store.get_service(service_id)
     if not service:
@@ -248,7 +250,7 @@ async def set_upstream_model(
 async def list_upstream_available_models(
     service_id: str,
     store: LLMServiceStore = Depends(get_llm_service_store),
-):
+) -> UpstreamModelListResponse:
     """调用上游 /v1/models 获取该服务商可用模型列表 (用于下拉选择)."""
     service = await store.get_service(service_id)
     if not service:
@@ -275,7 +277,7 @@ async def list_upstream_available_models(
 async def list_model_bindings(
     role: str | None = None,
     store: LLMServiceStore = Depends(get_llm_service_store),
-):
+) -> RoleBindingListResponse:
     """列出角色绑定. role 省略时返回所有角色."""
     role_enum = _parse_role(role) if role else None
     bindings = await store.list_role_bindings(role_enum)
@@ -287,7 +289,7 @@ async def add_model_binding(
     body: RoleBindingAddBody,
     store: LLMServiceStore = Depends(get_llm_service_store),
     resolver: RoleResolver = Depends(get_resolver),
-):
+) -> RoleBindingItem:
     """追加一条角色绑定. priority 省略排到末尾, 指定时后续条目自动让位.
 
     嵌入角色只允许一条绑定, 重复添加返回 409 (需先删除现有绑定).
@@ -320,7 +322,7 @@ async def delete_model_binding(
     priority: int,
     store: LLMServiceStore = Depends(get_llm_service_store),
     resolver: RoleResolver = Depends(get_resolver),
-):
+) -> dict[str, Any]:
     """删除一条绑定, 后续条目 priority 前移."""
     role_enum = _parse_role(role)
     ok = await store.delete_role_binding(role_enum, priority)
@@ -337,7 +339,7 @@ async def update_model_binding(
     body: RoleBindingUpdateBody,
     store: LLMServiceStore = Depends(get_llm_service_store),
     resolver: RoleResolver = Depends(get_resolver),
-):
+) -> RoleBindingItem:
     """就地更新一条绑定的可编辑字段.
 
     - role / priority 由 URL 定位, 不可改; 调整顺序请走 reorder
@@ -348,7 +350,7 @@ async def update_model_binding(
     role_enum = _parse_role(role)
     provided = body.model_dump(exclude_unset=True)
 
-    kwargs: dict = {}
+    kwargs: dict[str, Any] = {}
     if "service_id" in provided:
         sid = provided["service_id"]
         if sid is None or not sid.strip():
@@ -393,7 +395,7 @@ async def reorder_model_bindings(
     body: RoleBindingReorderBody,
     store: LLMServiceStore = Depends(get_llm_service_store),
     resolver: RoleResolver = Depends(get_resolver),
-):
+) -> RoleBindingListResponse:
     """按新优先级重排角色的全部绑定. order 必须与现有绑定完全一一对应."""
     role_enum = _parse_role(role)
     try:
@@ -410,7 +412,7 @@ async def reorder_model_bindings(
 async def probe_embedding_dimension(
     body: ProbeDimensionBody,
     store: LLMServiceStore = Depends(get_llm_service_store),
-):
+) -> ProbeDimensionResponse:
     """临时调用嵌入模型探测输出维度. 不落库, 仅用于面板 Add/Replace 对话框填值.
 
     - 不校验绑定是否存在 (允许"先探测再绑定")
