@@ -6,6 +6,7 @@
   * 中间件从此不再阻塞 asyncio 事件循环, 仪表盘、流式接口等对延迟敏感的路径不再受拖累.
   * 若 app.state.debug_bus 存在且有活跃 SSE 订阅者, 顺带 emit inbound_request /
     inbound_response 事件供调试面板可视化。
+  * 使用原生 ASGI 中间件, SSE/流式响应直接透传不缓冲.
 """
 
 import json
@@ -18,6 +19,7 @@ from typing import Any, cast
 from starlette.middleware.base import BaseHTTPMiddleware, _StreamingResponse
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.core.constants import LOG_BODY_MAX_CHARS
 from src.infra.debug_context import new_correlation_id, set_correlation_id
@@ -27,6 +29,9 @@ logger = logging.getLogger(__name__)
 # 默认日志保留配置 (与 HttpLogStore.cleanup() 参数一致, 供管理面板使用)
 DEFAULT_RETENTION_DAYS = 7
 DEFAULT_MAX_RECORDS = 10000
+
+# SSE 请求路径前缀 (这些路径返回流式响应, 不能被 BaseHTTPMiddleware 缓冲)
+_SSE_PATHS = ("/panel/admin/debug/events/stream", "/v1/chat/completions")
 
 
 def _log_debug(
@@ -59,9 +64,61 @@ def _truncate_json(obj: object, max_len: int) -> str:
 class HttpLogMiddleware(BaseHTTPMiddleware):
     """HTTP 请求日志中间件 (纯 async, 非阻塞入队)."""
 
-    def __init__(self, app: Any, debug: bool = False):
+    def __init__(self, app: ASGIApp, debug: bool = False):
         super().__init__(app)
         self.debug = debug or os.getenv("MNEMOSYNC_DEBUG") == "1"
+        self._inner_app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """ASGI 入口: SSE/流式请求直接透传, 其他走 BaseHTTPMiddleware."""
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            method = scope.get("method", "")
+
+            # SSE 请求: 检查 Accept header 或路径, 直接透传不经过 BaseHTTPMiddleware
+            is_sse = False
+            if path in _SSE_PATHS:
+                is_sse = True
+            else:
+                for key, value in scope.get("headers", []):
+                    if key == b"accept" and b"text/event-stream" in value:
+                        is_sse = True
+                        break
+
+            if is_sse:
+                # 记录请求日志 (仅 enqueue, 不阻塞)
+                store = None
+                try:
+                    # 从 scope 的 app state 获取 store
+                    app_state = scope.get("app", {})
+                    if hasattr(app_state, "state"):
+                        store = getattr(app_state.state, "http_log_store", None)
+                except Exception:
+                    pass
+
+                if store is not None:
+                    headers_dict = {k.decode(): v.decode() for k, v in scope.get("headers", [])}
+                    try:
+                        store.enqueue({
+                            "method": method,
+                            "path": path,
+                            "query_params": scope.get("query_string", b"").decode() or None,
+                            "request_headers": headers_dict,
+                            "request_body": None,
+                            "response_status": None,  # 流式响应无法预知状态
+                            "response_body": None,
+                            "duration_ms": 0,
+                            "client_ip": scope.get("client", ("",))[0] if scope.get("client") else None,
+                        })
+                    except Exception:
+                        pass
+
+                # 直接调用内层 ASGI app, 完全绕过 BaseHTTPMiddleware
+                await self._inner_app(scope, receive, send)
+                return
+
+        # 非 SSE 请求: 走正常的 BaseHTTPMiddleware 路径
+        await super().__call__(scope, receive, send)
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]],
@@ -77,11 +134,6 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
 
         # 只记录 API 请求 (面板 /panel/* 与 OpenAI 兼容层 /v1/*)
         if not request.url.path.startswith("/panel/") and not request.url.path.startswith("/v1/"):
-            return await call_next(request)
-
-        # SSE 请求: 完全绕过中间件, BaseHTTPMiddleware 会缓冲 StreamingResponse 导致 SSE 失效
-        accept = request.headers.get("accept", "")
-        if "text/event-stream" in accept:
             return await call_next(request)
 
         # 每个入站请求生成 correlation_id 挂到 contextvar, forwarder 出去打上游时会读
@@ -154,7 +206,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
 
         store = getattr(request.app.state, "http_log_store", None)
 
-        # SSE 长连接: 不消费 body_iterator, 直接透传, 仅记录请求头
+        # SSE 长连接 (非 _SSE_PATHS 但 content-type 为 text/event-stream): 不消费 body_iterator
         content_type = response.headers.get("content-type", "")
         if "text/event-stream" in content_type:
             if store is not None:
@@ -207,7 +259,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
             })
 
         # 收集响应体
-        # Starlette 1.0.0 的 BaseHTTPMiddleware.call_next 返回 _StreamingResponse,
+        # Starlette 的 BaseHTTPMiddleware.call_next 返回 _StreamingResponse,
         # 其 body 不在 .body 属性中而在 .body_iterator 流中, 需要主动消费。
         # 同时兼容普通 StreamingResponse (如流式 chat).
         if isinstance(response, (_StreamingResponse, StreamingResponse)):
@@ -245,4 +297,3 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
 
         _log(response_body)
         return response
-
