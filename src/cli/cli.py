@@ -536,6 +536,66 @@ def cmd_restart(args: argparse.Namespace) -> int:
     return cmd_serve(serve_args)
 
 
+def _setup_ui(project_root: str) -> None:
+    """下载或构建管理面板 (ui/dist)."""
+    import shutil
+
+    ui_dist = os.path.join(project_root, "ui", "dist")
+    if os.path.exists(os.path.join(ui_dist, "index.html")):
+        print("✅ UI already built")
+        return
+
+    # 从 GitHub Release 下载预编译面板
+    print("📥 Downloading UI from GitHub Release...")
+    try:
+        import urllib.request
+        import json
+
+        api_url = "https://api.github.com/repos/HarryHello/mnemosync/releases/latest"
+        with urllib.request.urlopen(api_url, timeout=30) as resp:
+            data = json.loads(resp.read())
+            assets = data.get("assets", [])
+            dist_asset = next((a for a in assets if a["name"] == "ui-dist.tar.gz"), None)
+
+        if dist_asset:
+            url = dist_asset["browser_download_url"]
+            tmp_path = os.path.join(project_root, "ui-dist.tar.gz")
+            urllib.request.urlretrieve(url, tmp_path)
+
+            import tarfile
+            with tarfile.open(tmp_path, "r:gz") as tar:
+                tar.extractall(path=os.path.join(project_root, "ui"))
+            os.remove(tmp_path)
+
+            if os.path.exists(os.path.join(ui_dist, "index.html")):
+                print("✅ UI downloaded from Release")
+                return
+    except Exception as e:
+        print(f"⚠️  Download failed: {e}")
+
+    # 本地 npm build
+    if shutil.which("npm"):
+        print("🔨 Building UI locally...")
+        result = subprocess.run(
+            ["npm", "install", "--legacy-peer-deps"],
+            cwd=os.path.join(project_root, "ui"),
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            result = subprocess.run(
+                ["npm", "run", "build"],
+                cwd=os.path.join(project_root, "ui"),
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0 and os.path.exists(os.path.join(ui_dist, "index.html")):
+                print("✅ UI built locally")
+                return
+
+    print("⚠️  UI not available. Install Node.js and run: cd ui && npm install && npm run build")
+
+
 def cmd_upgrade(args: argparse.Namespace) -> int:
     """升级 Mnemosync."""
     project_root = get_project_root()
@@ -586,6 +646,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         return 1
 
     print("✅ Dependencies updated")
+
+    # 更新面板
+    _setup_ui(project_root)
 
     # 重新注册命令
     bin_dir = os.path.join(os.path.expanduser("~"), ".local", "bin")
