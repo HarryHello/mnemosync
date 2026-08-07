@@ -132,9 +132,10 @@ install_deps() {
 setup_ui() {
     cd "$INSTALL_DIR"
 
+    # 升级时清除旧面板 (确保下载新版)
     if [ -f "ui/dist/index.html" ]; then
-        info "管理面板已存在, 跳过构建 ✓"
-        return
+        info "更新管理面板..."
+        rm -rf ui/dist
     fi
 
     # 尝试从 latest release 拉取 ui-dist.tar.gz
