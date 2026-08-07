@@ -79,6 +79,11 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         if not request.url.path.startswith("/panel/") and not request.url.path.startswith("/v1/"):
             return await call_next(request)
 
+        # SSE 请求: 完全绕过中间件, BaseHTTPMiddleware 会缓冲 StreamingResponse 导致 SSE 失效
+        accept = request.headers.get("accept", "")
+        if "text/event-stream" in accept:
+            return await call_next(request)
+
         # 每个入站请求生成 correlation_id 挂到 contextvar, forwarder 出去打上游时会读
         cid = new_correlation_id()
         set_correlation_id(cid)
