@@ -42,29 +42,30 @@ async def proxy_request(request: Request, path: str) -> Response:
     }
     body = await request.body()
 
+    # trust_env=False: 本地后端直连, 不走系统代理
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(30, connect=5), trust_env=False,
+    )
+
     try:
-        # trust_env=False: 本地后端直连, 不走系统代理 (避免代理把 127.0.0.1 请求泄走)
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(30, connect=5), trust_env=False,
-        ) as client:
-            req = client.build_request(
-                request.method, url, headers=headers, content=body,
-            )
-            resp = await client.send(req, stream=True)
+        req = client.build_request(
+            request.method, url, headers=headers, content=body,
+        )
+        resp = await client.send(req, stream=True)
     except httpx.TransportError:
-        # 传输层错误 (ConnectError/ConnectTimeout/ReadTimeout) = 后端不可达
+        await client.aclose()
         logger.warning("后端未启动, 代理 %s 失败", path)
         return JSONResponse(
             status_code=503,
             content={"detail": "后端未启动, 请先在面板中启动后端服务"},
         )
     except httpx.HTTPError as e:
+        await client.aclose()
         logger.warning("代理 %s 失败: %s", path, e)
         return JSONResponse(status_code=502, content={"detail": f"后端代理失败: {e}"})
 
     # 流式转发响应体 (支持 SSE / 流式 chat)
     content_type = resp.headers.get("content-type", "")
-    # 响应头: 移除 hop-by-hop 头, 保留业务头
     _RESP_SKIP = {"transfer-encoding", "connection", "keep-alive"}
     headers_out = {k: v for k, v in resp.headers.items() if k.lower() not in _RESP_SKIP}
 
@@ -74,6 +75,7 @@ async def proxy_request(request: Request, path: str) -> Response:
                 yield chunk
         finally:
             await resp.aclose()
+            await client.aclose()  # client 必须在 resp 之后关闭
 
     return StreamingResponse(
         _iter(),
