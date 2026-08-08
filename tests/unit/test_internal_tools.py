@@ -87,11 +87,11 @@ async def test_binding_code_missing_actor():
 def test_register_identity_binding_tools():
     reg = InternalToolRegistry()
     register_identity_binding_tools(reg)
-    assert "initiate_identity_binding" in reg.names
-    assert "confirm_identity_binding" in reg.names
+    assert "mnemosync_initiate_identity_binding" in reg.names
+    assert "mnemosync_confirm_identity_binding" in reg.names
     tools = reg.to_openai_tools()
     assert len(tools) == 2
     # confirm tool 应有 code 参数
-    confirm_tool = next(t for t in tools if t["function"]["name"] == "confirm_identity_binding")
+    confirm_tool = next(t for t in tools if t["function"]["name"] == "mnemosync_confirm_identity_binding")
     assert "code" in confirm_tool["function"]["parameters"]["properties"]
     assert "code" in confirm_tool["function"]["parameters"]["required"]

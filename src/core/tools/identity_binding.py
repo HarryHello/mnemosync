@@ -168,7 +168,7 @@ async def _handle_confirm_binding(
 def register_identity_binding_tools(registry: InternalToolRegistry) -> None:
     """注册身份绑定相关内部 tool."""
     registry.register(InternalTool(
-        name="initiate_identity_binding",
+        name="mnemosync_initiate_identity_binding",
         description=(
             "发起跨平台身份绑定。当用户表达了在不同平台是同一个人的意愿时调用。"
             "生成一个 6 位验证码, 用户需要在另一端提供此码完成绑定。"
@@ -181,7 +181,7 @@ def register_identity_binding_tools(registry: InternalToolRegistry) -> None:
         handler=_handle_initiate_binding,
     ))
     registry.register(InternalTool(
-        name="confirm_identity_binding",
+        name="mnemosync_confirm_identity_binding",
         description=(
             "确认跨平台身份绑定。用户提供了验证码时调用。"
             "验证通过后, 当前账号将与发起绑定的账号绑定到同一用户组。"

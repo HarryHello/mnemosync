@@ -35,6 +35,15 @@ from .persistence import _persist_assistant_event, _persist_plugin_events
 logger = logging.getLogger(__name__)
 
 
+def _has_images(initial_state: dict[str, Any]) -> bool:
+    """检查原始请求消息中是否包含图片 content parts."""
+    from src.core.agents.vision import has_image_parts
+    return any(
+        has_image_parts(m.get("content"))
+        for m in initial_state.get("_original_messages", [])
+    )
+
+
 async def _handle_non_stream(
     http_request: Request,
     initial_state: dict[str, Any],
@@ -61,6 +70,9 @@ async def _handle_non_stream(
         streaming=False,
     )
     main_ctx_length = main_candidate.context_length if main_candidate else None
+    model_supports_images = (
+        "image" in main_candidate.input_modalities if main_candidate else False
+    )
 
     # 提取本轮新用户消息；工具续轮没有新的 user 输入。
     client_messages = initial_state.get("messages", [])
@@ -68,6 +80,16 @@ async def _handle_non_stream(
     new_user_content = ""
     if not tool_transaction:
         new_user_content = last_user_message(client_messages)
+
+    # 多模态: 模型不支持图片时, 用 Vision Agent 把图片转述为文字并并入 user 输入.
+    # 仅当原始消息确实含图片时才获取 forwarder (避免无图片时的初始化开销/报错).
+    if not model_supports_images and not tool_transaction and _has_images(initial_state):
+        from src.api.routes.forward.stream import _describe_images_if_needed
+
+        from ._accessors import _get_multi_forwarder
+        new_user_content = await _describe_images_if_needed(
+            initial_state, new_user_content, _get_multi_forwarder(http_request),
+        )
 
     # 简化: 非流式的 system 内容无法在装填前精确算 (需要 perms + retrieved),
     # 这些又是 graph 内节点做的. 保守估算: 用 persona + 一个"典型 system 长度"
@@ -102,6 +124,19 @@ async def _handle_non_stream(
         combined = append_tool_transaction_context(combined, tool_transaction)
     elif new_user_content:
         combined.append({"role": "user", "content": new_user_content})
+
+    # 多模态: 模型支持图片时, 从原始消息恢复 image content parts.
+    if model_supports_images and not tool_transaction:
+        from src.api.routes.forward.dispatch import process_images_in_messages
+        original_messages = initial_state.get("_original_messages", [])
+        if original_messages:
+            combined = await process_images_in_messages(
+                combined,
+                model_supports_images=True,
+                original_messages=original_messages,
+            )
+            logger.debug("  🖼️ 多模态 (non-stream): 已恢复图片 content parts")
+
     initial_state["messages"] = combined
     if tool_transaction:
         initial_state["extracted_new"] = [

@@ -2,7 +2,8 @@
 import json as _json
 import logging
 import uuid
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import Any, Literal, cast
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -26,6 +27,22 @@ from ._accessors import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── 绑定上下文 ─────────────────────────────────────────────────
+
+
+@dataclass
+class BindContext:
+    """绑定指令处理结果 — 由 _handle_identity_binding 返回.
+
+    携带确定性的绑定结果数据和注入提示词, 由调用方构建精简 state 走 LLM 自然回复.
+    """
+    kind: Literal["initiate", "confirm"]
+    success: bool
+    code: str | None = None  # 发起绑定时的验证码
+    message: str = ""  # 绑定结果描述 (注入到提示词)
+    prompt_hint: str = ""  # 给模型的提示词
 
 
 # ── 模型验证 ──────────────────────────────────────────────────
@@ -69,21 +86,120 @@ async def _resolve_tool_policy(
 
 
 def _normalize_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
-    """将请求消息转为 dict 列表, 并将 OpenAI content parts 数组格式展开为纯文本."""
+    """将请求消息转为 dict 列表.
+
+    如果消息包含图片 content parts, 保留原始格式 (不展平),
+    由后续的图片处理步骤根据模型能力决定是保留还是转述.
+    如果消息不包含图片, 展平为纯文本 (保持旧行为).
+    """
     result = [msg.model_dump(exclude_none=True) for msg in messages]
     for m in result:
         content = m.get("content")
         if isinstance(content, list):
-            texts = [
-                str(part.get("text", ""))
-                for part in content
-                if isinstance(part, dict) and part.get("type") == "text"
-            ]
-            m["content"] = "\n".join(texts) if texts else ""
+            # 检查是否包含图片
+            has_image = any(
+                isinstance(p, dict) and p.get("type") == "image_url"
+                for p in content
+            )
+            if has_image:
+                # 保留原始 content parts, 由后续步骤处理
+                pass
+            else:
+                # 纯文本 parts, 展平
+                texts = [
+                    str(part.get("text", ""))
+                    for part in content
+                    if isinstance(part, dict) and part.get("type") == "text"
+                ]
+                m["content"] = "\n".join(texts) if texts else ""
         elif content is None:
             m["content"] = ""
     logger.debug("  normalized messages: %d", len(result))
     return result
+
+
+async def process_images_in_messages(
+    messages: list[dict[str, Any]],
+    *,
+    model_supports_images: bool,
+    forwarder: Any = None,
+    original_messages: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """处理消息中的图片: 模型支持图片则从原始消息恢复, 否则调用 Vision Agent 转述.
+
+    Args:
+        messages: 规范化后的消息列表 (可能已被展平为纯文本)
+        model_supports_images: 目标模型是否支持图片输入
+        forwarder: MultiForwarder (模型不支持图片时需要)
+        original_messages: 原始请求消息 (含完整 content parts)
+
+    Returns:
+        处理后的消息列表
+    """
+    from src.core.agents.vision import (
+        describe_image,
+        extract_image_parts,
+        has_image_parts,
+        strip_image_parts,
+    )
+
+    if model_supports_images and original_messages:
+        # 模型支持图片, 从原始消息恢复 image parts
+        # 构建原始消息的 role+content 索引
+        orig_map: dict[tuple[str, str], dict[str, Any]] = {}
+        for om in original_messages:
+            role = om.get("role", "")
+            # 用 content 的前100字符作为匹配键
+            content_preview = str(om.get("content", ""))[:100]
+            orig_map[(role, content_preview)] = om
+
+        result = []
+        for m in messages:
+            role = m.get("role", "")
+            content = m.get("content", "")
+            # 尝试从原始消息中找到对应的含图片版本
+            if isinstance(content, str):
+                content_preview = content[:100]
+                orig = orig_map.get((role, content_preview))
+                if orig and has_image_parts(orig.get("content")):
+                    # 恢复原始 content parts
+                    m = {**m, "content": orig["content"]}
+            result.append(m)
+        return result
+
+    if not model_supports_images:
+        # 模型不支持图片, 检查是否有图片需要转述
+        needs_vision = any(has_image_parts(m.get("content")) for m in messages)
+        if not needs_vision:
+            return messages
+
+        if forwarder is None:
+            logger.warning("图片转述需要 forwarder, 降级为纯文本提取")
+            for m in messages:
+                if has_image_parts(m.get("content")):
+                    m["content"] = strip_image_parts(m["content"])
+            return messages
+
+        # 调用 Vision Agent 转述图片
+        result = []
+        for m in messages:
+            content = m.get("content")
+            if has_image_parts(content):
+                image_parts = extract_image_parts(content)
+                text_part = strip_image_parts(content)
+                descriptions = []
+                for img in image_parts:
+                    desc = await describe_image(forwarder, img)
+                    descriptions.append(desc)
+                combined = text_part
+                if descriptions:
+                    desc_text = "\n".join(f"[图片描述] {d}" for d in descriptions)
+                    combined = f"{combined}\n{desc_text}" if combined else desc_text
+                m = {**m, "content": combined.strip()}
+            result.append(m)
+        return result
+
+    return messages
 
 
 # ── 工具事务提取 ──────────────────────────────────────────────
@@ -204,10 +320,11 @@ async def _handle_identity_binding(
     actor_id: str | None,
     space_id: str | None,
     current_speaker: str,
-) -> "JSONResponse | None":
+) -> BindContext | None:
     """处理身份绑定指令: 发起绑定 / 确认绑定.
 
-    如果当前请求是绑定指令, 返回 JSONResponse; 否则返回 None 继续正常流程.
+    如果当前请求是绑定指令, 返回 BindContext (携带确定性结果 + 提示词);
+    否则返回 None 继续正常流程.
     """
 
     settings = get_settings()
@@ -239,20 +356,24 @@ async def _bind_initiate(
     space_id: str | None,
     current_speaker: str,
     bind_prefix: str,
-) -> JSONResponse:
+) -> BindContext:
     """发起跨平台绑定: 生成验证码."""
     from src.core.tools.identity_binding import get_binding_code_store
-
-    from .identity import _resolve_main_model
 
     code_store = get_binding_code_store()
     code = await code_store.generate(
         actor_id=actor_id, space_id=space_id, display_name=current_speaker,
     )
-    main_model = await _resolve_main_model(http_request)
-    return _build_bind_response(
-        f"跨平台绑定验证码: {code}\n请在另一端发送「{bind_prefix} {code}」完成绑定。验证码 5 分钟内有效。",
-        model=main_model or VIRTUAL_MODEL_ANY,
+    return BindContext(
+        kind="initiate",
+        success=True,
+        code=code,
+        message=f"验证码已生成: {code}",
+        prompt_hint=(
+            f"用户请求跨平台身份绑定。系统已生成验证码: {code}。"
+            f"请用你的风格告诉用户验证码是 {code}，并在另一端发送「{bind_prefix} {code}」完成绑定。"
+            f"验证码 5 分钟内有效。"
+        ),
     )
 
 
@@ -260,32 +381,60 @@ async def _bind_confirm(
     http_request: Request,
     input_code: str,
     actor_id: str,
-) -> JSONResponse:
+) -> BindContext:
     """确认绑定: 校验验证码并执行绑定."""
     from src.core.tools.identity_binding import get_binding_code_store
 
     code_store = get_binding_code_store()
     entry = await code_store.verify(input_code)
     if entry is None:
-        return _build_bind_response("验证码无效或已过期。")
+        return BindContext(
+            kind="confirm",
+            success=False,
+            message="验证码无效或已过期",
+            prompt_hint="用户尝试确认绑定，但验证码无效或已过期。请告知用户验证码不正确或已过期，需要重新发起绑定。",
+        )
 
     identity_store = _get_identity_store(http_request)
     if not identity_store:
-        return _build_bind_response("身份存储不可用, 绑定失败。")
+        return BindContext(
+            kind="confirm",
+            success=False,
+            message="身份存储不可用",
+            prompt_hint="绑定失败，身份存储不可用。请告知用户绑定暂时无法完成。",
+        )
 
     target_actor_id = entry["actor_id"]
+    if target_actor_id == actor_id:
+        return BindContext(
+            kind="confirm",
+            success=False,
+            message="不能与自身绑定",
+            prompt_hint="用户尝试与自己绑定，这是不允许的。请告知用户不能与自身绑定。",
+        )
+
     target_groups = await identity_store.list_actor_groups(target_actor_id)
     current_groups = await identity_store.list_actor_groups(actor_id)
 
     if current_groups:
-        msg = "当前账号已绑定, 无法重复绑定。"
+        return BindContext(
+            kind="confirm",
+            success=False,
+            message="当前账号已绑定, 无法重复绑定",
+            prompt_hint="用户尝试绑定，但当前账号已经绑定过了。请告知用户已经绑定，无法重复绑定。",
+        )
     elif target_groups:
         group_id = target_groups[0].id
         await identity_store.bind_actor_to_group(actor_id, group_id)
         migrated = await _migrate_relationships(http_request, actor_id, group_id)
         if migrated:
             logger.info("relationship migration: actor=%s -> group=%s, %d rows", actor_id, group_id, migrated)
-        msg = f"绑定成功! 已加入用户组 {group_id}。"
+        return BindContext(
+            kind="confirm",
+            success=True,
+            message=f"绑定成功，已加入用户组 {group_id}",
+            prompt_hint=f"用户成功完成了跨平台身份绑定，已加入用户组 {group_id}。请用你的风格告知用户绑定成功。",
+        )
     else:
         group = await identity_store.create_group(name=None)
         await identity_store.bind_actor_to_group(target_actor_id, group.id)
@@ -294,9 +443,12 @@ async def _bind_confirm(
             migrated = await _migrate_relationships(http_request, aid, group.id)
             if migrated:
                 logger.info("relationship migration: actor=%s -> group=%s, %d rows", aid, group.id, migrated)
-        msg = f"绑定成功! 已创建新用户组 {group.id}。"
-
-    return _build_bind_response(msg)
+        return BindContext(
+            kind="confirm",
+            success=True,
+            message=f"绑定成功，已创建新用户组 {group.id}",
+            prompt_hint=f"用户成功完成了跨平台身份绑定，已创建新用户组 {group.id}。请用你的风格告知用户绑定成功。",
+        )
 
 
 async def _migrate_relationships(http_request: Request, actor_id: str, group_id: str) -> int:

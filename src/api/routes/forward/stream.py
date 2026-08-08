@@ -325,6 +325,45 @@ async def _load_memory_context(
     return rel, perms, retrieved_entries, new_user_content
 
 
+async def _describe_images_if_needed(
+    initial_state: dict[str, Any],
+    new_user_content: str,
+    multi_forwarder: MultiForwarder,
+) -> str:
+    """模型不支持图片时, 从原始消息提取图片并用 Vision Agent 转述.
+
+    把图片描述追加到当前 user 输入文本后, 避免图片被静默丢弃.
+    模型支持图片时不调用本函数 (图片在后续步骤直接恢复 content parts).
+    """
+    from src.core.agents.vision import describe_image, extract_image_parts
+
+    original_messages = initial_state.get("_original_messages", [])
+    # 只处理最后一条含图片的 user 消息 (本轮输入)
+    image_parts: list[dict[str, Any]] = []
+    for om in reversed(original_messages):
+        if om.get("role") == "user" and extract_image_parts(om.get("content")):
+            image_parts = extract_image_parts(om.get("content"))
+            break
+
+    if not image_parts:
+        return new_user_content
+
+    logger.debug("  🖼️ 模型不支持图片, 转述 %d 张图片...", len(image_parts))
+    descriptions: list[str] = []
+    for img in image_parts:
+        try:
+            desc = await describe_image(multi_forwarder, img)
+            descriptions.append(desc)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("图片转述失败: %s", e)
+
+    if not descriptions:
+        return new_user_content
+
+    desc_text = "\n".join(f"[图片描述] {d}" for d in descriptions)
+    return f"{new_user_content}\n{desc_text}" if new_user_content else desc_text
+
+
 async def _run_proxy_thinking(
     http_request: Request,
     initial_state: dict[str, Any],
@@ -648,6 +687,9 @@ async def _handle_stream(
     )
     main_model = main_candidate.model if main_candidate else VIRTUAL_MODEL_ANY
     main_ctx_length = main_candidate.context_length if main_candidate else None
+    model_supports_images = (
+        "image" in main_candidate.input_modalities if main_candidate else False
+    )
     multi_forwarder = _get_multi_forwarder(http_request)
     conversation_store = _get_conversation_store(http_request)
 
@@ -658,6 +700,12 @@ async def _handle_stream(
         settings=settings,
         multi_forwarder=multi_forwarder,
     )
+
+    # 1.5 多模态: 模型不支持图片时, 用 Vision Agent 把图片转述为文字并并入 user 输入.
+    if not model_supports_images:
+        new_user_content = await _describe_images_if_needed(
+            initial_state, new_user_content, multi_forwarder,
+        )
 
     # 2. (可选) 代理推理.
     reasoning_text = await _run_proxy_thinking(
@@ -687,6 +735,18 @@ async def _handle_stream(
         space_id=space_id,
         source_user=source_user,
     )
+
+    # 3.5 多模态图片处理: 模型支持图片则从原始消息恢复 image parts
+    if model_supports_images:
+        from src.api.routes.forward.dispatch import process_images_in_messages
+        original_messages = initial_state.get("_original_messages", [])
+        if original_messages:
+            messages_with_memory = await process_images_in_messages(
+                messages_with_memory,
+                model_supports_images=True,
+                original_messages=original_messages,
+            )
+            logger.debug("  🖼️ 多模态: 已恢复图片 content parts")
 
     # 4. 构造 SSE 流式响应.
     return _make_streaming_response(

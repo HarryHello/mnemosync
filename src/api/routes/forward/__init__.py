@@ -7,6 +7,7 @@
 
 import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -40,8 +41,12 @@ from ._accessors import (  # noqa: F401 – re-exported for backward compat
     _get_plugins,
 )
 
+# 下游格式适配器 (Anthropic Messages / OpenAI Responses API)
+from .anthropic_adapter import router as anthropic_router
+
 # 子模块
 from .dispatch import (
+    BindContext,
     _build_initial_state,
     _extract_and_resolve_tool_transaction,
     _handle_identity_binding,
@@ -66,10 +71,110 @@ from .nonstream import _handle_non_stream
 from .persistence import (
     _persist_plugin_events,
 )
+from .responses_adapter import router as responses_router
 from .stream import _handle_stream
 
-router = APIRouter(prefix="/v1")
 logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/v1")
+
+# 挂载下游格式适配器路由
+router.include_router(anthropic_router)
+router.include_router(responses_router)
+
+
+# ── 绑定响应处理 ──────────────────────────────────────────────
+
+
+async def _handle_bind_response(
+    http_request: Request,
+    request: ChatCompletionRequest,
+    bind_ctx: "BindContext",
+    *,
+    persona: str,
+    persona_name: str,
+    persona_definition: Any,
+    current_speaker: str,
+    source_user: str | None,
+    source_frontend: str | None,
+    space_id: str | None,
+    channel_type: str | None,
+    actor_id: str | None,
+) -> StreamingResponse | JSONResponse:
+    """处理绑定指令: 构建精简 state, 跳过记忆/关系分析, 直接走 LLM 自然回复."""
+    from src.api.deps import _state
+    from src.api.schemas.forward import ChatMessage
+
+    # 构建精简提示词: persona + 绑定提示
+    focused_persona = persona + "\n\n" + bind_ctx.prompt_hint
+
+    # 构建精简 messages: 保留对话历史 + 当前用户消息
+    focused_messages = list(request.messages)
+    # 确保最后一条是用户的绑定指令
+    if not focused_messages or focused_messages[-1].role != "user":
+        focused_messages.append(ChatMessage(role="user", content="绑定"))
+
+    messages_dict = [msg.model_dump(exclude_none=True) for msg in focused_messages]
+    for m in messages_dict:
+        if m.get("content") is None:
+            m["content"] = ""
+
+    # 构建精简 state (跳过记忆/关系/代理推理)
+    from .dispatch import _build_initial_state
+    initial_state = _build_initial_state(
+        messages_dict=messages_dict,
+        allowed_tools=None,
+        request=request,
+        tool_transaction=None,
+        tool_policy=None,
+        expression_style="",
+        interaction_id=None,
+        internal_tool_names=set(),
+        source_user=source_user or "",
+        current_speaker=current_speaker,
+        actor_id=actor_id,
+        persona=focused_persona,
+        persona_name=persona_name,
+        persona_definition=persona_definition,
+        use_proxy=False,  # 跳过代理推理
+        main_model=VIRTUAL_MODEL_ANY,
+        source_frontend=source_frontend,
+        space_id=space_id,
+        channel_type=channel_type,
+        external_event_id=None,
+        api_key_id=None,
+        preprocess_result=None,
+        prompt_cleaning_result=None,
+    )
+
+    # 解析主模型
+    main_model = await _resolve_main_model(http_request)
+    if main_model:
+        initial_state["main_model"] = main_model
+
+    # 获取空间锁
+    space_locks_mgr = _state(http_request).space_locks
+    if space_locks_mgr is None:
+        raise RuntimeError("SpaceLockManager not initialized")
+    lock_key = space_locks_mgr.lock_key(
+        space_id=space_id, source_user=source_user or "", api_key_id=None,
+    )
+    lock = await space_locks_mgr.acquire(lock_key)
+    await lock.acquire()
+    logger.debug("acquired space lock for bind: %s", lock_key)
+    initial_state["_space_lock"] = lock
+    initial_state["_space_lock_key"] = lock_key
+
+    try:
+        if request.stream:
+            return await _handle_stream(
+                http_request, initial_state, request, use_proxy_thinking=False,
+            )
+        else:
+            return await _handle_non_stream(http_request, initial_state, request)
+    finally:
+        if not request.stream:
+            lock.release()
 
 # ── Models ─────────────────────────────────────────────────────
 
@@ -253,7 +358,15 @@ async def create_chat_completion(
             actor_id, space_id, current_speaker,
         )
         if bind_response is not None:
-            return bind_response
+            return await _handle_bind_response(
+                http_request, request, bind_response,
+                persona=persona, persona_name=persona_name,
+                persona_definition=persona_definition,
+                current_speaker=current_speaker,
+                source_user=source_user, source_frontend=source_frontend,
+                space_id=space_id, channel_type=channel_type,
+                actor_id=actor_id,
+            )
 
     # 13. 模型解析 + 代理推理
     main_model = await _resolve_main_model(
@@ -320,6 +433,10 @@ async def create_chat_completion(
         preprocess_result=preprocess_result,
         prompt_cleaning_result=prompt_cleaning_result,
     )
+    # 保留原始请求消息 (含图片 parts), 用于多模态图片恢复
+    initial_state["_original_messages"] = [
+        msg.model_dump(exclude_none=True) for msg in request.messages
+    ]
 
     from src.api.deps import _state
     space_locks_mgr = _state(http_request).space_locks
