@@ -1,6 +1,6 @@
 [project]
 name = "mnemosync"
-version = "0.3.5"
+version = "0.4.0"
 description = "基于 LangGraph 多 Agent 编排的跨平台人格记忆管理系统"
 readme = "README.md"
 license = { text = "MIT" }
@@ -23,6 +23,9 @@ dependencies = [
     "uvicorn[standard]~=0.52",
     # HTTP 客户端（Forwarder + DashScope API）
     "httpx[socks]~=0.28",
+    # LLM SDK（上游转发）
+    "openai>=2.50.0",
+    "anthropic>=0.110.0",
     # 数据校验与配置
     "pydantic~=2.13",
     "pydantic-settings~=2.14",
