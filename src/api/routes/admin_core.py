@@ -8,6 +8,7 @@
 import json
 import logging
 import os
+import sys
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
@@ -215,6 +216,7 @@ async def upgrade() -> dict[str, Any]:
     通过 subprocess 触发, 因为升级会替换代码文件, 不能在当前进程内执行.
     """
     import subprocess
+
     from src.cli.cli import get_project_root
 
     project_root = get_project_root()

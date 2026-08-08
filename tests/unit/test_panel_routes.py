@@ -45,9 +45,10 @@ def test_backend_restart_requires_auth(client: TestClient):
 
 def test_backend_status_returns_json(client: TestClient):
     """后端状态端点返回 JSON (需要 mock 认证)."""
+    from datetime import UTC, datetime
+
     from src.api.routes.auth import get_current_user
     from src.persistence.auth_store import User
-    from datetime import UTC, datetime
 
     def _fake_user():
         return User(

@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 if TYPE_CHECKING:
     from src.infra.debug_bus import DebugEventBus

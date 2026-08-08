@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from typing import Any, cast
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 from src.api.routes.auth import router as auth_router
 from src.api.state import AppState

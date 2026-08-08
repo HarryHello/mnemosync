@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from importlib.metadata import version as _get_version
+from typing import Any
 
 import httpx
 
@@ -26,7 +27,7 @@ def _parse_version(v: str) -> tuple[int, ...]:
     return tuple(parts) if parts else (0,)
 
 
-async def check_for_update() -> dict | None:
+async def check_for_update() -> dict[str, Any] | None:
     """检查 GitHub 是否有新版本.
 
     Returns:

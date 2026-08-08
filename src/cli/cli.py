@@ -6,11 +6,14 @@
 """
 
 import argparse
+import logging
 import os
 import subprocess
 import sys
 from importlib.metadata import version as _get_version
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -124,7 +127,7 @@ def _build_api_app(args: argparse.Namespace) -> "FastAPI":
 
     # 公开健康检查端点 (无需认证, 面板状态检测/负载均衡器使用)
     @app.get("/health", tags=["Health"])
-    async def _health():
+    async def _health() -> dict[str, str]:
         from datetime import UTC, datetime
         return {"status": "ok", "version": pkg_version, "timestamp": datetime.now(UTC).isoformat()}
 
@@ -548,8 +551,8 @@ def _setup_ui(project_root: str) -> None:
     # 从 GitHub Release 下载预编译面板
     print("📥 Downloading UI from GitHub Release...")
     try:
-        import urllib.request
         import json
+        import urllib.request
 
         api_url = "https://api.github.com/repos/HarryHello/mnemosync/releases/latest"
         with urllib.request.urlopen(api_url, timeout=30) as resp:
