@@ -18,7 +18,7 @@ const loading = ref(false)
 // ── Create dialog ──────────────────────────────────────────────────────────
 const createDialog = ref(false)
 const createRef = ref<FormInstance | null>(null)
-const createForm = reactive({ id: '', base_url: '', api_key: '' })
+const createForm = reactive({ id: '', base_url: '', api_key: '', api_format: 'openai' })
 const createSubmitting = ref(false)
 
 const createRules: FormRules = {
@@ -34,7 +34,7 @@ const createRules: FormRules = {
 const editDialog = ref(false)
 const editRef = ref<FormInstance | null>(null)
 const editing = ref<UpstreamService | null>(null)
-const editForm = reactive({ base_url: '', api_key: '' })
+const editForm = reactive({ base_url: '', api_key: '', api_format: 'openai' })
 const editSubmitting = ref(false)
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -66,6 +66,7 @@ async function onCreate() {
       id: createForm.id.trim(),
       base_url: createForm.base_url.trim(),
       api_key: createForm.api_key.trim(),
+      api_format: createForm.api_format,
     })
     ElMessage.success('已创建')
     createDialog.value = false
@@ -81,16 +82,20 @@ function openEdit(row: UpstreamService) {
   editing.value = row
   editForm.base_url = row.base_url
   editForm.api_key = ''
+  editForm.api_format = row.api_format || 'openai'
   editDialog.value = true
 }
 
 async function onEdit() {
   if (!editing.value) return
-  const payload: { base_url?: string; api_key?: string } = {}
+  const payload: { base_url?: string; api_key?: string; api_format?: string } = {}
   const nextUrl = editForm.base_url.trim()
   if (nextUrl && nextUrl !== editing.value.base_url) payload.base_url = nextUrl
   if (editForm.api_key.trim()) payload.api_key = editForm.api_key.trim()
-  if (!payload.base_url && !payload.api_key) {
+  if (editForm.api_format !== (editing.value.api_format || 'openai')) {
+    payload.api_format = editForm.api_format
+  }
+  if (!payload.base_url && !payload.api_key && !payload.api_format) {
     editDialog.value = false
     return
   }
@@ -194,6 +199,13 @@ defineExpose({ refresh })
               <span class="mono muted">{{ row.api_key_masked }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="API 格式" min-width="120">
+            <template #default="{ row }: { row: UpstreamService }">
+              <el-tag :type="row.api_format === 'anthropic' ? 'warning' : 'info'" size="small">
+                {{ row.api_format || 'openai' }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="创建时间" min-width="180">
             <template #default="{ row }: { row: UpstreamService }">
               <span class="mono muted">{{ formatDate(row.created_at) }}</span>
@@ -253,6 +265,15 @@ defineExpose({ refresh })
             placeholder="sk-..."
           />
         </el-form-item>
+        <el-form-item label="API 格式" prop="api_format">
+          <el-select v-model="createForm.api_format" style="width: 100%">
+            <el-option label="OpenAI 兼容" value="openai" />
+            <el-option label="Anthropic" value="anthropic" />
+          </el-select>
+          <div class="form-tip">
+            OpenAI 兼容适用于大多数服务商 (DashScope, OpenRouter 等); Anthropic 用于原生 Claude API。
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createDialog = false">取消</el-button>
@@ -279,6 +300,12 @@ defineExpose({ refresh })
             show-password
             placeholder="留空表示保持不变"
           />
+        </el-form-item>
+        <el-form-item label="API 格式">
+          <el-select v-model="editForm.api_format" style="width: 100%">
+            <el-option label="OpenAI 兼容" value="openai" />
+            <el-option label="Anthropic" value="anthropic" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>

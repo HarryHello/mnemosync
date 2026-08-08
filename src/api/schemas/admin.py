@@ -82,6 +82,14 @@ class RoleBindingItem(BaseModel):
             "需要开启; 固定维模型 (bge-*, bce-*, jina-*, mistral, gemini) 开启会被上游拒绝"
         ),
     )
+    input_modalities: list[str] = Field(
+        default=["text"],
+        description="输入模态: text, image, audio 等",
+    )
+    output_modalities: list[str] = Field(
+        default=["text"],
+        description="输出模态: text, image, audio 等",
+    )
 
 
 class RoleBindingListResponse(BaseModel):
@@ -114,6 +122,14 @@ class RoleBindingAddBody(BaseModel):
             "仅在可变维模型且希望指定输出维度时置 True"
         ),
     )
+    input_modalities: list[str] = Field(
+        default=["text"],
+        description="输入模态: text, image, audio 等",
+    )
+    output_modalities: list[str] = Field(
+        default=["text"],
+        description="输出模态: text, image, audio 等",
+    )
 
 
 class RoleBindingReorderBody(BaseModel):
@@ -136,6 +152,8 @@ class RoleBindingUpdateBody(BaseModel):
     context_length: int | None = Field(default=None, ge=1)
     embedding_dim: int | None = Field(default=None, ge=1)
     send_dimensions: bool | None = None
+    input_modalities: list[str] | None = None
+    output_modalities: list[str] | None = None
 
     model_config = {"protected_namespaces": ()}
 

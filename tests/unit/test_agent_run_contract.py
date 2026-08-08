@@ -18,6 +18,7 @@ class TestAgentSpec:
         expected = {
             "prompt_cleaning", "expressor", "proxy_thinking",
             "memory_analysis", "relationship_analysis",
+            "vision_description",
         }
         assert set(AGENT_SPECS.keys()) == expected
 

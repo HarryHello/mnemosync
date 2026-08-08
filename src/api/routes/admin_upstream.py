@@ -7,7 +7,7 @@
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -29,6 +29,7 @@ from src.api.schemas.admin import (
 from src.core.models.resolver import RoleResolver
 from src.infra.forwarder import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
 from src.infra.llm_service.models import (
+    ApiFormat,
     LLMServiceProvider,
     ModelConfiguration,
     ModelType,
@@ -53,6 +54,7 @@ class UpstreamServiceResponse(BaseModel):
     id: str
     base_url: str
     api_key_masked: str
+    api_format: str = "openai"
     created_at: str
     updated_at: str
     models: dict[str, str]  # model_type -> model name
@@ -62,11 +64,17 @@ class UpstreamServiceCreateBody(BaseModel):
     id: str
     base_url: str
     api_key: str
+    api_format: str = "openai"  # openai | anthropic | responses
 
 
 class UpstreamServiceUpdateBody(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
+    api_format: str | None = None
+
+
+# 合法的上游 API 格式
+VALID_API_FORMATS = ("openai", "anthropic", "responses")
 
 
 class UpstreamModelBody(BaseModel):
@@ -93,6 +101,7 @@ async def _service_to_response(
         id=service.id,
         base_url=service.base_url,
         api_key_masked=service.api_key_masked,
+        api_format=service.api_format,
         created_at=service.created_at.isoformat(),
         updated_at=service.updated_at.isoformat(),
         models={m.model_type.value: m.model for m in models},
@@ -119,6 +128,8 @@ def _binding_to_item(b: RoleBinding) -> RoleBindingItem:
         context_length=b.context_length,
         embedding_dim=b.embedding_dim,
         send_dimensions=b.send_dimensions,
+        input_modalities=b.input_modalities,
+        output_modalities=b.output_modalities,
     )
 
 
@@ -144,10 +155,14 @@ async def create_upstream_service(
     """新增服务商 (API Key 存加密)."""
     if not body.id.strip() or not body.base_url.strip() or not body.api_key.strip():
         raise HTTPException(status_code=400, detail="id / base_url / api_key 均不可为空")
+    api_format = cast(
+        ApiFormat, body.api_format if body.api_format in VALID_API_FORMATS else "openai"
+    )
     service = LLMServiceProvider.create(
         service_id=body.id.strip(),
         base_url=body.base_url.strip(),
         api_key=body.api_key.strip(),
+        api_format=api_format,
     )
     try:
         await store.save_service(service)
@@ -184,6 +199,9 @@ async def update_upstream_service(
         raise HTTPException(status_code=404, detail="Service not found")
     new_base = (body.base_url or old.base_url).strip()
     new_key = (body.api_key or old.api_key).strip()
+    new_format = cast(
+        ApiFormat, body.api_format if body.api_format in VALID_API_FORMATS else old.api_format
+    )
     if not new_base or not new_key:
         raise HTTPException(status_code=400, detail="base_url / api_key 不可为空")
 
@@ -193,6 +211,7 @@ async def update_upstream_service(
         id=service_id,
         base_url=new_base,
         api_key=new_key,
+        api_format=new_format,
         created_at=old.created_at,
         updated_at=datetime.now(UTC),
     )
@@ -306,6 +325,8 @@ async def add_model_binding(
             context_length=body.context_length,
             embedding_dim=body.embedding_dim,
             send_dimensions=body.send_dimensions,
+            input_modalities=body.input_modalities,
+            output_modalities=body.output_modalities,
         )
     except ValueError as e:
         msg = str(e)
@@ -375,6 +396,10 @@ async def update_model_binding(
             kwargs["embedding_dim"] = ed
     if "send_dimensions" in provided:
         kwargs["send_dimensions"] = bool(provided["send_dimensions"])
+    if "input_modalities" in provided:
+        kwargs["input_modalities"] = provided["input_modalities"]
+    if "output_modalities" in provided:
+        kwargs["output_modalities"] = provided["output_modalities"]
 
     if not kwargs:
         raise HTTPException(status_code=400, detail="没有可更新的字段")

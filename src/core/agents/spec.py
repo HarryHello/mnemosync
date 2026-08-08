@@ -64,6 +64,14 @@ AGENT_SPECS: dict[str, AgentSpec] = {
         timeout_seconds=30,
         max_iterations=2,
     ),
+    "vision_description": AgentSpec(
+        name="vision_description",
+        purpose="将图片转述为文字描述",
+        model_role="ASSIST",
+        runner_type="simple",
+        timeout_seconds=20,
+        max_iterations=1,
+    ),
 }
 
 

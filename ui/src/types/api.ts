@@ -311,6 +311,7 @@ export interface UpstreamService {
   id: string
   base_url: string
   api_key_masked: string
+  api_format: string
   created_at: string
   updated_at: string
   /** @deprecated v0.2.3 起模型绑定改由 role_bindings 表管理, UpstreamPage 不再展示 */
@@ -321,11 +322,13 @@ export interface UpstreamServiceCreateBody {
   id: string
   base_url: string
   api_key: string
+  api_format?: string
 }
 
 export interface UpstreamServiceUpdateBody {
   base_url?: string
   api_key?: string
+  api_format?: string
 }
 
 export interface UpstreamAvailableModels {
@@ -345,6 +348,8 @@ export interface RoleBindingItem {
   context_length: number | null
   embedding_dim: number | null
   send_dimensions: boolean
+  input_modalities: string[]
+  output_modalities: string[]
 }
 
 export interface RoleBindingListResponse {
@@ -359,6 +364,8 @@ export interface RoleBindingAddBody {
   context_length?: number | null
   embedding_dim?: number | null
   send_dimensions?: boolean
+  input_modalities?: string[]
+  output_modalities?: string[]
 }
 
 /**

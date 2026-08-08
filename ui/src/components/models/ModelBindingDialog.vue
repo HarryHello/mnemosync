@@ -45,7 +45,15 @@ const form = reactive({
   context_length: 128000 as number | null,
   embedding_dim: null as number | null,
   send_dimensions: false,
+  input_modalities: ['text'] as string[],
+  output_modalities: ['text'] as string[],
 })
+
+const MODALITY_OPTIONS = [
+  { label: '文本 (text)', value: 'text' },
+  { label: '图片 (image)', value: 'image' },
+  { label: '音频 (audio)', value: 'audio' },
+]
 const submitting = ref(false)
 const dimProbing = ref(false)
 const availableModels = ref<string[]>([])
@@ -93,6 +101,8 @@ function resetForm(role: UpstreamModelType) {
   form.context_length = DEFAULT_CONTEXT_LENGTH[role]
   form.embedding_dim = null
   form.send_dimensions = false
+  form.input_modalities = ['text']
+  form.output_modalities = ['text']
   availableModels.value = []
 }
 
@@ -122,6 +132,8 @@ function openEdit(existing: RoleBindingItem) {
   form.context_length = existing.context_length
   form.embedding_dim = existing.embedding_dim
   form.send_dimensions = existing.send_dimensions
+  form.input_modalities = existing.input_modalities?.length ? [...existing.input_modalities] : ['text']
+  form.output_modalities = existing.output_modalities?.length ? [...existing.output_modalities] : ['text']
   availableModels.value = []
   visible.value = true
   if (form.service_id) fetchAvailable(form.service_id)
@@ -191,6 +203,15 @@ function diffForEdit(target: RoleBindingItem): RoleBindingUpdateBody {
       patch.send_dimensions = form.send_dimensions
     }
   }
+  // 模态变更
+  const targetInput = target.input_modalities || ['text']
+  const targetOutput = target.output_modalities || ['text']
+  if (JSON.stringify(form.input_modalities) !== JSON.stringify(targetInput)) {
+    patch.input_modalities = form.input_modalities
+  }
+  if (JSON.stringify(form.output_modalities) !== JSON.stringify(targetOutput)) {
+    patch.output_modalities = form.output_modalities
+  }
   return patch
 }
 
@@ -206,6 +227,8 @@ async function submitAddOrReplace() {
     context_length: form.context_length,
     embedding_dim: form.embedding_dim,
     send_dimensions: form.send_dimensions,
+    input_modalities: form.input_modalities,
+    output_modalities: form.output_modalities,
   })
   ElMessage.success(mode.value === 'replace' ? '已替换' : '已添加')
 }
@@ -320,6 +343,23 @@ async function onSubmit() {
           <span class="mono">#{{ form.priority }}</span>
           <span class="hint hint-inline">编辑不改优先级; 请用列表上下箭头调整</span>
         </div>
+      </el-form-item>
+      <el-form-item label="输入模态">
+        <el-checkbox-group v-model="form.input_modalities">
+          <el-checkbox v-for="opt in MODALITY_OPTIONS" :key="opt.value" :label="opt.value">
+            {{ opt.label }}
+          </el-checkbox>
+        </el-checkbox-group>
+        <div class="hint">
+          该模型支持的输入类型。支持图片的模型请选择 image, 否则仅选 text。
+        </div>
+      </el-form-item>
+      <el-form-item label="输出模态">
+        <el-checkbox-group v-model="form.output_modalities">
+          <el-checkbox v-for="opt in MODALITY_OPTIONS" :key="opt.value" :label="opt.value">
+            {{ opt.label }}
+          </el-checkbox>
+        </el-checkbox-group>
       </el-form-item>
       <el-form-item label="上下文长度">
         <el-input-number
