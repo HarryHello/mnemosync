@@ -24,7 +24,7 @@ from src.infra.forwarder.multi import (
     UpstreamAllCandidatesFailed,
     _should_fallback,
 )
-from src.infra.llm_service.models import LLMServiceProvider, ModelType
+from src.infra.llm_service.models import LLMServiceProvider, ModelType, ResolvedCandidate
 from src.infra.llm_service.store import LLMServiceStore
 
 
@@ -383,3 +383,48 @@ async def test_close_disposes_forwarders(resolver):
     assert len(multi._forwarders) == 3
     await multi.close()
     assert multi._forwarders == {}
+
+
+# ─── api_format 路由 ─────────────────────────────────────
+
+def _make_candidate(api_format: str, service_id: str = "svc-x") -> ResolvedCandidate:
+    return ResolvedCandidate(
+        role=ModelType.MAIN,
+        priority=0,
+        service_id=service_id,
+        base_url="https://x.example/v1",
+        api_key="sk-x",
+        model="model-x",
+        api_format=api_format,
+    )
+
+
+def test_get_forwarder_openai_format(resolver):
+    from src.infra.forwarder.forwarder import Forwarder as OpenAIFwd
+    multi = MultiForwarder(resolver)
+    fwd = multi._get_forwarder(_make_candidate("openai"))
+    assert isinstance(fwd, OpenAIFwd)
+
+
+def test_get_forwarder_anthropic_format(resolver):
+    from src.infra.forwarder.anthropic import AnthropicForwarder
+    multi = MultiForwarder(resolver)
+    fwd = multi._get_forwarder(_make_candidate("anthropic"))
+    assert isinstance(fwd, AnthropicForwarder)
+
+
+def test_get_forwarder_responses_format(resolver):
+    from src.infra.forwarder.responses import ResponsesForwarder
+    multi = MultiForwarder(resolver)
+    fwd = multi._get_forwarder(_make_candidate("responses"))
+    assert isinstance(fwd, ResponsesForwarder)
+
+
+def test_embed_rejects_non_openai_format(resolver):
+    """embed 仅支持 openai 格式, anthropic/responses 候选应抛 UpstreamError."""
+    from src.infra.forwarder.forwarder import UpstreamError as UE
+    multi = MultiForwarder(resolver)
+    with pytest.raises(UE):
+        multi._get_openai_forwarder(_make_candidate("anthropic"))
+    with pytest.raises(UE):
+        multi._get_openai_forwarder(_make_candidate("responses"))

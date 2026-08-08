@@ -22,10 +22,15 @@ import httpx
 from src.core.models.resolver import NoCandidateForRoleError, RoleResolver
 from src.infra.llm_service.models import ModelType, ResolvedCandidate
 
+from .anthropic import AnthropicForwarder, AnthropicForwarderConfig
 from .connection_pool import ConnectionPool
 from .forwarder import Forwarder, ForwarderConfig, UpstreamError, UpstreamTimeout
+from .responses import ResponsesForwarder, ResponsesForwarderConfig
 
 logger = logging.getLogger(__name__)
+
+# 通用转发器类型 (OpenAI Forwarder / AnthropicForwarder / ResponsesForwarder)
+ForwarderType = Forwarder | AnthropicForwarder | ResponsesForwarder
 
 
 class UpstreamAllCandidatesFailed(Exception):
@@ -83,26 +88,53 @@ class MultiForwarder:
         self._resolver = resolver
         self._pool = pool
         self._config = config or MultiForwarderConfig()
-        # (service_id, model) → Forwarder
-        # 使用 service_id + model 而不仅 service_id, 让 default_model 便于展示;
-        # 但底层 http client 只依赖 (base_url, api_key), 因此按 service_id 复用更好.
-        # 折中: 按 service_id 缓存 Forwarder, 每次调用显式传 model.
-        self._forwarders: dict[str, Forwarder] = {}
+        # 按 service_id 缓存 Forwarder, 根据 api_format 选择实现
+        self._forwarders: dict[str, ForwarderType] = {}
 
-    def _get_forwarder(self, candidate: ResolvedCandidate) -> Forwarder:
+    def _get_forwarder(self, candidate: ResolvedCandidate) -> ForwarderType:
         fwd = self._forwarders.get(candidate.service_id)
         if fwd is None:
-            fwd = Forwarder(
-                ForwarderConfig(
-                    base_url=candidate.base_url,
-                    api_key=candidate.api_key,
-                    default_model=candidate.model,
-                    timeout=self._config.timeout,
-                    connect_timeout=self._config.connect_timeout,
-                ),
-                pool=self._pool,
-            )
+            if candidate.api_format == "anthropic":
+                fwd = AnthropicForwarder(
+                    AnthropicForwarderConfig(
+                        base_url=candidate.base_url,
+                        api_key=candidate.api_key,
+                        default_model=candidate.model,
+                        timeout=self._config.timeout,
+                    ),
+                )
+            elif candidate.api_format == "responses":
+                fwd = ResponsesForwarder(
+                    ResponsesForwarderConfig(
+                        base_url=candidate.base_url,
+                        api_key=candidate.api_key,
+                        default_model=candidate.model,
+                        timeout=self._config.timeout,
+                    ),
+                )
+            else:
+                fwd = Forwarder(
+                    ForwarderConfig(
+                        base_url=candidate.base_url,
+                        api_key=candidate.api_key,
+                        default_model=candidate.model,
+                        timeout=self._config.timeout,
+                        connect_timeout=self._config.connect_timeout,
+                    ),
+                    pool=self._pool,
+                )
             self._forwarders[candidate.service_id] = fwd
+        return fwd
+
+    def _get_openai_forwarder(self, candidate: ResolvedCandidate) -> Forwarder:
+        """获取 OpenAI 格式转发器. embed/rerank 仅 OpenAI 兼容端点支持."""
+        fwd = self._get_forwarder(candidate)
+        if not isinstance(fwd, Forwarder):
+            raise UpstreamError(
+                None,
+                f"embed/rerank 不支持 api_format='{candidate.api_format}' "
+                f"(service={candidate.service_id}), 仅支持 openai 格式",
+            )
         return fwd
 
     async def _candidates(
@@ -210,7 +242,7 @@ class MultiForwarder:
         """
         cands = await self._candidates(role, candidates)
         c = cands[0]
-        fwd = self._get_forwarder(c)
+        fwd = self._get_openai_forwarder(c)
         if dimensions is not None:
             effective_dim: int | None = dimensions
         elif c.send_dimensions:
@@ -233,8 +265,8 @@ class MultiForwarder:
         cands = await self._candidates(role, candidates)
         errors: list[tuple[ResolvedCandidate, Exception]] = []
         for c in cands:
-            fwd = self._get_forwarder(c)
             try:
+                fwd = self._get_openai_forwarder(c)
                 return await fwd.rerank(query=query, documents=documents, model=c.model, top_n=top_n)
             except Exception as exc:  # noqa: BLE001
                 if not _should_fallback(exc):

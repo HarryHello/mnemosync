@@ -5,14 +5,16 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import aiosqlite
 
 from src.infra.crypto import FernetEncryptor
 
 from .models import (
+    ApiFormat,
     LLMServiceProvider,
     ModelConfiguration,
     ModelType,
@@ -66,6 +68,7 @@ class LLMServiceStore:
                     id TEXT PRIMARY KEY,
                     base_url TEXT NOT NULL,
                     api_key_encrypted TEXT NOT NULL,
+                    api_format TEXT NOT NULL DEFAULT 'openai',
                     created_at TIMESTAMP NOT NULL,
                     updated_at TIMESTAMP NOT NULL
                 )
@@ -94,6 +97,8 @@ class LLMServiceStore:
                     context_length INTEGER,
                     embedding_dim INTEGER,
                     send_dimensions INTEGER NOT NULL DEFAULT 0,
+                    input_modalities TEXT DEFAULT '["text"]',
+                    output_modalities TEXT DEFAULT '["text"]',
                     PRIMARY KEY (role, priority),
                     FOREIGN KEY (service_id) REFERENCES llm_services(id) ON DELETE CASCADE
                 )
@@ -108,6 +113,9 @@ class LLMServiceStore:
                 ("001_add_context_length", add_column_if_missing("role_bindings", "context_length", "INTEGER")),
                 ("002_add_embedding_dim", add_column_if_missing("role_bindings", "embedding_dim", "INTEGER")),
                 ("003_add_send_dimensions", add_column_if_missing("role_bindings", "send_dimensions", "INTEGER NOT NULL DEFAULT 0")),
+                ("004_add_input_modalities", add_column_if_missing("role_bindings", "input_modalities", "TEXT DEFAULT '[\"text\"]'")),
+                ("005_add_output_modalities", add_column_if_missing("role_bindings", "output_modalities", "TEXT DEFAULT '[\"text\"]'")),
+                ("006_add_api_format", add_column_if_missing("llm_services", "api_format", "TEXT NOT NULL DEFAULT 'openai'")),
             ]).apply(db)
             await db.commit()
 
@@ -123,8 +131,8 @@ class LLMServiceStore:
                 if row and row[0] > 0:
                     raise ValueError(f"服务 '{service.id}' 已存在")
             await db.execute(
-                "INSERT INTO llm_services (id, base_url, api_key_encrypted, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (service.id, service.base_url, encrypted,
+                "INSERT INTO llm_services (id, base_url, api_key_encrypted, api_format, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (service.id, service.base_url, encrypted, service.api_format,
                  service.created_at.isoformat(), service.updated_at.isoformat()),
             )
             await db.commit()
@@ -133,7 +141,7 @@ class LLMServiceStore:
     async def get_service(self, service_id: str) -> LLMServiceProvider | None:
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
-                "SELECT id, base_url, api_key_encrypted, created_at, updated_at FROM llm_services WHERE id = ?",
+                "SELECT id, base_url, api_key_encrypted, api_format, created_at, updated_at FROM llm_services WHERE id = ?",
                 (service_id,),
             ) as cursor:
                 row = await cursor.fetchone()
@@ -142,20 +150,22 @@ class LLMServiceStore:
                 return LLMServiceProvider(
                     id=row[0], base_url=row[1],
                     api_key=await self._decrypt(row[2]),
-                    created_at=self._parse_dt(row[3]),
-                    updated_at=self._parse_dt(row[4]),
+                    api_format=row[3] or "openai",
+                    created_at=self._parse_dt(row[4]),
+                    updated_at=self._parse_dt(row[5]),
                 )
 
     async def list_services(self) -> list[LLMServiceProvider]:
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
-                "SELECT id, base_url, api_key_encrypted, created_at, updated_at FROM llm_services ORDER BY created_at DESC"
+                "SELECT id, base_url, api_key_encrypted, api_format, created_at, updated_at FROM llm_services ORDER BY created_at DESC"
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [
                     LLMServiceProvider(
                         id=r[0], base_url=r[1], api_key=await self._decrypt(r[2]),
-                        created_at=self._parse_dt(r[3]), updated_at=self._parse_dt(r[4]),
+                        api_format=r[3] or "openai",
+                        created_at=self._parse_dt(r[4]), updated_at=self._parse_dt(r[5]),
                     )
                     for r in rows
                 ]
@@ -249,14 +259,16 @@ class LLMServiceStore:
             if role is None:
                 query = (
                     "SELECT role, priority, service_id, model, created_at, "
-                    "context_length, embedding_dim, send_dimensions "
+                    "context_length, embedding_dim, send_dimensions, "
+                    "input_modalities, output_modalities "
                     "FROM role_bindings ORDER BY role, priority"
                 )
                 params: tuple[Any, ...] = ()
             else:
                 query = (
                     "SELECT role, priority, service_id, model, created_at, "
-                    "context_length, embedding_dim, send_dimensions "
+                    "context_length, embedding_dim, send_dimensions, "
+                    "input_modalities, output_modalities "
                     "FROM role_bindings WHERE role = ? ORDER BY priority"
                 )
                 params = (role.value,)
@@ -272,6 +284,8 @@ class LLMServiceStore:
                 context_length=r[5],
                 embedding_dim=r[6],
                 send_dimensions=bool(r[7]),
+                input_modalities=json.loads(r[8]) if r[8] else ["text"],
+                output_modalities=json.loads(r[9]) if r[9] else ["text"],
             )
             for r in rows
         ]
@@ -285,6 +299,8 @@ class LLMServiceStore:
         context_length: int | None = None,
         embedding_dim: int | None = None,
         send_dimensions: bool = False,
+        input_modalities: list[str] | None = None,
+        output_modalities: list[str] | None = None,
     ) -> RoleBinding:
         """追加一条角色绑定. priority 省略时排到列表末尾.
 
@@ -337,11 +353,14 @@ class LLMServiceStore:
                     )
 
             now = datetime.now(UTC)
+            _input_mods = json.dumps(input_modalities or ["text"])
+            _output_mods = json.dumps(output_modalities or ["text"])
             await db.execute(
                 "INSERT INTO role_bindings "
                 "(role, priority, service_id, model, created_at, "
-                "context_length, embedding_dim, send_dimensions) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "context_length, embedding_dim, send_dimensions, "
+                "input_modalities, output_modalities) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     role.value,
                     priority,
@@ -351,6 +370,8 @@ class LLMServiceStore:
                     context_length,
                     embedding_dim,
                     1 if send_dimensions else 0,
+                    _input_mods,
+                    _output_mods,
                 ),
             )
             await db.commit()
@@ -364,6 +385,8 @@ class LLMServiceStore:
             context_length=context_length,
             embedding_dim=embedding_dim,
             send_dimensions=send_dimensions,
+            input_modalities=input_modalities or ["text"],
+            output_modalities=output_modalities or ["text"],
         )
 
     async def update_role_binding(
@@ -378,6 +401,8 @@ class LLMServiceStore:
         send_dimensions: bool | None = None,
         clear_context_length: bool = False,
         clear_embedding_dim: bool = False,
+        input_modalities: list[str] | None = None,
+        output_modalities: list[str] | None = None,
     ) -> RoleBinding | None:
         """就地更新一条角色绑定的可编辑字段. role/priority 由主键定位, 不可改.
 
@@ -425,6 +450,12 @@ class LLMServiceStore:
             if send_dimensions is not None:
                 sets.append("send_dimensions = ?")
                 params.append(1 if send_dimensions else 0)
+            if input_modalities is not None:
+                sets.append("input_modalities = ?")
+                params.append(json.dumps(input_modalities))
+            if output_modalities is not None:
+                sets.append("output_modalities = ?")
+                params.append(json.dumps(output_modalities))
 
             if sets:
                 params.extend([role.value, priority])
@@ -437,7 +468,8 @@ class LLMServiceStore:
 
             async with db.execute(
                 "SELECT role, priority, service_id, model, created_at, "
-                "context_length, embedding_dim, send_dimensions "
+                "context_length, embedding_dim, send_dimensions, "
+                "input_modalities, output_modalities "
                 "FROM role_bindings WHERE role = ? AND priority = ?",
                 (role.value, priority),
             ) as cursor:
@@ -452,6 +484,8 @@ class LLMServiceStore:
                     context_length=r[5],
                     embedding_dim=r[6],
                     send_dimensions=bool(r[7]),
+                    input_modalities=json.loads(r[8]) if r[8] else ["text"],
+                    output_modalities=json.loads(r[9]) if r[9] else ["text"],
                 )
 
     async def delete_role_binding(self, role: ModelType, priority: int) -> bool:
@@ -521,7 +555,7 @@ class LLMServiceStore:
         async with aiosqlite.connect(self.db_path) as db:
             for b in bindings:
                 async with db.execute(
-                    "SELECT base_url, api_key_encrypted FROM llm_services WHERE id = ?",
+                    "SELECT base_url, api_key_encrypted, api_format FROM llm_services WHERE id = ?",
                     (b.service_id,),
                 ) as cursor:
                     row = await cursor.fetchone()
@@ -529,6 +563,8 @@ class LLMServiceStore:
                     # 服务被删除但绑定残留 (FK 应该已 cascade, 兜底忽略)
                     continue
                 base_url, encrypted = row[0], row[1]
+                raw_api_format = row[2] or "openai"
+                api_format = cast(ApiFormat, raw_api_format)
                 api_key = await self._decrypt(encrypted)
                 resolved.append(
                     ResolvedCandidate(
@@ -538,9 +574,12 @@ class LLMServiceStore:
                         base_url=base_url,
                         api_key=api_key,
                         model=b.model,
+                        api_format=api_format,
                         context_length=b.context_length,
                         embedding_dim=b.embedding_dim,
                         send_dimensions=b.send_dimensions,
+                        input_modalities=b.input_modalities,
+                        output_modalities=b.output_modalities,
                     )
                 )
         return resolved

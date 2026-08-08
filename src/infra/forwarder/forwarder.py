@@ -1,11 +1,11 @@
 """Forwarder: 所有模型调用的唯一 HTTP 出口.
 
 负责:
-- 对话调用 (chat/completions) — 流式 + 非流式
-- 嵌入调用 (embeddings)
-- 重排序调用 (rerank)
+- 对话调用 (chat/completions) — 流式 + 非流式 (via openai SDK)
+- 嵌入调用 (embeddings) (via openai SDK)
+- 重排序调用 (rerank) (via httpx, 无 SDK 支持)
 
-不负责任何智能决策，只做 HTTP 转发 + 错误处理.
+不负责任何智能决策, 只做 HTTP 转发 + 错误处理.
 """
 
 from __future__ import annotations
@@ -18,34 +18,15 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, cast
-from urllib.parse import urlparse
 
 import httpx
-
-from src.infra.debug_context import get_agent_name, get_correlation_id
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 from .connection_pool import ConnectionPool
 from .debug_hook import get_debug_bus
+from .debug_utils import emit_upstream_debug as _emit_debug  # noqa: F401
 
 logger = logging.getLogger(__name__)
-
-
-def _emit_debug(direction: str, url: str, **fields: Any) -> str | None:
-    bus = get_debug_bus()
-    if bus is None or not bus.should_emit():
-        return None
-    cid = get_correlation_id() or "no-cid"
-    agent = get_agent_name()
-    parsed = urlparse(url)
-    port = parsed.port
-    return bus.emit(
-        direction=direction,
-        correlation_id=cid,
-        url=url,
-        port=port,
-        agent=agent,
-        **fields,
-    )
 
 
 def _log_upstream(direction: str, base_url: str, data: Any, status: int | None = None) -> None:
@@ -97,14 +78,29 @@ class Forwarder:
     """上游模型转发器.
 
     所有 Agent 通过本类调用模型服务商. 一个 Forwarder 实例对应一个服务商.
+    使用 openai SDK 调用 Chat Completions 和 Embeddings; rerank 仍用 httpx.
     """
 
     def __init__(self, config: ForwarderConfig, pool: ConnectionPool | None = None):
         self.config = config
         self._pool = pool
         self._client: httpx.AsyncClient | None = None
+        self._openai_client: AsyncOpenAI | None = None
 
-    async def _get_client(self) -> httpx.AsyncClient:
+    def _get_openai_client(self) -> AsyncOpenAI:
+        if self._openai_client is None:
+            self._openai_client = AsyncOpenAI(
+                api_key=self.config.api_key,
+                base_url=self.config.base_url,
+                timeout=httpx.Timeout(
+                    self.config.timeout, connect=self.config.connect_timeout
+                ),
+                max_retries=0,
+            )
+        return self._openai_client
+
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        """获取 httpx 客户端 (仅用于 rerank 等无 SDK 支持的调用)."""
         if self._client is None:
             if self._pool:
                 self._client = await self._pool.get_client()
@@ -137,71 +133,55 @@ class Forwarder:
         extra_body: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """非流式对话. 支持 function_call.
+        """非流式对话. 使用 openai SDK."""
+        client = self._get_openai_client()
+        resolved_model = model or self.config.default_model
+        chat_url = f"{self.config.base_url}/chat/completions"
 
-        注意: DashScope 等服务商 tools 与 stream=True 互斥, 本方法非流式可安全用 tools.
-
-        Args:
-            extra_body: 额外请求体字段（如 {"enable_thinking": False} 关闭 Qwen3 思考）
-        """
-        payload: dict[str, Any] = {
-            "model": model or self.config.default_model,
+        # 构建 SDK 参数
+        sdk_kwargs: dict[str, Any] = {
+            "model": resolved_model,
             "messages": messages,
             "temperature": temperature,
         }
         if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
+            sdk_kwargs["max_tokens"] = max_tokens
         if tools:
-            payload["tools"] = tools
+            sdk_kwargs["tools"] = tools
         if tool_choice is not None:
-            payload["tool_choice"] = tool_choice
+            sdk_kwargs["tool_choice"] = tool_choice
         if response_format is not None:
-            payload["response_format"] = response_format
+            sdk_kwargs["response_format"] = response_format
+        # extra_body 中的字段通过 extra_body 参数传递给 SDK
         if extra_body:
-            payload.update(extra_body)
-        payload.update(kwargs)
-
-        client = await self._get_client()
-        chat_url = f"{self.config.base_url}/chat/completions"
+            sdk_kwargs["extra_body"] = extra_body
+        # 透传其他 kwargs (如 reasoning_effort, thinking 等)
+        for k, v in kwargs.items():
+            if k not in sdk_kwargs:
+                sdk_kwargs[k] = v
 
         # Debug: 记录上游请求
-        _log_upstream("REQUEST", self.config.base_url, payload)
-        _emit_debug("upstream_request", chat_url, method="POST", body=payload)
+        _log_upstream("REQUEST", self.config.base_url, sdk_kwargs)
+        _emit_debug("upstream_request", chat_url, method="POST", body=sdk_kwargs)
 
         started = time.time()
         try:
-            resp = await client.post(
-                chat_url,
-                json=payload,
-                headers=self._headers(),
-            )
-            resp.raise_for_status()
-            result = resp.json()
+            response = await client.chat.completions.create(**sdk_kwargs)
+            result = response.model_dump()
 
             # Debug: 记录上游响应
-            _log_upstream("RESPONSE", self.config.base_url, result, status=resp.status_code)
+            _log_upstream("RESPONSE", self.config.base_url, result, status=200)
             _emit_debug(
                 "upstream_response",
                 chat_url,
                 method="POST",
-                status=resp.status_code,
+                status=200,
                 duration_ms=(time.time() - started) * 1000,
                 body=result,
             )
 
             return cast(dict[str, Any], result)
-        except httpx.HTTPStatusError as e:
-            _log_upstream("ERROR", self.config.base_url, {"error": e.response.text}, status=e.response.status_code)
-            _emit_debug(
-                "upstream_response",
-                chat_url,
-                method="POST",
-                status=e.response.status_code,
-                duration_ms=(time.time() - started) * 1000,
-                body={"error": e.response.text},
-            )
-            raise UpstreamError(e.response.status_code, e.response.text) from e
-        except httpx.TimeoutException as e:
+        except APITimeoutError as e:
             _log_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
             _emit_debug(
                 "upstream_response",
@@ -212,6 +192,28 @@ class Forwarder:
                 body={"error": f"timeout: {e}"},
             )
             raise UpstreamTimeout(f"chat timeout after {self.config.timeout}s") from e
+        except APIConnectionError as e:
+            _log_upstream("ERROR", self.config.base_url, {"error": str(e)})
+            _emit_debug(
+                "upstream_response",
+                chat_url,
+                method="POST",
+                status=None,
+                duration_ms=(time.time() - started) * 1000,
+                body={"error": str(e)},
+            )
+            raise UpstreamError(None, str(e)) from e
+        except APIStatusError as e:
+            _log_upstream("ERROR", self.config.base_url, {"error": e.response.text}, status=e.status_code)
+            _emit_debug(
+                "upstream_response",
+                chat_url,
+                method="POST",
+                status=e.status_code,
+                duration_ms=(time.time() - started) * 1000,
+                body={"error": e.response.text},
+            )
+            raise UpstreamError(e.status_code, e.response.text) from e
 
     async def chat_stream(
         self,
@@ -223,72 +225,64 @@ class Forwarder:
     ) -> AsyncIterator[bytes]:
         """流式对话, yield SSE 原始字节.
 
-        `**kwargs` 会原样合入 payload (tools / tool_choice / response_format 等),
-        由调用方决定透传哪些字段. 服务商侧限制 (如 DashScope 兼容端点 stream+tools
-        互斥) 交由上游报错 → 通过 UpstreamError 走 SSE error 帧回客户端, 不在此层
-        静默丢字段。
+        使用 openai SDK 流式接口, 将每个 chunk 转回 OpenAI SSE 格式的原始字节,
+        以兼容下游的 ``parse_sse_stream_full`` 解析链.
         """
-        payload: dict[str, Any] = {
-            "model": model or self.config.default_model,
+        client = self._get_openai_client()
+        resolved_model = model or self.config.default_model
+        stream_url = f"{self.config.base_url}/chat/completions"
+
+        # 构建 SDK 参数
+        sdk_kwargs: dict[str, Any] = {
+            "model": resolved_model,
             "messages": messages,
             "temperature": temperature,
             "stream": True,
         }
         if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-        payload.update(kwargs)
-
-        client = await self._get_client()
-        stream_url = f"{self.config.base_url}/chat/completions"
+            sdk_kwargs["max_tokens"] = max_tokens
+        # 透传 kwargs
+        for k, v in kwargs.items():
+            if k not in sdk_kwargs:
+                sdk_kwargs[k] = v
 
         # Debug: 记录上游请求
-        _log_upstream("REQUEST (STREAM)", self.config.base_url, payload)
+        _log_upstream("REQUEST (STREAM)", self.config.base_url, sdk_kwargs)
         event_id = _emit_debug(
-            "upstream_request", stream_url, method="POST", body=payload
+            "upstream_request", stream_url, method="POST", body=sdk_kwargs
         )
 
         bus = get_debug_bus()
         started = time.time()
         collected_text_parts: list[str] = []
         try:
-            async with client.stream(
-                "POST",
-                stream_url,
-                json=payload,
-                headers=self._headers(),
-            ) as resp:
-                resp.raise_for_status()
-                async for chunk in resp.aiter_bytes():
-                    if event_id and bus is not None and bus.should_emit():
-                        bus.append_stream_chunk(event_id, chunk)
-                        # 也顺手累计 assembled 文本
-                        try:
-                            collected_text_parts.append(
-                                chunk.decode("utf-8", errors="ignore")
-                            )
-                        except Exception:
-                            pass
-                    yield chunk
-                if event_id and bus is not None:
-                    assembled = parse_sse_stream([c.encode("utf-8") for c in collected_text_parts]) if collected_text_parts else ""
-                    bus.finalize_stream(
-                        event_id,
-                        assembled=assembled,
-                        status=resp.status_code,
-                        duration_ms=(time.time() - started) * 1000,
-                    )
-        except httpx.HTTPStatusError as e:
-            body = await e.response.aread()
-            _log_upstream("ERROR", self.config.base_url, {"error": body.decode()}, status=e.response.status_code)
+            stream = await client.chat.completions.create(**sdk_kwargs)
+            async for chunk in stream:
+                # 将 SDK chunk 转回 OpenAI SSE 格式的原始字节
+                chunk_dict = chunk.model_dump()
+                sse_line = f"data: {json.dumps(chunk_dict, ensure_ascii=False)}\n\n"
+                sse_bytes = sse_line.encode("utf-8")
+
+                if event_id and bus is not None and bus.should_emit():
+                    bus.append_stream_chunk(event_id, sse_bytes)
+                    try:
+                        collected_text_parts.append(sse_line)
+                    except Exception:
+                        pass
+                yield sse_bytes
+
+            # 发送 [DONE] 标记
+            yield b"data: [DONE]\n\n"
+
             if event_id and bus is not None:
+                assembled = parse_sse_stream([c.encode("utf-8") for c in collected_text_parts]) if collected_text_parts else ""
                 bus.finalize_stream(
                     event_id,
-                    assembled=body.decode("utf-8", errors="replace"),
-                    status=e.response.status_code,
+                    assembled=assembled,
+                    status=200,
                     duration_ms=(time.time() - started) * 1000,
                 )
-            raise UpstreamError(e.response.status_code, body.decode()) from e
-        except httpx.TimeoutException as e:
+        except APITimeoutError as e:
             _log_upstream("TIMEOUT", self.config.base_url, {"error": str(e)})
             if event_id and bus is not None:
                 bus.finalize_stream(
@@ -298,6 +292,27 @@ class Forwarder:
                     duration_ms=(time.time() - started) * 1000,
                 )
             raise UpstreamTimeout(f"chat_stream timeout after {self.config.timeout}s") from e
+        except APIConnectionError as e:
+            _log_upstream("ERROR", self.config.base_url, {"error": str(e)})
+            if event_id and bus is not None:
+                bus.finalize_stream(
+                    event_id,
+                    assembled=str(e),
+                    status=None,
+                    duration_ms=(time.time() - started) * 1000,
+                )
+            raise UpstreamError(None, str(e)) from e
+        except APIStatusError as e:
+            body = e.response.text
+            _log_upstream("ERROR", self.config.base_url, {"error": body}, status=e.status_code)
+            if event_id and bus is not None:
+                bus.finalize_stream(
+                    event_id,
+                    assembled=body,
+                    status=e.status_code,
+                    duration_ms=(time.time() - started) * 1000,
+                )
+            raise UpstreamError(e.status_code, body) from e
 
     # ============ 嵌入 ============
 
@@ -307,46 +322,31 @@ class Forwarder:
         model: str,
         dimensions: int | None = None,
     ) -> list[list[float]]:
-        """调用 embedding API, 返回向量列表."""
-        payload: dict[str, Any] = {"model": model, "input": input}
-        if dimensions is not None:
-            payload["dimensions"] = dimensions
-
-        client = await self._get_client()
+        """调用 embedding API, 返回向量列表. 使用 openai SDK."""
+        client = self._get_openai_client()
         embed_url = f"{self.config.base_url}/embeddings"
-        _emit_debug("upstream_request", embed_url, method="POST", body=payload)
+
+        sdk_kwargs: dict[str, Any] = {"model": model, "input": input}
+        if dimensions is not None:
+            sdk_kwargs["dimensions"] = dimensions
+
+        _emit_debug("upstream_request", embed_url, method="POST", body=sdk_kwargs)
         started = time.time()
         try:
-            resp = await client.post(
-                embed_url,
-                json=payload,
-                headers=self._headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            # OpenAI 兼容: data[].embedding, 按 index 排序
-            items = sorted(data["data"], key=lambda x: x.get("index", 0))
-            vectors = [item["embedding"] for item in items]
+            response = await client.embeddings.create(**sdk_kwargs)
+            # 按 index 排序
+            items = sorted(response.data, key=lambda x: x.index)
+            vectors = [item.embedding for item in items]
             _emit_debug(
                 "upstream_response",
                 embed_url,
                 method="POST",
-                status=resp.status_code,
+                status=200,
                 duration_ms=(time.time() - started) * 1000,
                 body={"vectors_count": len(vectors), "dim": len(vectors[0]) if vectors else 0},
             )
             return vectors
-        except httpx.HTTPStatusError as e:
-            _emit_debug(
-                "upstream_response",
-                embed_url,
-                method="POST",
-                status=e.response.status_code,
-                duration_ms=(time.time() - started) * 1000,
-                body={"error": e.response.text},
-            )
-            raise UpstreamError(e.response.status_code, e.response.text) from e
-        except httpx.TimeoutException as e:
+        except APITimeoutError as e:
             _emit_debug(
                 "upstream_response",
                 embed_url,
@@ -356,6 +356,16 @@ class Forwarder:
                 body={"error": f"timeout: {e}"},
             )
             raise UpstreamTimeout("embed timeout") from e
+        except APIStatusError as e:
+            _emit_debug(
+                "upstream_response",
+                embed_url,
+                method="POST",
+                status=e.status_code,
+                duration_ms=(time.time() - started) * 1000,
+                body={"error": e.response.text},
+            )
+            raise UpstreamError(e.status_code, e.response.text) from e
 
     # ============ 重排序 ============
 
@@ -366,11 +376,7 @@ class Forwarder:
         model: str,
         top_n: int | None = None,
     ) -> list[dict[str, Any]]:
-        """调用 rerank API.
-
-        Returns:
-            list of {index, relevance_score, document?}, 按 relevance_score 降序.
-        """
+        """调用 rerank API (httpx, 无 SDK 支持)."""
         payload: dict[str, Any] = {
             "model": model,
             "query": query,
@@ -379,8 +385,7 @@ class Forwarder:
         if top_n is not None:
             payload["top_n"] = top_n
 
-        client = await self._get_client()
-        # 尝试 /rerank, 失败则试 /reranks（部分服务商用复数）
+        client = await self._get_http_client()
         for endpoint in ["/rerank", "/reranks"]:
             try:
                 resp = await client.post(
@@ -393,7 +398,6 @@ class Forwarder:
                 resp.raise_for_status()
                 data = resp.json()
                 results = data.get("results", [])
-                # 补 document 文本（若服务商未返回）
                 for r in results:
                     if "document" not in r or r.get("document") is None:
                         r["document"] = documents[r["index"]]
@@ -409,23 +413,21 @@ class Forwarder:
     # ============ 模型列表 ============
 
     async def list_models(self) -> list[str]:
-        """列出服务商可用模型."""
-        client = await self._get_client()
+        """列出服务商可用模型. 使用 openai SDK."""
+        client = self._get_openai_client()
         try:
-            resp = await client.get(
-                f"{self.config.base_url}/models",
-                headers=self._headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return [m["id"] for m in data.get("data", [])]
-        except httpx.HTTPStatusError as e:
-            raise UpstreamError(e.response.status_code, e.response.text) from e
+            models = await client.models.list()
+            return [m.id for m in models.data]
+        except APIStatusError as e:
+            raise UpstreamError(e.status_code, e.response.text) from e
 
     # ============ 生命周期 ============
 
     async def close(self) -> None:
-        """关闭自建的 HTTP 客户端 (使用外部 pool 时无需关闭)."""
+        """关闭 HTTP 客户端."""
+        if self._openai_client:
+            await self._openai_client.close()
+            self._openai_client = None
         if self._client and not self._pool:
             await self._client.aclose()
             self._client = None
