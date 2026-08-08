@@ -1,9 +1,9 @@
 # 上游转发模块 (Forward Module)
 
-> **模块版本**: v0.3.4
+> **模块版本**: v0.4.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
-> **最后更新**: 2026-08-01
+> **最后更新**: 2026-08-08
 > **作者**: HarryHelloo
 
 ---
@@ -15,10 +15,20 @@ Forwarder 是 Mnemosync **所有上游 HTTP 调用的唯一出口** — 包括�
 v0.2.3 起, 顶层入口是 `MultiForwarder` — 它按角色 (`main`/`assist`/`embedding`/`rerank`) 从 `role_bindings` 拉出候选优先级列表, 用第一位 `ResolvedCandidate` 构造一个内部 `Forwarder` 实例发起调用; 失败时按候选顺序 fallback (**嵌入角色除外**, 见 §1.1)。
 
 **代码位置**:
-- [src/infra/forwarder/forwarder.py](../../src/infra/forwarder/forwarder.py) — `Forwarder` (单服务商)
-- [src/infra/forwarder/multi.py](../../src/infra/forwarder/multi.py) — `MultiForwarder` (多候选调度)
+- [src/infra/forwarder/forwarder.py](../../src/infra/forwarder/forwarder.py) — `Forwarder` (OpenAI Chat Completions, 基于 openai SDK)
+- [src/infra/forwarder/anthropic.py](../../src/infra/forwarder/anthropic.py) — `AnthropicForwarder` (Anthropic Messages, 基于 anthropic SDK)
+- [src/infra/forwarder/responses.py](../../src/infra/forwarder/responses.py) — `ResponsesForwarder` (OpenAI Responses API, 基于 openai SDK)
+- [src/infra/forwarder/multi.py](../../src/infra/forwarder/multi.py) — `MultiForwarder` (多候选调度, 按 `api_format` 路由)
 - [src/infra/forwarder/connection_pool.py](../../src/infra/forwarder/connection_pool.py) — 连接池
 - [src/infra/forwarder/debug_hook.py](../../src/infra/forwarder/debug_hook.py) — v0.2.5 出/入方向 emit 到 DebugEventBus
+- [src/infra/forwarder/debug_utils.py](../../src/infra/forwarder/debug_utils.py) — v0.4 共享调试事件发射
+
+**上游 API 格式** (`LLMServiceProvider.api_format`):
+- `openai` — OpenAI Chat Completions (`/chat/completions`) — 默认
+- `anthropic` — Anthropic Messages API (`/messages`), 经 `AnthropicForwarder`
+- `responses` — OpenAI Responses API (`/responses`), 经 `ResponsesForwarder`
+
+`MultiForwarder._get_forwarder()` 按候选的 `api_format` 实例化对应转发器。embed / rerank 仅支持 `openai` 格式，其他格式候选会抛 `UpstreamError` 并给出明确提示（v0.4）。
 
 **调用方一览**:
 
@@ -199,7 +209,7 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 - **全局频率限制**: `ToolPolicy` 的 `global_max_per_window` / `global_window_seconds` 字段按时间窗口统计 `tool_call` 事件总数, 超限拦截。与按用户+空间的冷却互补, 覆盖 API Key 级别。
 - **空间级串行锁**: 同一 `space_id` 的请求逐条处理, 不同空间并行。锁键优先级 `space_id > source_user > api_key_id > "global"`。非流式在 `create_chat_completion` 的 try/finally 释放; 流式在 `locked_stream` 包装器结束后释放。防止同一群聊并行生成回复导致内容冲突。详见 [internal-tools.md](internal-tools.md)。
 - **内部 tool 拦截**: `InternalToolRegistry` 注册服务端内部工具 (身份绑定等), 仅非流式路径注入主模型。模型调用内部 tool 时, `main_dialogue_node` 拦截执行 handler, 合成 `tool_result`, 再调一轮 LLM 生成自然回复。出站时从 `tool_calls` 中剥离内部 tool, 客户端不可见。详见 [internal-tools.md](internal-tools.md)。
-- **跨平台身份绑定**: 双触发模式。指令触发: 用户发自定义指令词 (默认"绑定"), 服务端拦截生成 6 位验证码, 不调 LLM; 另一端发"绑定 {code}"确认。自然语言触发: 模型调用内部 tool `initiate_identity_binding` / `confirm_identity_binding`, 服务端执行绑定逻辑。绑定复用 UserGroup, 验证码 5 分钟 TTL。指令词可通过 `runtime.identity_bind_command` / `runtime.identity_bind_confirm_prefix` 自定义。详见 [internal-tools.md](internal-tools.md)。
+- **跨平台身份绑定** (v0.4 重构): 双触发模式。指令触发: 用户发自定义指令词 (默认"绑定"), 服务端**确定性**生成 6 位验证码, 返回 `BindContext` (含验证码/结果/提示词), 再走 LLM 用自然语气回复, 兼容流式/非流式 (不再硬编码 JSONResponse)。另一端发"绑定 {code}"确认时同样经 `BindContext` → LLM。自然语言触发: 模型调用内部 tool `mnemosync_initiate_identity_binding` / `mnemosync_confirm_identity_binding` (v0.4 加前缀防冲突), 服务端执行绑定逻辑。自绑定 (同账号) 会被拒绝。绑定复用 UserGroup, 验证码 5 分钟 TTL。指令词可通过 `runtime.identity_bind_command` / `runtime.identity_bind_confirm_prefix` 自定义。详见 [internal-tools.md](internal-tools.md)。
 - **管线调试事件**: `DebugEventBus.emit_pipeline()` 发射语义管线事件 (tool_policy / tool_transaction / tool_call_decision / trigger_reason / expressor_rewrite / cooldown_blocked), 通过现有 SSE 流推送, 前端按类型渲染卡片和详情。
 - **交互事务聚合**: `GET /panel/admin/conversation-turns/interactions` 列出最近的逻辑交互摘要; `InteractionList.vue` 组件可展开查看同一 `interaction_id` 的所有事件 (message / tool_call / tool_result)。
 - **评估维度统计**: `GET /panel/admin/debug/evaluation` 从 `conversation_turns` 聚合统计 (回复平均长度 / 工具调用分布 / 交互事务比例)。
@@ -259,3 +269,4 @@ ForwarderConfig(
 | v0.2.5 | 2026-07-17 | `debug_hook` 模块级单例; forwarder 出/入方向 emit 到 DebugEventBus |
 | v0.2.6 | 2026-07-18 | forward.py 装填改由 `render_main_dialogue_system` + `build_short_term_history` 组合; 主对话完成后写 `conversation_turns` 两条 |
 | v0.3.0 | 2026-07-26 | forward.py 新增身份解析、幂等预检/重放、initial_state 注入 actor_id/space_id/channel_type/persona_id/external_event_id/api_key_id; 记忆检索与短期记忆装填接入 space_id 分区与受众过滤 |
+| v0.4.0 | 2026-08-08 | 上游改用官方 SDK (openai/anthropic); 新增 `AnthropicForwarder` / `ResponsesForwarder`; `MultiForwarder` 按 `api_format` 路由; 提取 `debug_utils`; embed/rerank 仅支持 openai 格式 |

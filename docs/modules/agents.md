@@ -128,6 +128,18 @@ Expressor 仅在同时满足以下条件时调用：
 - 删除自我描述：`[发送表情包]` `[戳一戳]`
 - 删除舞台指令或旁白
 
+### 3.4 Vision Description Agent (v0.4)
+
+**代码**: [src/core/agents/vision.py](../../src/core/agents/vision.py) — `describe_image()` / `extract_image_parts()` / `has_image_parts()` / `strip_image_parts()`
+
+**定位**: 多模态视觉支持的第二条路径。当客户端发送图片但目标 MAIN 模型**不支持图片**时，用 ASSIST 角色（需支持视觉）把图片转述为文字描述，再注入当前 user 输入，避免图片被静默丢弃。目标模型支持图片时走另一条路径（直接透传 image content parts，见 [forward.md](forward.md)）。
+
+**调用点**: 流式与非流式路径均调用。入口在 [src/api/routes/forward/stream.py](../../src/api/routes/forward/stream.py) 的 `_describe_images_if_needed()`（流式）与非流式路径的等价逻辑。判断依据是候选的 `input_modalities` 中是否含 `"image"`。
+
+**提示词**: 内置 `VISION_SYSTEM_PROMPT`（`src/core/agents/vision.py`），要求详细但简洁、转录图片文字、描述截图表结构、用中文，temperature 0.3、max_tokens 1000。
+
+**降级**: 截图/描述失败时返回 `[图片描述失败]` 占位，不阻断对话。
+
 ## 4. 记忆分析 Agent
 
 **代码**: [factory.py:259 `run_memory_analysis`](../../src/core/agents/factory.py#L259)
@@ -583,3 +595,4 @@ class AgentState(TypedDict, total=False):
 | v0.2.10 | 2026-07-19 | 关系分析 Agent 新增 `update_addressing` 工具 (自证 `reason` ≥ 10 字, 落 `relationships` 三 nullable 列 + `relationship_audit_log`); prompt 加"称呼演化"判断维度; `nodes.py._resolve_addressing` 让占位符按 表 → override → config → 默认 四层取值 |
 | v0.2.11 | 2026-07-19 | 文档补齐 v0.2.7–v0.2.11 (persona_override.toml, /conversation-turns/sources, /panel/admin/persona) |
 | v0.3.1 | 2026-07-28 | 新增第 3 个 Agent: Expressor (群聊最终文本表达改写, 不改写工具调用); 触发原因识别 (`__TRIGGER_REASON__`); 平台能力提示 (`__TOOL_CAPABILITY_HINT__`); 工具参数隐私检查; 工具事务桥接; 逻辑交互 ID; 模型候选工具能力声明; Agent 总数从 5 更新为 6; 触发原因识别从 §2.5 升为独立小节; 所有章节重编号 |
+| v0.4.0 | 2026-08-08 | 新增 Vision Description Agent (图片转文字描述, ASSIST 角色); Vision Agent 内部工具名加 `mnemosync_` 前缀 |

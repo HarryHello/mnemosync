@@ -3,6 +3,35 @@
 本文件记录 Mnemosync 的主要版本变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [v0.4.0] - 2026-08
+
+### 功能
+- **多模态视觉支持**：
+  - 模型绑定新增 `input_modalities` / `output_modalities` 字段（默认 `["text"]`）。
+  - 目标模型支持图片时，直接透传 image content parts。
+  - 目标模型不支持图片时，新增 Vision Description Agent（ASSIST 角色）自动将图片转述为文字描述，流式与非流式路径均支持。
+- **Anthropic API 双向兼容**：
+  - 上游：服务商新增 `api_format` 字段，`anthropic` 格式经 `AnthropicForwarder`（anthropic SDK）转发，自动完成 OpenAI ↔ Messages 格式转换。
+  - 下游：新增 `POST /v1/messages` 端点，接受 Anthropic Messages 格式请求。
+- **OpenAI Responses API 双向兼容**：
+  - 上游：`responses` 格式经 `ResponsesForwarder`（openai SDK）转发。
+  - 下游：新增 `POST /v1/responses` 端点。
+- **身份绑定增强**：
+  - 绑定指令改为经 LLM 自然语气回复（`BindContext`），兼容流式/非流式，不再是硬编码文本。
+  - 修复自绑定检查缺失（同平台绑定自己现在会被拒绝）。
+  - 内部工具名加 `mnemosync_` 前缀，避免与客户端工具冲突。
+
+### 架构
+- 上游转发改用官方 SDK（`openai>=2.50.0`、`anthropic>=0.110.0`），替代 raw httpx；rerank 保留 httpx。
+- 提取共享 `debug_utils.emit_upstream_debug`，消除三处 `_emit_debug` 复制粘贴。
+- `MultiForwarder` 按 `api_format` 路由到 OpenAI / Anthropic / Responses 转发器；embed/rerank 仅支持 openai 格式并显式报错。
+
+### 修复
+- `_handle_bind_response` 中 `space_locks` 变量名错误导致运行时 `NameError`。
+- Anthropic/Responses 转发器 `chatcmpl_id` 用 `int(time.time())` 导致同秒请求 ID 碰撞，改用 uuid。
+- 移除重复的 `_emit_debug` 调用与未使用的 import。
+- install.sh 依赖安装自动检测 PyPI 连通性，不通时切换清华/阿里镜像。
+
 ## [v0.3.5] - 2026-08
 
 ### 安全

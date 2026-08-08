@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Mnemosync** (v0.3.4) 是一个基于 **LangGraph** 多 Agent 编排的跨平台人格记忆同步代理服务器。它在网络层拦截 OpenAI 兼容请求，把所有前端的对话汇聚成一条连续流后再转发给上游 LLM，同时维护长期记忆、关系演化、多用户身份识别与幂等重放。
+**Mnemosync** (v0.4.0) 是一个基于 **LangGraph** 多 Agent 编排的跨平台人格记忆同步代理服务器。它在网络层拦截 OpenAI 兼容请求，把所有前端的对话汇聚成一条连续流后再转发给上游 LLM，同时维护长期记忆、关系演化、多用户身份识别与幂等重放。v0.4 起支持多模态视觉输入、Anthropic Messages 与 OpenAI Responses API 双向兼容。
 
 核心哲学：**服务器持有真相** —— 人格由服务器权威持有，对话流水永不丢失，跨前端连续对话。
 
@@ -17,7 +17,7 @@
 | **语言** | Python 3.12+ | 强类型，pyright/mypy 严格模式 |
 | **Web 框架** | FastAPI + uvicorn | HTTP API 层 |
 | **Agent 编排** | LangGraph | StateGraph 多节点编排 |
-| **LLM 集成** | langchain-core, langchain-openai | 多服务商转发 |
+| **LLM 集成** | openai, anthropic, langchain-core | 多服务商/多格式转发 (Chat Completions / Messages / Responses) |
 | **向量存储** | ChromaDB | 语义检索 + embedding lock 机制 |
 | **关系型存储** | SQLite via aiosqlite | 多库分离 (auth / api_key / memory / conversation / identity / ...) |
 | **配置** | TOML (tomllib) | 三层覆盖: 资源默认值 → config.local.toml → data/persona_override.toml |
@@ -67,14 +67,16 @@ mnemosync/
 │   │   ├── state.py            # AppState 数据类
 │   │   ├── schemas/            # Pydantic 请求/响应模型
 │   │   └── routes/             # 路由实现
-│   │       ├── forward/        # /v1/chat/completions + /v1/models
+│   │       ├── forward/        # /v1/chat/completions + /v1/models + /v1/messages + /v1/responses
 │   │       │   ├── __init__.py # 主路由逻辑
 │   │       │   ├── stream.py   # 流式处理
 │   │       │   ├── nonstream.py # 非流式处理
 │   │       │   ├── identity.py # 身份解析逻辑
 │   │       │   ├── idempotency.py # 幂等重放
 │   │       │   ├── persistence.py # 事件落库
-│   │       │   └── memory_graph.py # 异步记忆图
+│   │       │   ├── memory_graph.py # 异步记忆图
+│   │       │   ├── anthropic_adapter.py # /v1/messages (Anthropic 格式请求适配)
+│   │       │   └── responses_adapter.py # /v1/responses (Responses API 格式请求适配)
 │   │       ├── admin*.py       # 管理面板各模块路由
 │   │       ├── api_key.py      # API Key 管理
 │   │       └── auth.py         # 认证路由
@@ -88,6 +90,7 @@ mnemosync/
 │   │   ├── agents/             # LangGraph Agent 执行函数
 │   │   │   ├── base.py         # ReAct 循环 / simple completion
 │   │   │   ├── factory.py      # Agent 工厂 (main/memory/relationship/expressor...)
+│   │   │   │   ├── vision.py       # Vision Description Agent (图片转文字描述)
 │   │   │   └── prompts/        # Prompt builder
 │   │   │       ├── defaults/   # 默认提示词 Markdown
 │   │   │       └── *.py        # builder 函数
@@ -119,10 +122,13 @@ mnemosync/
 │   │
 │   ├── infra/                  # 基础设施层
 │   │   ├── forwarder/          # 上游 LLM 转发
-│   │   │   ├── forwarder.py    # Forwarder (单服务商)
-│   │   │   ├── multi.py        # MultiForwarder (多候选 + fallback)
+│   │   │   ├── forwarder.py    # Forwarder (OpenAI Chat Completions, openai SDK)
+│   │   │   ├── anthropic.py    # AnthropicForwarder (Messages, anthropic SDK)
+│   │   │   ├── responses.py    # ResponsesForwarder (Responses API, openai SDK)
+│   │   │   ├── multi.py        # MultiForwarder (多候选 + fallback, 按 api_format 路由)
 │   │   │   ├── connection_pool.py # HTTP 连接池
-│   │   │   └── debug_hook.py   # 调试事件钩子
+│   │   │   ├── debug_hook.py   # 调试事件钩子
+│   │   │   └── debug_utils.py  # 共享调试事件发射
 │   │   ├── llm_service/        # LLM 服务商元数据
 │   │   │   ├── models.py       # LLMServiceProvider / ModelConfiguration / RoleBinding
 │   │   │   └── store.py        # SQLite 存储

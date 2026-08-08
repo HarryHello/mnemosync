@@ -84,7 +84,9 @@ forward.py: 合并内部 tools + 客户端 tools
 
 ## 4. 已注册的内部工具
 
-### 4.1 initiate_identity_binding
+### 4.1 mnemosync_initiate_identity_binding
+
+> v0.4 起内部工具名加 `mnemosync_` 前缀，避免与客户端工具冲突。旧名 `initiate_identity_binding` 已废弃。
 
 **用途**: 发起跨平台身份绑定。当用户表达了在不同平台是同一个人的意愿时调用。
 
@@ -96,7 +98,9 @@ forward.py: 合并内部 tools + 客户端 tools
 3. 存入内存 (TTL 5 分钟)
 4. 返回验证码, 模型引导用户在另一端提供
 
-### 4.2 confirm_identity_binding
+### 4.2 mnemosync_confirm_identity_binding
+
+> v0.4 起内部工具名加 `mnemosync_` 前缀。旧名 `confirm_identity_binding` 已废弃。
 
 **用途**: 确认跨平台身份绑定。用户提供了验证码时调用。
 
@@ -120,30 +124,32 @@ forward.py: 合并内部 tools + 客户端 tools
 
 ## 5. 跨平台身份绑定流程
 
-### 5.1 指令触发 (可靠)
+### 5.1 指令触发 (可靠, v0.4 起经 LLM 自然回复)
 
 ```
 用户 A (平台 1): "绑定"
-  → 服务端拦截, 不调 LLM
-  → 生成验证码 123456
-  → 回复: "验证码: 123456, 请在另一端发送'绑定 123456'"
+  → 服务端拦截, 确定性生成验证码 123456 (不依赖模型)
+  → 返回 BindContext (验证码 + 提示词)
+  → 走 LLM 用自然语气回复: "好呀, 验证码是 123456, 在另一边发'绑定 123456'就行~"
 
 用户 B (平台 2): "绑定 123456"
-  → 服务端拦截, 不调 LLM
-  → 校验通过, 绑定到同一 UserGroup
-  → 回复: "绑定成功"
+  → 服务端拦截, 确定性校验 + 绑定到同一 UserGroup
+  → 返回 BindContext (结果 + 提示词)
+  → 走 LLM 用自然语气回复: "绑定成功啦, 以后我们记忆共享~"
 ```
+
+v0.4 起指令触发不再返回硬编码 JSONResponse，而是先生成确定性的 `BindContext`，再经 LLM 用模型自己的语气回复，兼容流式与非流式路径。
 
 ### 5.2 自然语言触发 (增强)
 
 ```
 用户 A: "我和 QQ 上的我是同一个人"
-  → 模型理解意图, 调用 initiate_identity_binding
+  → 模型理解意图, 调用 mnemosync_initiate_identity_binding
   → 服务端执行, 合成 tool_result
   → 模型生成自然回复: "好的, 验证码是 123456, 请在 QQ 端发送'绑定 123456'"
 
 用户 B (QQ): "绑定 123456"
-  → 模型调用 confirm_identity_binding(code="123456")
+  → 模型调用 mnemosync_confirm_identity_binding(code="123456")
   → 服务端执行, 绑定成功
   → 模型生成自然回复: "绑定完成, 以后你在两个平台的记忆会共享"
 ```

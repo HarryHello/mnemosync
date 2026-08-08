@@ -1,6 +1,6 @@
 # LLM 服务管理模块 | LLM Service Module
 
-> **模块版本**: v0.3.0
+> **模块版本**: v0.4.0
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-12
 > **最后更新**: 2026-07-26
@@ -43,11 +43,14 @@ class LLMServiceProvider:
     id: str                # "dashscope" / "openai" / ...
     base_url: str
     api_key: str           # 内存中为明文; 存储时加密
+    api_format: ApiFormat = "openai"   # v0.4: "openai" | "anthropic" | "responses"
     created_at: datetime
     updated_at: datetime
 
     def api_key_masked(self) -> str: ...   # 前 6 + 后 4
 ```
+
+`api_format` 决定上游走哪个转发器 (见 [forward.md](forward.md)): `openai` → `Forwarder`, `anthropic` → `AnthropicForwarder`, `responses` → `ResponsesForwarder`。默认 `openai`，旧数据自动兼容。
 
 ### 2.3 RoleBinding
 
@@ -64,6 +67,8 @@ class RoleBinding:
     context_length: int | None = None   # v0.2.4: 面板展示
     embedding_dim: int | None = None    # v0.2.4: 向量库维度锁
     send_dimensions: bool = False       # v0.2.8: 是否把 embedding_dim 作为 dimensions 参数发上游
+    input_modalities: list[str] = ["text"]   # v0.4: 输入模态 (text/image/audio...)
+    output_modalities: list[str] = ["text"]  # v0.4: 输出模态
 ```
 
 PRIMARY KEY `(role, priority)`。同角色多条 = 优先级列表; 上游失败时 MultiForwarder 按 priority 顺序 fallback (**嵌入角色除外**, 见 §2.5)。
@@ -81,10 +86,15 @@ class ResolvedCandidate:
     base_url: str
     api_key: str          # 已解密
     model: str
+    api_format: ApiFormat = "openai"   # v0.4
     context_length: int | None = None
     embedding_dim: int | None = None
     send_dimensions: bool = False       # v0.2.8
+    input_modalities: list[str] = ["text"]   # v0.4
+    output_modalities: list[str] = ["text"]  # v0.4
 ```
+
+`input_modalities` 含 `"image"` 时，目标模型视为支持视觉：图片 content parts 直接透传；否则由 Vision Description Agent 转述 (见 [agents.md](agents.md) §3.4)。
 
 `context_length` 会被 `build_short_term_history` 用作双窗装填的模型窗预算 (v0.2.6, 见 [memory-system.md §1.4](memory-system.md#14-短期记忆-v026--跨前端对话流水))。
 
