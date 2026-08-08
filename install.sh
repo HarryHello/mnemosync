@@ -117,10 +117,31 @@ setup_code() {
 
 # ============================================================================
 # 安装依赖 (uv sync 会按 pyproject.toml requires-python 自动准备 Python)
+# 自动检测 PyPI 连通性, 不通时切换到镜像源
 # ============================================================================
 install_deps() {
     info "安装依赖 (uv 会按需下载 Python 3.12+)..."
     cd "$INSTALL_DIR"
+
+    # 检测 PyPI 连通性, 自动切换镜像
+    if [ -z "$UV_INDEX_URL" ]; then
+        if ! curl -s --connect-timeout 5 --max-time 10 "https://pypi.org/simple/" > /dev/null 2>&1; then
+            warn "pypi.org 不可达, 尝试使用镜像源..."
+            for mirror in \
+                "https://pypi.tuna.tsinghua.edu.cn/simple" \
+                "https://mirrors.aliyun.com/pypi/simple"; do
+                if curl -s --connect-timeout 5 --max-time 10 "$mirror/" > /dev/null 2>&1; then
+                    export UV_INDEX_URL="$mirror"
+                    info "已切换到镜像: $mirror"
+                    break
+                fi
+            done
+            if [ -z "$UV_INDEX_URL" ]; then
+                warn "所有镜像均不可达, 使用默认源 (可能较慢)"
+            fi
+        fi
+    fi
+
     uv sync --frozen 2>/dev/null || uv sync
     info "依赖安装完成 ✓"
 }
