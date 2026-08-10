@@ -379,6 +379,8 @@ export interface RoleBindingUpdateBody {
   context_length?: number | null
   embedding_dim?: number | null
   send_dimensions?: boolean
+  input_modalities?: string[]
+  output_modalities?: string[]
 }
 
 export interface RoleBindingReorderBody {
