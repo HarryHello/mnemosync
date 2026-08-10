@@ -539,70 +539,29 @@ def cmd_restart(args: argparse.Namespace) -> int:
     return cmd_serve(serve_args)
 
 
-def _setup_ui(project_root: str) -> None:
-    """下载或构建管理面板 (ui/dist)."""
-    import shutil
-
-    ui_dist = os.path.join(project_root, "ui", "dist")
-    if os.path.exists(os.path.join(ui_dist, "index.html")):
-        print("✅ UI already built")
-        return
-
-    # 从 GitHub Release 下载预编译面板
-    print("📥 Downloading UI from GitHub Release...")
-    try:
-        import json
-        import urllib.request
-
-        api_url = "https://api.github.com/repos/HarryHello/mnemosync/releases/latest"
-        with urllib.request.urlopen(api_url, timeout=30) as resp:
-            data = json.loads(resp.read())
-            assets = data.get("assets", [])
-            dist_asset = next((a for a in assets if a["name"] == "ui-dist.tar.gz"), None)
-
-        if dist_asset:
-            url = dist_asset["browser_download_url"]
-            tmp_path = os.path.join(project_root, "ui-dist.tar.gz")
-            urllib.request.urlretrieve(url, tmp_path)
-
-            import tarfile
-            with tarfile.open(tmp_path, "r:gz") as tar:
-                tar.extractall(path=os.path.join(project_root, "ui"))
-            os.remove(tmp_path)
-
-            if os.path.exists(os.path.join(ui_dist, "index.html")):
-                print("✅ UI downloaded from Release")
-                return
-    except Exception as e:
-        print(f"⚠️  Download failed: {e}")
-
-    # 本地 npm build
-    if shutil.which("npm"):
-        print("🔨 Building UI locally...")
-        result = subprocess.run(
-            ["npm", "install", "--legacy-peer-deps"],
-            cwd=os.path.join(project_root, "ui"),
-            capture_output=True,
-            text=True
-        )
-        if result.returncode == 0:
-            result = subprocess.run(
-                ["npm", "run", "build"],
-                cwd=os.path.join(project_root, "ui"),
-                capture_output=True,
-                text=True
-            )
-            if result.returncode == 0 and os.path.exists(os.path.join(ui_dist, "index.html")):
-                print("✅ UI built locally")
-                return
-
-    print("⚠️  UI not available. Install Node.js and run: cd ui && npm install && npm run build")
 
 
 def cmd_upgrade(args: argparse.Namespace) -> int:
-    """升级 Mnemosync."""
+    """升级 Mnemosync.
+
+    委托给目标分支的**远程** install.sh (而非本地脚本), 理由:
+    - 本地 install.sh 可能过时 (早于版本守卫/镜像切换/切分支等改进)
+    - 远程脚本永远是目标分支最新版, 自动带兼容处理与修复
+    - 支持 --branch 覆盖, 否则自动检测当前安装的分支
+    """
     project_root = get_project_root()
-    branch = args.branch or os.getenv("MNEMOSYNC_BRANCH", "main")
+
+    # 确定目标分支: --branch > env > 检测当前安装分支
+    branch = args.branch or os.getenv("MNEMOSYNC_BRANCH")
+    if not branch:
+        try:
+            r = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=project_root, capture_output=True, text=True,
+            )
+            branch = (r.stdout or "").strip() or "dev"
+        except Exception:
+            branch = "dev"
 
     print(f"🔄 Upgrading Mnemosync (branch: {branch})...")
     print()
@@ -612,64 +571,23 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         print("❌ Not a git repository. Please reinstall using install.sh")
         return 1
 
-    # 拉取最新代码
-    print("📥 Pulling latest code...")
-    result = subprocess.run(
-        ["git", "fetch", "origin", branch],
-        cwd=project_root,
-        capture_output=True,
-        text=True
-    )
+    # 委托远程 install.sh (curl 该分支的最新脚本并执行)
+    script_url = f"https://raw.githubusercontent.com/HarryHello/mnemosync/{branch}/install.sh"
+    print(f"📥 拉取 {branch} 分支的远程安装脚本...")
+    print(f"   {script_url}")
+    print()
+    cmd = f"curl -fsSL {script_url} | bash"
+    result = subprocess.run(["bash", "-c", cmd], cwd=project_root)
     if result.returncode != 0:
-        print(f"❌ Failed to fetch: {result.stderr}")
+        print(f"❌ 升级失败 (install.sh 返回 {result.returncode})")
         return 1
-
-    result = subprocess.run(
-        ["git", "reset", "--hard", f"origin/{branch}"],
-        cwd=project_root,
-        capture_output=True,
-        text=True
-    )
-    if result.returncode != 0:
-        print(f"❌ Failed to reset: {result.stderr}")
-        return 1
-
-    print("✅ Code updated")
-
-    # 更新依赖
-    print("📦 Updating dependencies...")
-    result = subprocess.run(
-        ["uv", "sync"],
-        cwd=project_root,
-        capture_output=True,
-        text=True
-    )
-    if result.returncode != 0:
-        print(f"❌ Failed to update dependencies: {result.stderr}")
-        return 1
-
-    print("✅ Dependencies updated")
-
-    # 更新面板
-    _setup_ui(project_root)
-
-    # 重新注册命令
-    bin_dir = os.path.join(os.path.expanduser("~"), ".local", "bin")
-    os.makedirs(bin_dir, exist_ok=True)
-    venv_bin = os.path.join(project_root, ".venv", "bin", "mnemosync")
-    link_path = os.path.join(bin_dir, "mnemosync")
-
-    if os.path.exists(venv_bin):
-        if os.path.exists(link_path) or os.path.islink(link_path):
-            os.remove(link_path)
-        os.symlink(venv_bin, link_path)
-        print("✅ Command registered")
 
     print()
     print("✅ Upgrade complete!")
     print()
-    print("If service is running, restart it:")
-    print("  mnemosync stop && mnemosync serve")
+    print("服务如正在运行, 请重启:")
+    print("  mnemosync backend restart && mnemosync panel restart")
+    print("  (单进程模式: mnemosync restart)")
     print()
     return 0
 
@@ -735,8 +653,8 @@ Mnemosync CLI
   identity unbind <actor_id> <group_id>
 
 升级:
-  upgrade             拉取最新代码并更新依赖
-  upgrade --branch dev  指定分支（默认 main）
+  upgrade             委托远程 install.sh 升级 (默认检测当前分支)
+  upgrade --branch dev  指定分支 (默认: 当前安装分支)
 
 其他:
   help                显示此帮助信息
@@ -845,7 +763,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── upgrade ──
     upgrade_parser = subparsers.add_parser("upgrade", help="升级 Mnemosync")
-    upgrade_parser.add_argument("--branch", default=None, help="指定分支 (默认: main)")
+    upgrade_parser.add_argument("--branch", default=None, help="指定分支 (默认: 当前安装分支)")
     upgrade_parser.set_defaults(func=cmd_upgrade)
 
     # ── help ──
