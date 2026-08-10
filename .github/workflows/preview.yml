@@ -1,9 +1,10 @@
 name: Preview Build
 
 # 触发条件: 推送 beta 分支 (预发布测试)
-# 产物: GitHub pre-release tag=beta + ui-dist.tar.gz (预编译前端静态资源)
-# 用途: 服务器上 `MNEMOSYNC_BRANCH=beta MNEMOSYNC_RELEASE_TAG=beta bash install.sh`
+# 产物: GitHub pre-release tag=preview + ui-dist.tar.gz (预编译前端静态资源)
+# 用途: 服务器上 `curl .../beta/install.sh | sh`
 #      拉取 beta 分支代码 + 对应预编译 UI, 无需在服务器编译前端。
+# 注: tag 用 preview 而非 beta, 避免与 beta 分支同名导致 git push 歧义。
 
 on:
   push:
@@ -53,22 +54,22 @@ jobs:
           tar -czf ui-dist.tar.gz -C ui dist
           ls -lh ui-dist.tar.gz
 
-      - name: Delete old beta pre-release (if exists)
+      - name: Delete old preview pre-release (if exists)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 固定 tag=beta, 每次迭代覆盖更新
-          gh release delete beta --yes 2>/dev/null || true
-          git push origin --delete refs/tags/beta 2>/dev/null || true
+          # 固定 tag=preview, 每次迭代覆盖更新
+          gh release delete preview --yes 2>/dev/null || true
+          git push origin --delete refs/tags/preview 2>/dev/null || true
 
-      - name: Create beta pre-release
+      - name: Create preview pre-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create beta \
+          gh release create preview \
             --title "Mnemosync beta (preview)" \
             --prerelease \
-            --notes "预发布测试构建，自动更新。服务器: \`MNEMOSYNC_BRANCH=beta MNEMOSYNC_RELEASE_TAG=beta bash install.sh\`" \
+            --notes "预发布测试构建，自动更新。服务器: \`curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.sh | sh\`" \
             --target "${GITHUB_SHA}" \
             ui-dist.tar.gz

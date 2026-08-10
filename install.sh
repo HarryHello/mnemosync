@@ -11,7 +11,7 @@
 #   MNEMOSYNC_DIR       自定义安装目录 (默认 ~/.mnemosync)
 #   MNEMOSYNC_BIN_DIR   自定义命令目录 (默认 ~/.local/bin)
 #   MNEMOSYNC_BRANCH    自定义分支 (默认 beta; 此分支的 install.sh 默认装本分支)
-#   MNEMOSYNC_RELEASE_TAG  预编译 UI 的 release tag (默认 beta; 与本分支对应)
+#   MNEMOSYNC_RELEASE_TAG  预编译 UI 的 release tag (默认 preview; 与本分支对应)
 #
 # 预发布测试 (服务器无需编译前端, 直接 curl 本分支脚本即可):
 #   curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.sh | sh
@@ -30,7 +30,7 @@ API_URL="${GITHUB_PROXY}https://api.github.com/repos/HarryHello/mnemosync"
 INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-$HOME/.mnemosync}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
 BRANCH="${MNEMOSYNC_BRANCH:-beta}"
-RELEASE_TAG="${MNEMOSYNC_RELEASE_TAG:-beta}"
+RELEASE_TAG="${MNEMOSYNC_RELEASE_TAG:-preview}"
 
 # 颜色 (使用 printf 兼容 sh)
 RED='\033[0;31m'
