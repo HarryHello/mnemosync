@@ -127,7 +127,12 @@ _version_gt() {
 check_not_downgrade() {
     local current_ver target_ver
     current_ver=$(_version_of "$INSTALL_DIR/pyproject.toml")
-    target_ver=$(git show "origin/$BRANCH:pyproject.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+    if [ -n "$MNEMOSYNC_VERSION" ]; then
+        # 锁定版本: 目标版本 = 指定 tag 的 pyproject 版本
+        target_ver=$(git show "$MNEMOSYNC_VERSION:pyproject.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+    else
+        target_ver=$(git show "origin/$BRANCH:pyproject.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+    fi
     # 缺版本信息 (如全新安装或无法读取) 时跳过检查
     [ -z "$current_ver" ] && return 0
     [ -z "$target_ver" ] && return 0
@@ -160,11 +165,21 @@ setup_code() {
             git remote set-url origin "$REPO_URL"
         fi
         git fetch origin "$BRANCH"
+        if [ -n "$MNEMOSYNC_VERSION" ]; then
+            # 锁定版本: 拉取指定 tag
+            git fetch origin tag "$MNEMOSYNC_VERSION"
+        fi
         # 版本降级检测 (只能升不能降)
         check_not_downgrade
-        # 正确切换本地分支名 + 硬重置到目标分支
-        git checkout -B "$BRANCH" "origin/$BRANCH"
-        git reset --hard "origin/$BRANCH"
+        if [ -n "$MNEMOSYNC_VERSION" ]; then
+            # 检出指定版本 tag (pinned 本地分支)
+            git checkout -B "pin/$MNEMOSYNC_VERSION" "$MNEMOSYNC_VERSION"
+            git reset --hard "$MNEMOSYNC_VERSION"
+        else
+            # 正确切换本地分支名 + 硬重置到目标分支
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            git reset --hard "origin/$BRANCH"
+        fi
     else
         info "下载 Mnemosync..."
         git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
@@ -216,6 +231,11 @@ setup_ui() {
     if [ -f "ui/dist/index.html" ]; then
         info "更新管理面板..."
         rm -rf ui/dist
+    fi
+
+    # 锁定版本时, UI 用对应版本的 release tag
+    if [ -n "$MNEMOSYNC_VERSION" ]; then
+        RELEASE_TAG="$MNEMOSYNC_VERSION"
     fi
 
     # 尝试从 release 拉取 ui-dist.tar.gz (latest 或指定 RELEASE_TAG)

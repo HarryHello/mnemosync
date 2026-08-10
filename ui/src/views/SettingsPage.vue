@@ -2,8 +2,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, ElCol, ElRow } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { changePassword, checkUpdate, restartService, setToken, upgradeService } from '@/api/client'
-import type { UpdateCheckResult } from '@/api/client'
+import { changePassword, checkUpdate, listVersions, restartService, setToken, upgradeService } from '@/api/client'
+import type { ReleaseInfo, UpdateCheckResult } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 
@@ -16,6 +16,9 @@ const restarting = ref(false)
 const upgrading = ref(false)
 const updateChecking = ref(false)
 const updateResult = ref<UpdateCheckResult | null>(null)
+const versions = ref<ReleaseInfo[]>([])
+const currentVersion = ref('')
+const selectedVersion = ref('')
 
 const form = reactive({
   old_password: '',
@@ -69,6 +72,16 @@ async function onUpdateCheck() {
     if (!updateResult.value.update_available) {
       ElMessage.success('已是最新版本')
     }
+    // 加载版本列表供选择升级目标
+    try {
+      const v = await listVersions()
+      currentVersion.value = v.current_version
+      versions.value = v.releases
+      // 默认选中最新版
+      if (v.releases.length) selectedVersion.value = v.releases[0]?.version ?? ''
+    } catch {
+      // 版本列表加载失败不阻塞主流程
+    }
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   } finally {
@@ -77,10 +90,11 @@ async function onUpdateCheck() {
 }
 
 async function onUpgrade() {
-  if (!updateResult.value?.update_available) return
+  const target = selectedVersion.value || updateResult.value?.latest_version
+  if (!target) return
   try {
     await ElMessageBox.confirm(
-      `将升级到 ${updateResult.value.latest_version}，升级后需要重启服务。确认升级吗？`,
+      `将升级到 ${target}，升级后需要重启服务。确认升级吗？`,
       '升级',
       {
         confirmButtonText: '确认升级',
@@ -94,7 +108,7 @@ async function onUpgrade() {
 
   upgrading.value = true
   try {
-    const res = await upgradeService()
+    const res = await upgradeService(target)
     ElMessage.success(res.message || '升级已启动')
     ElMessage.info('请稍后刷新页面，然后重启服务')
   } catch (err) {
@@ -242,28 +256,41 @@ async function onRestart() {
           <div v-if="updateChecking" class="update-status">
             <el-skeleton :rows="1" animated />
           </div>
-          <div v-else-if="updateResult?.update_available" class="update-available">
-            <el-alert type="success" :closable="false" show-icon
-              :title="`新版本 ${updateResult.latest_version} 可用`"
-              :description="`当前版本: ${updateResult.current_version}`"
+          <div v-else class="update-version-select">
+            <el-alert type="info" :closable="false" show-icon
+              :title="`当前版本: ${currentVersion || (updateResult?.current_version || '未知')}`"
             />
-            <div class="update-actions">
+            <div class="update-select-row">
+              <el-select v-model="selectedVersion"
+                placeholder="选择要升级到的版本"
+                style="flex: 1"
+                filterable
+              >
+                <el-option v-for="r in versions" :key="r.version" :value="r.version"
+                  :label="`${r.version}${r.is_prerelease ? ' (beta)' : ''}`"
+                >
+                  <div class="version-option">
+                    <div class="version-option-title">
+                      {{ r.version }}{{ r.is_prerelease ? ' (beta)' : '' }}
+                    </div>
+                    <div v-if="r.description" class="version-option-desc">
+                      {{ r.description.trim().split('\n')[0] }}
+                    </div>
+                  </div>
+                </el-option>
+              </el-select>
               <el-button type="primary" :loading="upgrading" @click="onUpgrade">
-                升级到 {{ updateResult.latest_version }}
+                升级
               </el-button>
-              <el-button @click="onUpdateCheck" :loading="updateChecking">
+            </div>
+            <div class="update-actions">
+              <el-button @click="onUpdateCheck" :loading="updateChecking" size="small">
                 重新检查
               </el-button>
-              <el-button v-if="updateResult.url" tag="a" :href="updateResult.url" target="_blank" link>
+              <el-button v-if="updateResult?.url" tag="a" :href="updateResult.url" target="_blank" link size="small">
                 查看更新日志
               </el-button>
             </div>
-          </div>
-          <div v-else class="update-latest">
-            <el-alert type="info" :closable="false" show-icon title="已是最新版本" />
-            <el-button style="margin-top: 8px" @click="onUpdateCheck" :loading="updateChecking" size="medium">
-              重新检查
-            </el-button>
           </div>
         </el-card>
       </el-col>
@@ -308,5 +335,36 @@ async function onRestart() {
 .update-latest {
   display: flex;
   flex-direction: column;
+}
+
+.update-version-select {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+}
+
+.update-select-row {
+  display: flex;
+  gap: $space-2;
+  align-items: center;
+}
+
+.version-option {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.version-option-title {
+  font-weight: 500;
+}
+
+.version-option-desc {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
 }
 </style>

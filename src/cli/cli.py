@@ -548,6 +548,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     - 本地 install.sh 可能过时 (早于版本守卫/镜像切换/切分支等改进)
     - 远程脚本永远是目标分支最新版, 自动带兼容处理与修复
     - 支持 --branch 覆盖, 否则自动检测当前安装的分支
+    - 支持 --version 锁定升级到指定版本 tag
     """
     project_root = get_project_root()
 
@@ -563,7 +564,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         except Exception:
             branch = "dev"
 
-    print(f"🔄 Upgrading Mnemosync (branch: {branch})...")
+    version = getattr(args, "version", None)
+    if version:
+        print(f"🔄 Upgrading Mnemosync (branch: {branch}, version: {version})...")
+    else:
+        print(f"🔄 Upgrading Mnemosync (branch: {branch})...")
     print()
 
     # 检查是否是 git 仓库
@@ -579,6 +584,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     # 显式传入实际安装位置, 让 install.sh 在此目录升级 (而非默认 ~/.mnemosync)
     env = os.environ.copy()
     env["MNEMOSYNC_DIR"] = project_root
+    if version:
+        env["MNEMOSYNC_VERSION"] = version
     cmd = f"curl -fsSL {script_url} | bash"
     result = subprocess.run(["bash", "-c", cmd], cwd=project_root, env=env)
     if result.returncode != 0:
@@ -592,6 +599,44 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     print("  mnemosync backend restart && mnemosync panel restart")
     print("  (单进程模式: mnemosync restart)")
     print()
+    return 0
+
+
+def cmd_versions(args: argparse.Namespace) -> int:
+    """列出所有可用版本及发布描述."""
+    import asyncio
+
+    from src.infra.update_checker import list_releases
+
+    try:
+        from importlib.metadata import version as _v
+        current = _v("mnemosync")
+    except Exception:
+        current = "unknown"
+
+    print(f"当前版本: {current}")
+    print()
+
+    releases = asyncio.run(list_releases(limit=30))
+    if not releases:
+        print("❌ 无法获取版本列表 (网络或 GitHub API 问题)")
+        return 1
+
+    print("可用版本 (降序):")
+    # 只显示正式版 + 高于当前的版本为主, 但全部列出供参考
+    for r in releases:
+        tag = marks = ""
+        if r["version"] == current:
+            marks += "  ← 当前"
+        if r["is_prerelease"]:
+            tag = " [beta]"
+        print(f"  {r['version']}{tag}{marks}")
+        if r["description"]:
+            first_line = r["description"].strip().splitlines()[0] if r["description"].strip() else ""
+            if first_line:
+                print(f"      {first_line[:80]}")
+    print()
+    print("升级到指定版本: mnemosync upgrade --version vX.Y.Z")
     return 0
 
 
@@ -658,6 +703,8 @@ Mnemosync CLI
 升级:
   upgrade             委托远程 install.sh 升级 (默认检测当前分支)
   upgrade --branch dev  指定分支 (默认: 当前安装分支)
+  upgrade --version v0.4.0  升级到指定版本 (默认最新)
+  versions             列出可用版本及发布描述
 
 其他:
   help                显示此帮助信息
@@ -767,7 +814,12 @@ def main(argv: list[str] | None = None) -> int:
     # ── upgrade ──
     upgrade_parser = subparsers.add_parser("upgrade", help="升级 Mnemosync")
     upgrade_parser.add_argument("--branch", default=None, help="指定分支 (默认: 当前安装分支)")
+    upgrade_parser.add_argument("--version", default=None, help="升级到指定版本 tag (如 v0.4.0)")
     upgrade_parser.set_defaults(func=cmd_upgrade)
+
+    # ── versions ──
+    versions_parser = subparsers.add_parser("versions", help="列出可用版本及发布描述")
+    versions_parser.set_defaults(func=cmd_versions)
 
     # ── help ──
     help_parser = subparsers.add_parser("help", help="显示帮助")

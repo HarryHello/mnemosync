@@ -83,11 +83,28 @@ export async function checkUpdate(): Promise<UpdateCheckResult> {
   return apiGet<UpdateCheckResult>('/admin/check-update')
 }
 
+export interface ReleaseInfo {
+  version: string
+  description: string
+  published_at: string
+  is_prerelease: boolean
+  url: string
+}
+
+export interface VersionsResult {
+  current_version: string
+  releases: ReleaseInfo[]
+}
+
+export async function listVersions(): Promise<VersionsResult> {
+  return apiGet<VersionsResult>('/admin/versions')
+}
+
 export interface UpgradeResult {
   success: boolean
   message: string
 }
 
-export async function upgradeService(): Promise<UpgradeResult> {
-  return apiPost<UpgradeResult>('/admin/upgrade')
+export async function upgradeService(version?: string): Promise<UpgradeResult> {
+  return apiPost<UpgradeResult>('/admin/upgrade', version ? { version } : {})
 }

@@ -3,6 +3,18 @@
 本文件记录 Mnemosync 的主要版本变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [v0.4.1] - 2026-08
+
+### 功能
+- **逐版本升级**：支持升级到指定版本（`mnemosync upgrade --version vX.Y.Z`），不再总是到最新。
+- **版本列表**：新增 `mnemosync versions` 命令 + 面板设置页版本下拉，列出所有可用版本及发布描述。
+- **版本锁定**：install.sh 支持 `MNEMOSYNC_VERSION` 检出指定 tag，UI 用对应版本 release。
+- **发布描述**：release.yml 改为从 CHANGELOG.md 提取章节作为 GitHub Release 描述。
+
+### 架构
+- 后端新增 `GET /panel/admin/versions` 端点；`POST /panel/admin/upgrade` 支持 `version` 参数。
+- `update_checker` 新增 `list_releases()`。
+
 ## [v0.4.0] - 2026-08
 
 ### 功能
