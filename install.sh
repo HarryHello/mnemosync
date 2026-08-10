@@ -8,7 +8,8 @@
 #
 # 环境变量:
 #   GITHUB_PROXY        GitHub 代理前缀, 如 https://ghproxy.com/
-#   MNEMOSYNC_DIR       自定义安装目录 (默认 ~/.mnemosync)
+#   MNEMOSYNC_INSTALL_DIR  自定义安装目录 (默认 ~/.mnemosync)
+#   MNEMOSYNC_DIR          MNEMOSYNC_INSTALL_DIR 的别名 (面板/CLI 升级时自动传入实际安装位置)
 #   MNEMOSYNC_BIN_DIR   自定义命令目录 (默认 ~/.local/bin)
 #   MNEMOSYNC_BRANCH    自定义分支 (默认 main; 此分支的 install.sh 默认装本分支)
 #   MNEMOSYNC_RELEASE_TAG  预编译 UI 的 release tag (默认 latest)
@@ -26,7 +27,7 @@ set -e
 GITHUB_PROXY="${GITHUB_PROXY:-}"
 REPO_URL="${GITHUB_PROXY}https://github.com/HarryHello/mnemosync.git"
 API_URL="${GITHUB_PROXY}https://api.github.com/repos/HarryHello/mnemosync"
-INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-$HOME/.mnemosync}"
+INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-${MNEMOSYNC_DIR:-$HOME/.mnemosync}}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
 BRANCH="${MNEMOSYNC_BRANCH:-main}"
 RELEASE_TAG="${MNEMOSYNC_RELEASE_TAG:-latest}"
