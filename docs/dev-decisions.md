@@ -412,6 +412,84 @@ v0.3.0 实现了单人格多用户, 但一个实例只能有一个人格。用�
 
 ---
 
+## 多模态视觉 + 模态字段 (v0.4.0)
+
+### 背景
+
+用户发送图片时, 若目标模型不支持视觉, 图片会被静默丢弃。
+
+### 决策
+
+1. **模态字段**: `RoleBinding` / `ResolvedCandidate` 新增 `input_modalities` / `output_modalities` (默认 `["text"]`), 存于 `role_bindings` 表 (JSON, `add_column_if_missing` 幂等迁移)
+2. **双路径**:
+   - 模型支持图片 → 保留 image content parts 直接透传
+   - 模型不支持 → **Vision Description Agent** (ASSIST 角色) 把图片转述为文字, 注入当前 user 输入
+3. **判断依据**: 候选的 `input_modalities` 是否含 `"image"`, 流式与非流式路径一致
+
+---
+
+## 多格式 API 兼容 + 官方 SDK (v0.4.0)
+
+### 背景
+
+v0.4 前只用 raw httpx 手写 OpenAI Chat Completions 转发, 无法兼容 Anthropic / Responses API。
+
+### 决策
+
+1. **上游改用官方 SDK**: `openai` (Chat Completions + Responses) / `anthropic` (Messages), 依赖自动随 `uv sync` 安装; rerank 无 SDK 支持仍用 httpx
+2. **api_format 字段**: `LLMServiceProvider.api_format` (`openai` / `anthropic` / `responses`), `MultiForwarder._get_forwarder()` 按格式路由到对应转发器
+3. **embed/rerank 仅 openai 格式**: 其他格式候选显式抛 `UpstreamError` (embedding/rerank 上游是纯 OpenAI 兼容端点)
+4. **双向兼容**: 上游转发 (SDK 转发器) + 下游端点 (`/v1/messages` / `/v1/responses` 适配器, 内部统一转 OpenAI 格式处理)
+5. **流式兼容**: SDK 结构化流转回 OpenAI SSE 原始字节, 复用现有 `parse_sse_stream_full` 解析链
+
+---
+
+## 绑定流程 BindContext (v0.4.0)
+
+### 背景
+
+绑定指令返回硬编码 JSONResponse, 机械不自然, 且流式客户端 (Cherry Studio) 收非流式响应报错。
+
+### 决策
+
+1. **BindContext 数据对象**: 拦截绑定指令后**确定性**生成/验证验证码 (不依赖模型), 返回 `BindContext` (含结果 + 提示词)
+2. **走 LLM 自然回复**: 构建精简 state (跳过记忆/关系/代理推理), 注入绑定提示词, 模型用自己的语气回复, 兼容流式/非流式
+3. **自绑定拒绝**: 同账号绑定被拒绝
+4. **内部工具加 `mnemosync_` 前缀**: 避免与客户端工具重名 (`mnemosync_initiate_identity_binding` 等)
+
+---
+
+## 逐版本升级 (v0.4.1)
+
+### 背景
+
+之前只能升级到最新版, 无法像 AstrBot 一样选版本; 发布表缺更新描述。
+
+### 决策
+
+1. **版本列表**: `mnemosync versions` + `GET /panel/admin/versions` 从 GitHub releases 拉取 (含描述)
+2. **指定版本升级**: `mnemosync upgrade --version vX.Y.Z` → install.sh `MNEMOSYNC_VERSION` 检出指定 tag
+3. **版本守卫**: 只能升不能降 (低版本 < Beta版 < 正式版, semver 预发布规则), 降级拒绝
+4. **发布描述**: release.yml 从 CHANGELOG.md 提取对应版本章节作 release notes (不再 `--generate-notes`)
+5. **upgrade 委托远程 install.sh**: `mnemosync upgrade` 拉目标分支的**远程** install.sh 执行, 自动继承最新兼容处理; 自动检测当前安装分支
+
+---
+
+## beta 预发布流程 (v0.4.1)
+
+### 背景
+
+需要在新版本发布 main 前先在服务器预发布测试, 且服务器不编译前端。
+
+### 决策
+
+1. **分支拓扑**: `dev → beta (预发布) → main (正式)`, **禁止直接 dev → main**
+2. **分支专属 install.sh**: 每个分支的 install.sh 默认装本分支 (beta 默认 `BRANCH=beta` + `RELEASE_TAG=preview`); 合并前在 release 分支预处理 install.sh 默认值
+3. **preview.yml 工作流**: push 到 beta 自动构建 UI 发布为 pre-release (tag=preview, 每次覆盖); 服务器 `curl .../beta/install.sh | sh` 无需编译前端
+4. **pre-release tag 命名**: 用 `preview` 而非 `beta`, 避免与 beta 分支同名导致 git 歧义
+
+---
+
 ## 待补充
 
 后续遇到的新决策会追加到本文档.

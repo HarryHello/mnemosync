@@ -1,6 +1,6 @@
 # LLM 服务管理模块 | LLM Service Module
 
-> **模块版本**: v0.4.0
+> **模块版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-12
 > **最后更新**: 2026-07-26
@@ -297,3 +297,5 @@ src/core/models/
 | v0.2.3 | 2026-07-17 | 引入 `role_bindings` 表 + `ModelType.EMBEDDING/RERANK`; `[chat]/[embedding]/[rerank]` 段废弃; `RoleResolver` 组装 `ResolvedCandidate` |
 | v0.2.4 | 2026-07-17 | 嵌入角色单绑定约束; `context_length` / `embedding_dim` 元数据字段; Reindex + Prune 触发点 |
 | v0.2.8 | 2026-07-18 | `send_dimensions` 透传开关: 拆分向量库锁与上游 `dimensions` 参数, 默认不透传 (兼容 bge/bce/jina/mistral/gemini 等固定维模型) |
+| v0.3.x | 2026-07~08 | 模型候选工具能力声明 (`supports_tools` 等); `first_for_tools()` 跳过不支持工具的候选 |
+| v0.4.0 | 2026-08 | `LLMServiceProvider.api_format` (openai/anthropic/responses) 决定上游转发器; `RoleBinding` / `ResolvedCandidate` 新增 `input_modalities` / `output_modalities` (模态能力) |

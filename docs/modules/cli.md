@@ -1,6 +1,6 @@
 # 命令行环境 | CLI
 
-> **系统版本**: v0.3.4
+> **系统版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
 > **最后更新**: 2026-08-01
@@ -35,14 +35,15 @@ mnemosync <command> [options]
 | `ask [flags] "<question>"` | 命令行直连主对话 (调试用), 详见 [§5](#5-调试命令-ask) |
 | `prompt <subcmd> ...` | 管理 Agent 提示词覆盖 (list/show/set/reset/validate), 详见 [§6](#6-提示词覆盖管理-prompt) |
 | `identity <subcmd> ...` | 多用户身份管理: 策略/参与者/用户组/绑定, 详见 [§7](#7-身份管理-identity) |
-| `upgrade [--branch <name>]` | 从 Git 拉取新版本 |
+| `upgrade [--branch <name>] [--version <tag>]` | 委托远程 install.sh 升级 (可指定分支或版本), 详见 [deployment.md §8](../deployment.md#8-升级) |
+| `versions` | 列出所有可用版本及发布描述 (v0.4.1) |
 | `help` | 显示顶层帮助 |
 
 **参数细节**:
 
 - `serve --host` 默认 `0.0.0.0`, `--port` 默认 `16125`, `--log-level` 取 `debug/info/warning/error`
 - `serve --debug` 与 `ask --debug` 通过 `MNEMOSYNC_DEBUG=1` 环境变量控制 Forwarder 输出
-- `upgrade --branch` 默认 `main` (可通过 `MNEMOSYNC_BRANCH` 环境变量覆盖, 开发者常用 `dev`)
+- `upgrade` 默认升级到**当前安装分支**的最新版 (自动检测 git HEAD), 不写死 `main`; `--version vX.Y.Z` 升级到指定版本
 
 顶层命令**不**包含 API Key / 服务商管理; 那些命令在交互式 shell 内。
 

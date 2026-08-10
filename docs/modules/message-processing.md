@@ -1,6 +1,6 @@
 # 消息处理流程 | Message Processing Flow
 
-> **系统版本**: v0.3.4
+> **系统版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
 > **最后更新**: 2026-08-01
@@ -96,9 +96,12 @@ Client ──► POST /v1/chat/completions
    → 每个 ResolvedCandidate 携带 base_url / api_key / model / context_length / embedding_dim
 6. 消息序列化: request.messages → messages_dict
    ⚠️ 只取最后一条 user 消息作为 new_user_content, 客户端携带的历史全部忽略 (v0.2.6)
-7. 加载服务器人格 (settings.persona) — 服务器权威
-8. 客户端 system 消息走 prompt_cleaning Agent 剥离人格描述, 保留功能性指令
-9. 构建 initial_state:
+7. **多格式入口 (v0.4)**: `/v1/chat/completions` (OpenAI) / `/v1/messages` (Anthropic) / `/v1/responses` (Responses) — 后两者由 adapter 转成内部 OpenAI 格式再走同一管线, 响应再转回调用方格式
+8. **绑定指令拦截 (v0.4)**: 用户消息命中绑定指令 ("绑定") → `_handle_identity_binding` 返回 `BindContext` → 构建精简 state (跳过记忆/关系/代理推理) → 走 LLM 自然回复, 兼容流式/非流式
+9. **多模态图片 (v0.4)**: 目标模型 `input_modalities` 含 `image` → 保留 image content parts 直接透传; 否则 Vision Description Agent 转述为文字并入 user 输入
+10. 加载服务器人格 (settings.persona) — 服务器权威
+11. 客户端 system 消息走 prompt_cleaning Agent 剥离人格描述, 保留功能性指令
+12. 构建 initial_state:
    {
      new_user_content, source_user, actor_id,
      persona, persona_name, persona_id="default",

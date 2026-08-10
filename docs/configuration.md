@@ -1,6 +1,6 @@
 # 配置文档 | Configuration
 
-> **系统版本**: v0.3.4
+> **系统版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
 > **最后更新**: 2026-08-01
@@ -137,6 +137,8 @@ context            = "..."
 | `MNEMOSYNC_DEBUG=1` | 打开 Forwarder 的上游请求/响应日志 + http_logs.db 落库 |
 
 无 `.env` 支持——不要指望通过 `.env` 或 `MEMORY_DB_PATH` 之类的环境变量覆盖 config 段。
+
+> **安装/升级相关环境变量** (`MNEMOSYNC_BRANCH` / `MNEMOSYNC_VERSION` / `MNEMOSYNC_RELEASE_TAG` / `MNEMOSYNC_INSTALL_DIR` / `MNEMOSYNC_DIR`) 属 install.sh 范畴, 见 [deployment.md §8.1](deployment.md#81-一键升级-推荐)。
 
 ---
 
