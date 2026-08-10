@@ -576,8 +576,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     print(f"📥 拉取 {branch} 分支的远程安装脚本...")
     print(f"   {script_url}")
     print()
+    # 显式传入实际安装位置, 让 install.sh 在此目录升级 (而非默认 ~/.mnemosync)
+    env = os.environ.copy()
+    env["MNEMOSYNC_DIR"] = project_root
     cmd = f"curl -fsSL {script_url} | bash"
-    result = subprocess.run(["bash", "-c", cmd], cwd=project_root)
+    result = subprocess.run(["bash", "-c", cmd], cwd=project_root, env=env)
     if result.returncode != 0:
         print(f"❌ 升级失败 (install.sh 返回 {result.returncode})")
         return 1
