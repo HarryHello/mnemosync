@@ -269,9 +269,10 @@ defineExpose({ refresh })
           <el-select v-model="createForm.api_format" style="width: 100%">
             <el-option label="OpenAI 兼容" value="openai" />
             <el-option label="Anthropic" value="anthropic" />
+            <el-option label="OpenAI Responses API" value="responses" />
           </el-select>
           <div class="form-tip">
-            OpenAI 兼容适用于大多数服务商 (DashScope, OpenRouter 等); Anthropic 用于原生 Claude API。
+            OpenAI 兼容适用于大多数服务商 (DashScope, OpenRouter 等); Anthropic 用于原生 Claude API; Responses API 用于 OpenAI 新版接口。
           </div>
         </el-form-item>
       </el-form>
@@ -305,6 +306,7 @@ defineExpose({ refresh })
           <el-select v-model="editForm.api_format" style="width: 100%">
             <el-option label="OpenAI 兼容" value="openai" />
             <el-option label="Anthropic" value="anthropic" />
+            <el-option label="OpenAI Responses API" value="responses" />
           </el-select>
         </el-form-item>
       </el-form>
