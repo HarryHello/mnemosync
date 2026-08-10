@@ -10,11 +10,11 @@
 #   GITHUB_PROXY        GitHub 代理前缀, 如 https://ghproxy.com/
 #   MNEMOSYNC_DIR       自定义安装目录 (默认 ~/.mnemosync)
 #   MNEMOSYNC_BIN_DIR   自定义命令目录 (默认 ~/.local/bin)
-#   MNEMOSYNC_BRANCH    自定义分支 (默认 dev; 预发布用 beta)
-#   MNEMOSYNC_RELEASE_TAG  预编译 UI 的 release tag (默认 latest; 预发布用 beta)
+#   MNEMOSYNC_BRANCH    自定义分支 (默认 beta; 此分支的 install.sh 默认装本分支)
+#   MNEMOSYNC_RELEASE_TAG  预编译 UI 的 release tag (默认 beta; 与本分支对应)
 #
-# 预发布测试示例 (服务器无需编译前端):
-#   MNEMOSYNC_BRANCH=beta MNEMOSYNC_RELEASE_TAG=beta bash install.sh
+# 预发布测试 (服务器无需编译前端, 直接 curl 本分支脚本即可):
+#   curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.sh | sh
 #
 # 使用代理安装示例:
 #   GITHUB_PROXY=https://ghproxy.com/ curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/HarryHello/mnemosync/dev/install.sh | sh
@@ -29,8 +29,8 @@ REPO_URL="${GITHUB_PROXY}https://github.com/HarryHello/mnemosync.git"
 API_URL="${GITHUB_PROXY}https://api.github.com/repos/HarryHello/mnemosync"
 INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-$HOME/.mnemosync}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
-BRANCH="${MNEMOSYNC_BRANCH:-dev}"
-RELEASE_TAG="${MNEMOSYNC_RELEASE_TAG:-latest}"
+BRANCH="${MNEMOSYNC_BRANCH:-beta}"
+RELEASE_TAG="${MNEMOSYNC_RELEASE_TAG:-beta}"
 
 # 颜色 (使用 printf 兼容 sh)
 RED='\033[0;31m'
