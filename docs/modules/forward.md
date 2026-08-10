@@ -192,6 +192,7 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 - **initial_state 注入 (v0.3.0)**: `create_chat_completion` 构建 initial_state 时注入 `actor_id` / `space_id` / `channel_type` / `persona_id` / `external_event_id` / `api_key_id`, 供下游节点和短期记忆装填使用。
 - **source_frontend 派生**: 从 `api_key.note` 服务器派生 (`_resolve_source_frontend`), 不依赖客户端
 - **模型白名单**: `/v1/chat/completions` 只接受 `model="mnemosync-any"` 或空, 其他直接 400
+- **下游多格式 (v0.4)**: 除 `/v1/chat/completions` (OpenAI) 外, Mnemosync 还接受 `/v1/messages` (Anthropic) 与 `/v1/responses` (Responses API)。两者由 [anthropic_adapter.py](../../src/api/routes/forward/anthropic_adapter.py) / [responses_adapter.py](../../src/api/routes/forward/responses_adapter.py) 转成内部 OpenAI 格式后走同一管线, 响应再转回调用方格式 (含 SSE 事件转换)
 - **短期记忆装填 (v0.2.6)**: 主 Forwarder 调用前, forward.py 用 `main_candidate.context_length` 从 `conversation_turns` 双窗裁剪历史, 传入 `space_id` 做空间分区; 主对话结束后同步写 user + assistant 两条 turn, 传入 `actor_id` / `space_id` / `external_event_id`
 - **受众过滤 (v0.3.0)**: 流式与非流式路径均构建 `RetrievalContext` (含 `effective_user_id` / `actor_id` / `space_id` / `channel_type` / `relationship`), 传给 `MemoryRetriever.search` 和 `AudienceFilter.filter` 做 ChromaDB `$or` 粗筛 + `is_visible` 精筛
 - **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的决策函数控制。见 [agents.md](agents.md) §4
