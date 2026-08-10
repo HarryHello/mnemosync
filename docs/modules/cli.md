@@ -334,3 +334,5 @@ mnemosync identity unbind <actor_id> <group_id>  # 解绑回到独立身份
 | v0.2.7 | 2026-07-18 | 新增 `persona reset [--dry-run] [--yes]`: 走 `POST /panel/admin/persona/reset`, 交互式二次确认, 与 `memory reindex` 互斥 |
 | v0.2.8 | 2026-07-18 | `model add` 新增 `--send-dim`: 拆分向量库维度锁与上游 `dimensions` 参数, 默认不透传 (兼容 bge/bce/jina 等固定维模型) |
 | v0.3.0 | 2026-07-26 | 新增 `identity` 命令组 (strategy / actor / group / bind / unbind), 直连 `data/identity.db`; `ask --user` 改为必填 (不再有 `cli` 默认值) |
+| v0.3.5 | 2026-08 | 新增 `restart` / `backend-stop`; 前后端分离 (panel/backend); daemon 显示端口 |
+| v0.4.1 | 2026-08 | 新增 `versions` 命令; `upgrade --version` 升级到指定版本; `upgrade` 委托远程 install.sh |
