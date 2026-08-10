@@ -89,6 +89,57 @@ install_uv() {
 }
 
 # ============================================================================
+# 版本工具
+# ============================================================================
+
+# 从 pyproject.toml 提取版本号
+_version_of() {
+    sed -n 's/^version = "\(.*\)"/\1/p' "$1" 2>/dev/null | head -1
+}
+
+# semver 比较 (低版本 < Beta版 < 正式版): $1 > $2 ? 返回 0 : 返回 1
+# 规则: 数字部分先比, 相同则正式版(无 pre) > Beta版(有 pre)
+_version_gt() {
+    perl -e '
+        sub parts {
+            my ($v) = @_; $v =~ s/^v//;
+            my ($num, $pre) = $v =~ /^(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.\-]+))?$/;
+            $num //= "0";
+            my @n = split /\./, $num; push @n, 0 while @n < 3;
+            return (\@n, $pre // "");
+        }
+        sub cmp_ver {
+            my ($a,$b)=@_;
+            my ($na,$pa)=parts($a); my ($nb,$pb)=parts($b);
+            for my $i (0..2){
+                return 1 if $na->[$i] > $nb->[$i];
+                return -1 if $na->[$i] < $nb->[$i];
+            }
+            return 1 if $pa eq "" && $pb ne "";
+            return -1 if $pa ne "" && $pb eq "";
+            return $pa cmp $pb;
+        }
+        exit 0 if cmp_ver($ARGV[0], $ARGV[1]) > 0;
+        exit 1;
+    ' "$1" "$2"
+}
+
+# 版本降级检测: 只能升不能降 (低版本 < Beta版 < 正式版)
+check_not_downgrade() {
+    local current_ver target_ver
+    current_ver=$(_version_of "$INSTALL_DIR/pyproject.toml")
+    target_ver=$(git show "origin/$BRANCH:pyproject.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+    # 缺版本信息 (如全新安装或无法读取) 时跳过检查
+    [ -z "$current_ver" ] && return 0
+    [ -z "$target_ver" ] && return 0
+    [ "$current_ver" = "$target_ver" ] && return 0  # 同版本, 允许重装
+    if _version_gt "$current_ver" "$target_ver"; then
+        error "版本降级被拒绝: 当前 $current_ver → 目标 $target_ver。只能升级 (低版本 < Beta版 < 正式版)。"
+    fi
+    info "版本检查通过: $current_ver → $target_ver"
+}
+
+# ============================================================================
 # 克隆/更新代码
 # ============================================================================
 setup_code() {
@@ -110,6 +161,10 @@ setup_code() {
             git remote set-url origin "$REPO_URL"
         fi
         git fetch origin "$BRANCH"
+        # 版本降级检测 (只能升不能降)
+        check_not_downgrade
+        # 正确切换本地分支名 + 硬重置到目标分支
+        git checkout -B "$BRANCH" "origin/$BRANCH"
         git reset --hard "origin/$BRANCH"
     else
         info "下载 Mnemosync..."
