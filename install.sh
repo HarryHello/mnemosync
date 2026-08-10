@@ -1,6 +1,6 @@
 #!/bin/bash
 # Mnemosync 安装脚本
-# 用法: curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/dev/install.sh | sh
+# 用法: curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
 #
 # 需要: git
 # 可选: uv (脚本会自动安装), node + npm (若需要本地 build UI 而非从 Release 下载)
@@ -10,10 +10,13 @@
 #   GITHUB_PROXY        GitHub 代理前缀, 如 https://ghproxy.com/
 #   MNEMOSYNC_DIR       自定义安装目录 (默认 ~/.mnemosync)
 #   MNEMOSYNC_BIN_DIR   自定义命令目录 (默认 ~/.local/bin)
-#   MNEMOSYNC_BRANCH    自定义分支 (默认 main)
+#   MNEMOSYNC_BRANCH    自定义分支 (默认 main; 此分支的 install.sh 默认装本分支)
+#   MNEMOSYNC_RELEASE_TAG  预编译 UI 的 release tag (默认 latest)
+#
+# 版本检测: 只能升不能降 (低版本 < Beta版 < 正式版), 降级会被拒绝。
 #
 # 使用代理安装示例:
-#   GITHUB_PROXY=https://ghproxy.com/ curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/HarryHello/mnemosync/dev/install.sh | sh
+#   GITHUB_PROXY=https://ghproxy.com/ curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
 
 set -e
 
@@ -25,7 +28,8 @@ REPO_URL="${GITHUB_PROXY}https://github.com/HarryHello/mnemosync.git"
 API_URL="${GITHUB_PROXY}https://api.github.com/repos/HarryHello/mnemosync"
 INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-$HOME/.mnemosync}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
-BRANCH="${MNEMOSYNC_BRANCH:-dev}"
+BRANCH="${MNEMOSYNC_BRANCH:-main}"
+RELEASE_TAG="${MNEMOSYNC_RELEASE_TAG:-latest}"
 
 # 颜色 (使用 printf 兼容 sh)
 RED='\033[0;31m'
@@ -86,6 +90,59 @@ install_uv() {
 # ============================================================================
 # 克隆/更新代码
 # ============================================================================
+# 版本工具
+# ============================================================================
+
+# 从 pyproject.toml 提取版本号
+_version_of() {
+    sed -n 's/^version = "\(.*\)"/\1/p' "$1" 2>/dev/null | head -1
+}
+
+# semver 比较 (低版本 < Beta版 < 正式版): $1 > $2 ? 返回 0 : 返回 1
+# 规则: 数字部分先比, 相同则正式版(无 pre) > Beta版(有 pre)
+_version_gt() {
+    perl -e '
+        sub parts {
+            my ($v) = @_; $v =~ s/^v//;
+            my ($num, $pre) = $v =~ /^(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.\-]+))?$/;
+            $num //= "0";
+            my @n = split /\./, $num; push @n, 0 while @n < 3;
+            return (\@n, $pre // "");
+        }
+        sub cmp_ver {
+            my ($a,$b)=@_;
+            my ($na,$pa)=parts($a); my ($nb,$pb)=parts($b);
+            for my $i (0..2){
+                return 1 if $na->[$i] > $nb->[$i];
+                return -1 if $na->[$i] < $nb->[$i];
+            }
+            return 1 if $pa eq "" && $pb ne "";
+            return -1 if $pa ne "" && $pb eq "";
+            return $pa cmp $pb;
+        }
+        exit 0 if cmp_ver($ARGV[0], $ARGV[1]) > 0;
+        exit 1;
+    ' "$1" "$2"
+}
+
+# 版本降级检测: 只能升不能降 (低版本 < Beta版 < 正式版)
+check_not_downgrade() {
+    local current_ver target_ver
+    current_ver=$(_version_of "$INSTALL_DIR/pyproject.toml")
+    target_ver=$(git show "origin/$BRANCH:pyproject.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+    # 缺版本信息 (如全新安装或无法读取) 时跳过检查
+    [ -z "$current_ver" ] && return 0
+    [ -z "$target_ver" ] && return 0
+    [ "$current_ver" = "$target_ver" ] && return 0  # 同版本, 允许重装
+    if _version_gt "$current_ver" "$target_ver"; then
+        error "版本降级被拒绝: 当前 $current_ver → 目标 $target_ver。只能升级 (低版本 < Beta版 < 正式版)。"
+    fi
+    info "版本检查通过: $current_ver → $target_ver"
+}
+
+# ============================================================================
+# 克隆/更新代码
+# ============================================================================
 setup_code() {
     if [ -d "$INSTALL_DIR" ]; then
         info "更新 Mnemosync..."
@@ -105,6 +162,10 @@ setup_code() {
             git remote set-url origin "$REPO_URL"
         fi
         git fetch origin "$BRANCH"
+        # 版本降级检测 (只能升不能降)
+        check_not_downgrade
+        # 正确切换本地分支名 + 硬重置到目标分支
+        git checkout -B "$BRANCH" "origin/$BRANCH"
         git reset --hard "origin/$BRANCH"
     else
         info "下载 Mnemosync..."
@@ -138,10 +199,15 @@ setup_ui() {
         rm -rf ui/dist
     fi
 
-    # 尝试从 latest release 拉取 ui-dist.tar.gz
+    # 尝试从 release 拉取 ui-dist.tar.gz (latest 或指定 RELEASE_TAG)
     if command -v curl > /dev/null 2>&1; then
-        info "尝试从 GitHub Release 下载预编译面板..."
-        DIST_URL=$(curl -fsSL "$API_URL/releases/latest" 2>/dev/null \
+        if [ "$RELEASE_TAG" = "latest" ]; then
+            RELEASE_URL="$API_URL/releases/latest"
+        else
+            RELEASE_URL="$API_URL/releases/tags/$RELEASE_TAG"
+        fi
+        info "尝试从 GitHub Release ($RELEASE_TAG) 下载预编译面板..."
+        DIST_URL=$(curl -fsSL "$RELEASE_URL" 2>/dev/null \
             | grep -oE '"browser_download_url":[[:space:]]*"[^"]*ui-dist\.tar\.gz"' \
             | head -1 \
             | cut -d'"' -f4)
