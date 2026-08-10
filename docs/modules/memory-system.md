@@ -1,6 +1,6 @@
 # 记忆系统设计 | Memory System Design
 
-> **文档版本**: v0.3.4
+> **文档版本**: v0.4.1
 > **创建时间**: 2026-03-29
 > **最后更新**: 2026-08-01
 > **状态**: 与代码同步
@@ -733,6 +733,7 @@ CREATE INDEX idx_audit_user ON relationship_audit_log(persona_id, user_id, id DE
 | v0.2.9 | 2026-07-19 | 关系基线抽入 TOML `[persona.relation]` (`persona_addressing` / `user_addressing` / `context`), memory / relationship 两个 Agent prompt 通过占位符消费 |
 | v0.2.10 | 2026-07-19 | **关系称呼动态演化**: `relationships` 表加 3 个 nullable 列 (同名字段); 新增 `relationship_audit_log` 表 (字段级 diff, source=agent/manual); 关系分析 Agent 获得 `update_addressing` tool (自证 `reason` ≥ 10 字, `persona_id`/`user_id` 由 factory 闭包绑定不可越权); `nodes.py._resolve_addressing` 优先读表, NULL 回退 TOML 基线; `PUT /panel/admin/relationship` + `GET /panel/admin/relationship/audit` 提供人工 override 与历史回溯 |
 | v0.3.0 | 2026-07-26 | **多用户受众化**: `MemoryEntry.space_id` 字段; `source_user` / `relationships.user_id` 语义改为 effective_user_id (不再有 "default" 兜底); 检索两级受众过滤 (§4.4: `$or` 粗筛 + `is_visible` 精筛); `list_permanent` 放宽并过滤; 短期流水按 space_id 分区 (`committed_sequence` / `late_arrival` / `list_for_space`); 幂等缓存保护记忆不被重复写入 (详见 [identity.md](identity.md)) |
+| v0.4.0 | 2026-08 | 多模态: 图片消息 content parts 在 `dispatch.py` 规范化时保留, 模型不支持视觉时由 Vision Agent 转述为文字再入短期历史 (记忆内容本身无变更) |
 
 ---
 
