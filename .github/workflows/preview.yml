@@ -1,0 +1,74 @@
+name: Preview Build
+
+# 触发条件: 推送 beta 分支 (预发布测试)
+# 产物: GitHub pre-release tag=beta + ui-dist.tar.gz (预编译前端静态资源)
+# 用途: 服务器上 `MNEMOSYNC_BRANCH=beta MNEMOSYNC_RELEASE_TAG=beta bash install.sh`
+#      拉取 beta 分支代码 + 对应预编译 UI, 无需在服务器编译前端。
+
+on:
+  push:
+    branches:
+      - 'beta'
+
+permissions:
+  contents: write   # 创建 pre-release 需要
+
+jobs:
+  build-ui:
+    name: Build UI and publish pre-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout beta
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
+
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          test -f ui/dist/index.html || (echo "❌ ui/dist/index.html not found"; exit 1)
+          test -d ui/dist/assets       || (echo "❌ ui/dist/assets not found"; exit 1)
+          echo "✅ UI build ok, size:"
+          du -sh ui/dist
+
+      - name: Package ui-dist tarball
+        run: |
+          tar -czf ui-dist.tar.gz -C ui dist
+          ls -lh ui-dist.tar.gz
+
+      - name: Delete old beta pre-release (if exists)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 固定 tag=beta, 每次迭代覆盖更新
+          gh release delete beta --yes 2>/dev/null || true
+          git push origin --delete refs/tags/beta 2>/dev/null || true
+
+      - name: Create beta pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create beta \
+            --title "Mnemosync beta (preview)" \
+            --prerelease \
+            --notes "预发布测试构建，自动更新。服务器: \`MNEMOSYNC_BRANCH=beta MNEMOSYNC_RELEASE_TAG=beta bash install.sh\`" \
+            --target "${GITHUB_SHA}" \
+            ui-dist.tar.gz

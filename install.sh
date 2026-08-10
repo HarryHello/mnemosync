@@ -10,7 +10,11 @@
 #   GITHUB_PROXY        GitHub 代理前缀, 如 https://ghproxy.com/
 #   MNEMOSYNC_DIR       自定义安装目录 (默认 ~/.mnemosync)
 #   MNEMOSYNC_BIN_DIR   自定义命令目录 (默认 ~/.local/bin)
-#   MNEMOSYNC_BRANCH    自定义分支 (默认 main)
+#   MNEMOSYNC_BRANCH    自定义分支 (默认 dev; 预发布用 beta)
+#   MNEMOSYNC_RELEASE_TAG  预编译 UI 的 release tag (默认 latest; 预发布用 beta)
+#
+# 预发布测试示例 (服务器无需编译前端):
+#   MNEMOSYNC_BRANCH=beta MNEMOSYNC_RELEASE_TAG=beta bash install.sh
 #
 # 使用代理安装示例:
 #   GITHUB_PROXY=https://ghproxy.com/ curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/HarryHello/mnemosync/dev/install.sh | sh
@@ -26,6 +30,7 @@ API_URL="${GITHUB_PROXY}https://api.github.com/repos/HarryHello/mnemosync"
 INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-$HOME/.mnemosync}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
 BRANCH="${MNEMOSYNC_BRANCH:-dev}"
+RELEASE_TAG="${MNEMOSYNC_RELEASE_TAG:-latest}"
 
 # 颜色 (使用 printf 兼容 sh)
 RED='\033[0;31m'
@@ -159,10 +164,15 @@ setup_ui() {
         rm -rf ui/dist
     fi
 
-    # 尝试从 latest release 拉取 ui-dist.tar.gz
+    # 尝试从 release 拉取 ui-dist.tar.gz (latest 或指定 RELEASE_TAG)
     if command -v curl > /dev/null 2>&1; then
-        info "尝试从 GitHub Release 下载预编译面板..."
-        DIST_URL=$(curl -fsSL "$API_URL/releases/latest" 2>/dev/null \
+        if [ "$RELEASE_TAG" = "latest" ]; then
+            RELEASE_URL="$API_URL/releases/latest"
+        else
+            RELEASE_URL="$API_URL/releases/tags/$RELEASE_TAG"
+        fi
+        info "尝试从 GitHub Release ($RELEASE_TAG) 下载预编译面板..."
+        DIST_URL=$(curl -fsSL "$RELEASE_URL" 2>/dev/null \
             | grep -oE '"browser_download_url":[[:space:]]*"[^"]*ui-dist\.tar\.gz"' \
             | head -1 \
             | cut -d'"' -f4)
