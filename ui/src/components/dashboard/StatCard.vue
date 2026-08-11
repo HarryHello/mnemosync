@@ -45,19 +45,19 @@ function go() {
 </template>
 
 <style lang="scss" scoped>
-
 .stat {
   display: flex;
-  align-items: center;
   gap: $space-3;
+  align-items: center;
 }
 
 .stat-icon {
   width: 44px;
   height: 44px;
-  border-radius: $radius-md;
-  @include flex-center;
   border: 1px solid transparent;
+  border-radius: $radius-md;
+
+  @include flex-center;
 
   &.prompt {
     color: white;
@@ -80,19 +80,21 @@ function go() {
   }
 }
 
-.stat-body { min-width: 0; }
+.stat-body {
+  min-width: 0;
+}
 
 .stat-label {
   font-size: 12px;
-  letter-spacing: 0.02em;
   color: var(--el-text-color-secondary);
+  letter-spacing: 0.02em;
 }
 
 .stat-value {
+  margin-top: 4px;
   font-size: 24px;
   font-weight: 700;
   color: var(--el-text-color-primary);
-  margin-top: 4px;
   letter-spacing: -0.03em;
 }
 
@@ -103,9 +105,9 @@ function go() {
 }
 
 .stat-footer {
-  margin-top: $space-3;
   padding-top: $space-3;
-  border-top: 1px solid var(--el-border-color-lighter);
+  margin-top: $space-3;
   text-align: right;
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 </style>

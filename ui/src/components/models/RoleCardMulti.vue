@@ -117,24 +117,24 @@ function formatContext(n: number | null): string {
 .cand-row {
   display: grid;
   grid-template-columns: 20px 1fr auto;
-  align-items: center;
   gap: $space-3;
+  align-items: center;
   padding: $space-2 $space-3;
+  background: var(--el-fill-color-lighter);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: $radius-sm;
-  background: var(--el-fill-color-lighter);
 }
 
 .drag-handle {
-  cursor: grab;
-  color: var(--el-text-color-placeholder);
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--el-text-color-placeholder);
+  cursor: grab;
 
   svg {
-    fill: currentColor;
     display: block;
+    fill: currentcolor;
   }
 
   &:active {
@@ -147,11 +147,11 @@ function formatContext(n: number | null): string {
 }
 
 .cand-prio {
+  margin-right: $space-4;
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 16px;
   font-weight: 600;
   color: var(--el-text-color-secondary);
-  margin-right: $space-4;
 
   &.top {
     color: var(--el-color-primary);
@@ -163,37 +163,37 @@ function formatContext(n: number | null): string {
 }
 
 .cand-model {
-  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 13px;
   white-space: nowrap;
 }
 
 .cand-svc {
-  font-size: 12px;
   margin-top: 2px;
+  font-size: 12px;
 }
 
 .cand-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: $space-1;
   margin-top: $space-1;
-  flex-wrap: wrap;
 }
 
 .meta-chip {
+  padding: 1px 6px;
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 11px;
-  padding: 1px 6px;
-  border-radius: $radius-sm;
-  background: var(--el-fill-color);
   color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
+  border-radius: $radius-sm;
 }
 
 .cand-actions {
   display: flex;
-  align-items: center;
   gap: $space-1;
+  align-items: center;
 }
 
 .muted {
@@ -201,8 +201,8 @@ function formatContext(n: number | null): string {
 }
 
 :deep(.sortable-ghost) {
-  opacity: 0.4;
   background: var(--el-color-primary-light-9);
+  opacity: 0.4;
 }
 
 :deep(.sortable-drag) {

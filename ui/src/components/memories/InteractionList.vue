@@ -143,14 +143,16 @@ watch(
 .interaction-card {
   .card-header {
     display: flex;
-    align-items: center;
     gap: $space-3;
+    align-items: center;
+
     .header-left {
       display: flex;
-      align-items: center;
-      gap: $space-2;
       flex: 1;
+      gap: $space-2;
+      align-items: center;
     }
+
     .hint {
       font-size: 12px;
       color: var(--el-text-color-secondary);
@@ -165,26 +167,40 @@ watch(
 }
 
 .interaction-item {
+  overflow: hidden;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: $radius-sm;
-  overflow: hidden;
 }
 
 .item-head {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   padding: $space-2 $space-3;
-  cursor: pointer;
-  font-size: 12px;
   font-family: 'JetBrains Mono', Menlo, monospace;
+  font-size: 12px;
+  cursor: pointer;
 
-  &:hover { background: var(--el-fill-color); }
+  &:hover {
+    background: var(--el-fill-color);
+  }
 
-  .caret { color: var(--el-text-color-secondary); }
-  .iid { color: var(--el-text-color-primary); }
-  .meta { color: var(--el-text-color-secondary); }
-  .ts { margin-left: auto; color: var(--el-text-color-secondary); }
+  .caret {
+    color: var(--el-text-color-secondary);
+  }
+
+  .iid {
+    color: var(--el-text-color-primary);
+  }
+
+  .meta {
+    color: var(--el-text-color-secondary);
+  }
+
+  .ts {
+    margin-left: auto;
+    color: var(--el-text-color-secondary);
+  }
 }
 
 .item-detail {
@@ -195,30 +211,44 @@ watch(
 
 .turn-row {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   padding: 4px 0;
-  font-size: 12px;
   font-family: 'JetBrains Mono', Menlo, monospace;
+  font-size: 12px;
   border-bottom: 1px solid var(--el-border-color-extra-light);
 
-  &:last-child { border-bottom: 0; }
+  &:last-child {
+    border-bottom: 0;
+  }
 
-  .turn-role { color: var(--el-text-color-secondary); min-width: 40px; }
-  .turn-tool { color: var(--el-color-warning); }
+  .turn-role {
+    min-width: 40px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .turn-tool {
+    color: var(--el-color-warning);
+  }
+
   .turn-content {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
     color: var(--el-text-color-primary);
+    white-space: nowrap;
   }
-  .turn-ts { color: var(--el-text-color-secondary); font-size: 11px; }
+
+  .turn-ts {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+  }
 }
 
-.loading, .empty {
-  color: var(--el-text-color-secondary);
+.loading,
+.empty {
   padding: $space-3;
+  color: var(--el-text-color-secondary);
   text-align: center;
 }
 </style>

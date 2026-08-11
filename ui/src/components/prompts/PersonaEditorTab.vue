@@ -602,23 +602,22 @@ watch(
 <style lang="scss" scoped>
 .tab-head {
   display: flex;
+  gap: $space-4;
   align-items: flex-start;
   justify-content: space-between;
-  gap: $space-4;
   margin-bottom: $space-4;
-
 }
 
 .tab-title {
+  margin: 0 0 $space-1;
   font-size: 18px;
   font-weight: 600;
-  margin: 0 0 $space-1;
 }
 
 .tab-subtitle {
+  margin: 0;
   font-size: 13px;
   color: var(--el-text-color-secondary);
-  margin: 0;
 }
 
 .head-actions {
@@ -629,10 +628,10 @@ watch(
 
 .profile-selector {
   display: flex;
-  align-items: center;
   gap: $space-3;
-  margin-bottom: $space-4;
+  align-items: center;
   padding-bottom: $space-3;
+  margin-bottom: $space-4;
   border-bottom: 1px solid var(--el-border-color-lighter);
 
   .profile-label {
@@ -660,30 +659,30 @@ watch(
 
 .space-override-item {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   padding: $space-2;
+  font-size: 13px;
   background: var(--el-fill-color-lighter);
   border-radius: $radius-sm;
-  font-size: 13px;
 
   code {
+    min-width: 120px;
     font-family: 'JetBrains Mono', Menlo, monospace;
     color: var(--el-color-primary);
-    min-width: 120px;
   }
 
   .override-summary {
     flex: 1;
-    color: var(--el-text-color-secondary);
     font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 }
 
 .no-overrides {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
   padding: $space-2;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 
 .version-item {
@@ -695,31 +694,31 @@ watch(
 
   .version-head {
     display: flex;
-    align-items: center;
     gap: $space-2;
+    align-items: center;
     font-size: 13px;
   }
 
   .version-date {
-    color: var(--el-text-color-secondary);
     font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 
   .version-author {
-    color: var(--el-text-color-secondary);
     font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 
   .version-changelog {
-    color: var(--el-text-color-secondary);
-    font-size: 12px;
     margin-left: $space-4;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 }
 
 .empty {
-  color: var(--el-text-color-secondary);
   padding: $space-4;
+  color: var(--el-text-color-secondary);
   text-align: center;
 }
 
@@ -734,15 +733,15 @@ watch(
 
   .preview-text {
     margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
     font-size: 13px;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
 
   .import-hint {
-    color: var(--el-text-color-secondary);
-    font-size: 12px;
     margin: $space-3 0 0;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 }
 </style>

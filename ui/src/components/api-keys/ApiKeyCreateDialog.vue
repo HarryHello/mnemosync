@@ -91,7 +91,7 @@ async function submit() {
 .strategy-hint {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 </style>

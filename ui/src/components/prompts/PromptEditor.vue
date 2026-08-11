@@ -307,25 +307,25 @@ onBeforeUnmount(() => {
 
 .page-head {
   display: flex;
+  flex-wrap: wrap;
+  gap: $space-4;
   align-items: flex-start;
   justify-content: space-between;
-  gap: $space-4;
   margin-top: $space-6;
   margin-bottom: $space-4;
-  flex-wrap: wrap;
 }
 
 .head-left {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: $space-1;
+  align-items: flex-start;
   min-width: 0;
 }
 
 .back-btn {
-  padding: 0;
   height: auto;
+  padding: 0;
   line-height: 1;
 }
 
@@ -348,11 +348,11 @@ onBeforeUnmount(() => {
 
 .placeholders {
   display: flex;
-  align-items: center;
-  gap: $space-2;
   flex-wrap: wrap;
-  margin-bottom: $space-4;
+  gap: $space-2;
+  align-items: center;
   padding: $space-2 $space-3;
+  margin-bottom: $space-4;
   background: var(--el-fill-color-lighter);
   border-radius: $radius-sm;
 }
@@ -364,11 +364,11 @@ onBeforeUnmount(() => {
 
 .editor-grid {
   display: grid;
+  flex: 1;
   grid-template-columns: 1fr;
   gap: $space-4;
-  margin-bottom: $space-4;
-  flex: 1;
   min-height: 0;
+  margin-bottom: $space-4;
 
   @include respond-to(lg) {
     grid-template-columns: 1fr 1fr;
@@ -385,40 +385,40 @@ onBeforeUnmount(() => {
   min-height: 0;
 
   :deep(.el-card__body) {
-    flex: 1;
     display: flex;
+    flex: 1;
     min-height: 0;
     padding: 0;
   }
 }
 
 .editor-textarea {
-  flex: 1;
   display: flex;
+  flex: 1;
   min-height: 0;
 
   :deep(.el-textarea) {
-    flex: 1;
     display: flex;
+    flex: 1;
     min-height: 0;
   }
 
   :deep(.el-textarea__inner) {
+    flex: 1;
+    min-height: 320px;
+    padding: $space-3;
     font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
     font-size: 13px;
     line-height: 1.6;
-    flex: 1;
-    min-height: 320px;
     border: none;
     box-shadow: none;
-    padding: $space-3;
   }
 }
 
 .pane-head {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .toggle-default {
@@ -427,8 +427,8 @@ onBeforeUnmount(() => {
 
 .actions {
   display: flex;
-  justify-content: flex-end;
   gap: $space-2;
+  justify-content: flex-end;
 }
 
 .drawer-hint {

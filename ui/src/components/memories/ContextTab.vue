@@ -283,23 +283,23 @@ watch(() => props.active, (active) => {
 <style lang="scss" scoped>
 .card-header {
   display: flex;
+  flex-wrap: wrap;
+  gap: $space-4;
   align-items: center;
   justify-content: space-between;
-  gap: $space-4;
-  flex-wrap: wrap;
 }
 
 .header-left {
   display: flex;
-  align-items: center;
-  gap: $space-2;
   flex-wrap: wrap;
+  gap: $space-2;
+  align-items: center;
 }
 
 .header-right {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .hint {
@@ -319,23 +319,22 @@ watch(() => props.active, (active) => {
 
 .tab-head {
   display: flex;
+  gap: $space-4;
   align-items: flex-start;
   justify-content: space-between;
-  gap: $space-4;
   margin-bottom: $space-4;
-
 }
 
 .tab-title {
+  margin: 0 0 $space-1;
   font-size: 18px;
   font-weight: 600;
-  margin: 0 0 $space-1;
 }
 
 .tab-subtitle {
+  margin: 0;
   font-size: 13px;
   color: var(--el-text-color-secondary);
-  margin: 0;
 }
 
 .head-actions {

@@ -80,8 +80,8 @@ function typeLabel(t: string): string {
 }
 
 .detail-text {
-  flex: 1;
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: $space-2;
 }
@@ -92,18 +92,18 @@ function typeLabel(t: string): string {
 }
 
 .detail-pre {
-  margin: 0;
+  max-height: 60vh;
   padding: $space-4;
-  background: var(--el-fill-color-lighter);
-  border-radius: $radius-md;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.6;
+  margin: 0;
+  overflow-y: auto;
   font-family: inherit;
   font-size: 14px;
+  line-height: 1.6;
   color: var(--el-text-color-primary);
-  max-height: 60vh;
-  overflow-y: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background: var(--el-fill-color-lighter);
+  border-radius: $radius-md;
 }
 
 .muted {

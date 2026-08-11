@@ -294,18 +294,18 @@ onMounted(refresh)
 <style lang="scss" scoped>
 .tab-toolbar {
   display: flex;
+  gap: $space-4;
   align-items: flex-start;
   justify-content: space-between;
-  gap: $space-4;
   margin-bottom: $space-4;
 }
 
 .tab-hint {
+  max-width: 720px;
   margin: 0;
-  color: var(--el-text-color-secondary);
   font-size: 13px;
   line-height: 1.6;
-  max-width: 720px;
+  color: var(--el-text-color-secondary);
 }
 
 .muted {

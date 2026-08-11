@@ -308,15 +308,15 @@ async function onRestart() {
 }
 
 .settings-card {
-  height: 100%;
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 .card-header {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .restart-wrapper {
@@ -328,8 +328,8 @@ async function onRestart() {
 .update-actions {
   display: flex;
   gap: $space-2;
-  margin-top: $space-3;
   align-items: center;
+  margin-top: $space-3;
 }
 
 .update-latest {
@@ -360,11 +360,11 @@ async function onRestart() {
 }
 
 .version-option-desc {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
   white-space: nowrap;
-  max-width: 320px;
 }
 </style>

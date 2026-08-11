@@ -129,31 +129,31 @@ function identityDetail(row: Relationship): string {
 <style lang="scss" scoped>
 .identity-cell {
   display: flex;
-  min-width: 0;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .identity-name {
   overflow: hidden;
-  color: var(--el-text-color-primary);
-  font-weight: 600;
   text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
   white-space: nowrap;
 }
 
 .identity-detail {
   overflow: hidden;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
   text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
   white-space: nowrap;
 }
 
 .pagination-wrap {
-  margin-top: $space-4;
   display: flex;
   justify-content: flex-end;
+  margin-top: $space-4;
 }
 
 .mono {

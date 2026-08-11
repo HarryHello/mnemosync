@@ -48,8 +48,8 @@ const splitterStyle = computed(() => ({ '--splitter-gap-size': props.gapSize }))
 
 <style lang="scss" scoped>
 .splitter-wrapper {
-  min-height: 0;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 

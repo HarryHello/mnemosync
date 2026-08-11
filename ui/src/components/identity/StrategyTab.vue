@@ -465,18 +465,18 @@ onMounted(() => {
 <style lang="scss" scoped>
 .tab-toolbar {
   display: flex;
+  gap: $space-4;
   align-items: flex-start;
   justify-content: space-between;
-  gap: $space-4;
   margin-bottom: $space-4;
 }
 
 .tab-hint {
+  max-width: 720px;
   margin: 0;
-  color: var(--el-text-color-secondary);
   font-size: 13px;
   line-height: 1.6;
-  max-width: 720px;
+  color: var(--el-text-color-secondary);
 }
 
 .muted {
@@ -495,15 +495,15 @@ onMounted(() => {
 .form-hint {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .option-hint {
   float: right;
+  margin-left: $space-3;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-left: $space-3;
 }
 </style>
 
@@ -517,7 +517,7 @@ onMounted(() => {
   font-family: var(--el-font-family-mono, monospace);
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre-wrap;
   word-break: break-all;
+  white-space: pre-wrap;
 }
 </style>

@@ -109,9 +109,9 @@ function fmtTime(s: string | null): string {
 }
 
 .equal-card {
-  width: 100%;
   display: flex;
   flex-direction: column;
+  width: 100%;
 
   :deep(.el-card__body) {
     flex: 1;
@@ -120,8 +120,8 @@ function fmtTime(s: string | null): string {
 
 .sec-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
 }
 
 .sec-title {
@@ -129,15 +129,15 @@ function fmtTime(s: string | null): string {
 }
 
 .hint {
+  margin-left: $space-2;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-left: $space-2;
 }
 
 .err {
-  color: var(--el-color-danger);
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 12px;
+  color: var(--el-color-danger);
   word-break: break-all;
 }
 </style>

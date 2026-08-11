@@ -79,12 +79,12 @@ function sourceTagType(src: string): 'primary' | 'success' | 'info' {
 }
 
 .arrow {
-  color: var(--el-text-color-secondary);
   margin: 0 4px;
+  color: var(--el-text-color-secondary);
 }
 
 .reason {
   color: var(--el-text-color-regular);
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 </style>

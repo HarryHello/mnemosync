@@ -291,22 +291,22 @@ async function clearAllEvents() {
 
 .params-card__inner {
   display: flex;
+  flex-wrap: wrap;
+  gap: $space-3;
   align-items: center;
   justify-content: space-between;
-  gap: $space-3;
-  flex-wrap: wrap;
 }
 
 .params-card__left {
   display: flex;
-  align-items: center;
   gap: $space-3;
+  align-items: center;
 }
 
 .params-card__right {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .params-label {
@@ -321,18 +321,18 @@ async function clearAllEvents() {
 }
 
 .content-panel {
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   padding: $space-3;
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
 }
 
 :deep(.page-subtitle code) {
+  padding: 0 4px;
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 12px;
-  padding: 0 4px;
   background: var(--el-fill-color-light);
   border-radius: 3px;
 }

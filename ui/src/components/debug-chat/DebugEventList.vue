@@ -292,109 +292,147 @@ function formatTs(ts: number): string {
 
 .debug-header {
   display: flex;
-  align-items: center;
   gap: $space-3;
+  align-items: center;
+
   .hint {
+    flex: 1;
     font-size: 12px;
     color: var(--el-text-color-secondary);
-    flex: 1;
   }
 }
 
 .section-label {
+  margin-bottom: 4px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-bottom: 4px;
 }
 
 .groups {
-  flex: 1;
-  overflow-y: auto;
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: $space-2;
+  overflow-y: auto;
 }
 
 .group {
+  background: var(--el-fill-color-lighter);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: $radius-sm;
-  background: var(--el-fill-color-lighter);
 }
 
 .group-head {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   padding: $space-2 $space-3;
-  border-bottom: 1px solid var(--el-border-color-lighter);
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
-.group-meta { color: var(--el-text-color-secondary); }
+.group-meta {
+  color: var(--el-text-color-secondary);
+}
 
-.events { display: flex; flex-direction: column; }
+.events {
+  display: flex;
+  flex-direction: column;
+}
 
-.event { border-bottom: 1px solid var(--el-border-color-lighter); }
-.event:last-child { border-bottom: 0; }
+.event {
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.event:last-child {
+  border-bottom: 0;
+}
 
 .event-head {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   padding: 6px $space-3;
-  cursor: pointer;
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 12px;
+  cursor: pointer;
 
-  &:hover { background: var(--el-fill-color); }
+  &:hover {
+    background: var(--el-fill-color);
+  }
 
-  .e-time { color: var(--el-text-color-secondary); }
+  .e-time {
+    color: var(--el-text-color-secondary);
+  }
+
   .e-summary {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
     color: var(--el-text-color-primary);
+    white-space: nowrap;
   }
-  .e-method { font-weight: 600; }
+
+  .e-method {
+    font-weight: 600;
+  }
+
   .e-url {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
     color: var(--el-text-color-primary);
+    white-space: nowrap;
   }
-  .e-agent { color: var(--el-color-primary); }
-  .e-status { color: var(--el-color-success); }
-  .e-dur { color: var(--el-text-color-secondary); }
-  .e-key { color: var(--el-text-color-secondary); font-size: 11px; }
-  .e-caret { margin-left: auto; }
+
+  .e-agent {
+    color: var(--el-color-primary);
+  }
+
+  .e-status {
+    color: var(--el-color-success);
+  }
+
+  .e-dur {
+    color: var(--el-text-color-secondary);
+  }
+
+  .e-key {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .e-caret {
+    margin-left: auto;
+  }
 }
 
 .event-body {
-  padding: $space-2 $space-3;
-  background: var(--el-bg-color);
-  font-size: 12px;
   display: flex;
   flex-direction: column;
   gap: $space-2;
+  padding: $space-2 $space-3;
+  font-size: 12px;
+  background: var(--el-bg-color);
 }
 
 .pre {
-  margin: 0;
+  max-height: 320px;
   padding: $space-2;
-  background: var(--el-fill-color-light);
-  border-radius: $radius-sm;
+  margin: 0;
+  overflow: auto;
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 11px;
-  max-height: 320px;
-  overflow: auto;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
-  word-break: break-word;
+  background: var(--el-fill-color-light);
+  border-radius: $radius-sm;
 }
 
-.loading { color: var(--el-text-color-secondary); }
+.loading {
+  color: var(--el-text-color-secondary);
+}
 
 .pipeline-detail {
   display: flex;
@@ -404,23 +442,32 @@ function formatTs(ts: number): string {
 
 .pipeline-field {
   display: flex;
-  align-items: baseline;
   gap: $space-2;
+  align-items: baseline;
   font-size: 12px;
+
   .field-label {
-    color: var(--el-text-color-secondary);
     min-width: 70px;
+    color: var(--el-text-color-secondary);
   }
+
   code {
     font-family: 'JetBrains Mono', Menlo, monospace;
-    &.kept { color: var(--el-color-success); }
-    &.removed { color: var(--el-color-danger); }
+
+    &.kept {
+      color: var(--el-color-success);
+    }
+
+    &.removed {
+      color: var(--el-color-danger);
+    }
   }
 }
 
 .expressor-compare {
   display: flex;
   gap: $space-3;
+
   .compare-col {
     flex: 1;
     min-width: 0;
@@ -428,8 +475,8 @@ function formatTs(ts: number): string {
 }
 
 .empty {
-  color: var(--el-text-color-secondary);
   padding: $space-4;
+  color: var(--el-text-color-secondary);
   text-align: center;
 }
 </style>

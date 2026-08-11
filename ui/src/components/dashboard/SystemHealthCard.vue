@@ -161,8 +161,8 @@ onMounted(refreshBackendStatus)
 <style lang="scss" scoped>
 .card-header {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   justify-content: space-between;
   width: 100%;
   font-weight: 700;
@@ -170,7 +170,7 @@ onMounted(refreshBackendStatus)
 
 .header-right {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 </style>

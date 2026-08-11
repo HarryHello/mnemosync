@@ -415,10 +415,10 @@ async function onSubmit() {
 
 <style lang="scss" scoped>
 .hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
   margin-top: $space-1;
+  font-size: 12px;
   line-height: 1.4;
+  color: var(--el-text-color-secondary);
 }
 
 .hint-inline {

@@ -440,8 +440,8 @@ watch(() => props.active, (active) => {
 <style lang="scss" scoped>
 .detail-toolbar {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   margin-bottom: $space-4;
 }
 
@@ -453,9 +453,9 @@ watch(() => props.active, (active) => {
 
 .account-item {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
   gap: $space-2;
+  align-items: center;
 }
 
 .mb {
@@ -486,23 +486,23 @@ watch(() => props.active, (active) => {
 
 .addressing-head {
   display: flex;
+  gap: $space-2;
   align-items: center;
   justify-content: space-between;
-  gap: $space-2;
 }
 
 .metric-value {
+  margin-bottom: $space-2;
   font-size: 28px;
   font-weight: 600;
   color: var(--el-text-color-primary);
-  margin-bottom: $space-2;
 }
 
 .metric-hint {
   margin-top: $space-2;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .muted {
@@ -511,7 +511,7 @@ watch(() => props.active, (active) => {
 
 .notes,
 .context {
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
-  word-break: break-word;
 }
 </style>

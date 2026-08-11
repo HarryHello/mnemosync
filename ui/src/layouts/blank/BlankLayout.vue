@@ -10,8 +10,8 @@
 
 <style lang="scss" scoped>
 .blank-layout {
-  min-height: 100vh;
   width: 100%;
+  min-height: 100vh;
   background:
     radial-gradient(circle at top right, rgba(66, 133, 244, 0.14), transparent 28%),
     linear-gradient(180deg, #f8fbff 0%, #f2f6fb 100%);

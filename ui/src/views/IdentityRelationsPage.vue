@@ -68,14 +68,14 @@ function onSubTabChange(tab: string | number) {
 }
 
 .tab-title {
+  margin: 0;
   font-size: 18px;
   font-weight: 600;
-  margin: 0;
 }
 
 .tab-subtitle {
+  margin: 0;
   font-size: 13px;
   color: var(--el-text-color-secondary);
-  margin: 0;
 }
 </style>

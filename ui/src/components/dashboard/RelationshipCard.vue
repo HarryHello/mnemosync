@@ -99,19 +99,18 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
 </template>
 
 <style lang="scss" scoped>
-
 .card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: $space-4;
   padding-bottom: $space-3;
+  margin-bottom: $space-4;
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .card-title {
-  font-weight: 700;
   font-size: 15px;
+  font-weight: 700;
   color: var(--el-text-color-primary);
 }
 
@@ -126,32 +125,32 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
   flex-direction: column;
   gap: $space-2;
   padding: $space-3;
-  border-radius: $radius-md;
   background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-lighter);
+  border-radius: $radius-md;
 }
 
 .user-identity {
   display: flex;
-  min-width: 0;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .user-name {
   overflow: hidden;
-  color: var(--el-text-color-primary);
+  text-overflow: ellipsis;
   font-size: 13px;
   font-weight: 600;
-  text-overflow: ellipsis;
+  color: var(--el-text-color-primary);
   white-space: nowrap;
 }
 
 .user-source {
   overflow: hidden;
-  color: var(--el-text-color-secondary);
-  font-size: 11px;
   text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
   white-space: nowrap;
 }
 
@@ -163,8 +162,8 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
 
 .metric-line {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .metric-line :deep(.el-progress) {
@@ -176,18 +175,18 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
 }
 
 .metric-label {
-  width: 48px;
   flex-shrink: 0;
+  width: 48px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
 
 .metric-value {
-  width: 50px;
   flex-shrink: 0;
-  text-align: right;
+  width: 50px;
   font-size: 13px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+  text-align: right;
 }
 </style>

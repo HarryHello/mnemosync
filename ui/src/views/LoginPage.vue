@@ -99,7 +99,9 @@ async function onSubmit() {
 <style lang="scss" scoped>
 .login-page {
   min-height: 100vh;
+
   @include flex-center;
+
   padding: $space-5;
 }
 
@@ -112,8 +114,8 @@ async function onSubmit() {
 }
 
 .brand {
-  text-align: center;
   margin-bottom: $space-6;
+  text-align: center;
 
   .brand-mark {
     display: block;
@@ -132,9 +134,9 @@ async function onSubmit() {
   }
 
   .subtitle {
-    color: var(--el-text-color-secondary);
     margin-top: $space-1;
     font-size: 13px;
+    color: var(--el-text-color-secondary);
   }
 }
 

@@ -76,8 +76,8 @@ defineEmits<{
 <style lang="scss" scoped>
 .sec-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
 }
 
 .sec-title {
@@ -89,16 +89,16 @@ defineEmits<{
 }
 
 .reset-desc {
+  margin: 0 0 $space-3;
   font-size: 13px;
-  color: var(--el-text-color-regular);
-  margin: 0 0 $space-3 0;
   line-height: 1.6;
+  color: var(--el-text-color-regular);
 }
 
 .err {
-  color: var(--el-color-danger);
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 12px;
+  color: var(--el-color-danger);
   word-break: break-all;
 }
 </style>
