@@ -352,7 +352,8 @@ async def create_chat_completion(
         logger.debug("  injected %d internal tools", len(internal_tools))
 
     # 12. 身份绑定指令处理 (可能提前返回)
-    if not tool_transaction and actor_id:
+    # 始终尝试拦截绑定指令 (即使无 actor_id — 无身份时给出明确提示而非让模型瞎猜)
+    if not tool_transaction:
         bind_response = await _handle_identity_binding(
             http_request, request, messages_dict,
             actor_id, space_id, current_speaker,
