@@ -344,10 +344,10 @@ async def _handle_identity_binding(
                 success=False,
                 message="当前接入未启用身份识别",
                 prompt_hint=(
-                    f"用户请求跨平台身份绑定, 但当前 API Key 未配置身份识别策略,\n"
-                    f"无法建立身份进行绑定。请用你的风格告知用户: 需要先在面板的"
-                    f"「API Key」页面为该 Key 配置身份识别策略 (direct / api_key_bound / "
-                    f"regex / llm), 才能使用跨平台绑定功能。"
+                    "用户请求跨平台身份绑定, 但当前 API Key 未配置身份识别策略,\n"
+                    "无法建立身份进行绑定。请用你的风格告知用户: 需要先在面板的"
+                    "「API Key」页面为该 Key 配置身份识别策略 (direct / api_key_bound / "
+                    "regex / llm), 才能使用跨平台绑定功能。"
                 ),
             )
         return None

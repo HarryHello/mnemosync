@@ -273,6 +273,16 @@ async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.warning("启动关系迁移失败 (可忽略): %s", e)
 
+    # ── 5.5 身份迁移: 旧 api_key_bound 策略 → 内建 Key 即身份 ──
+    try:
+        from src.persistence.identity_migration import migrate_legacy_api_key_bound
+
+        await migrate_legacy_api_key_bound(
+            instances["identity_store"], instances["api_key_store"],
+        )
+    except Exception as e:
+        logger.warning("旧 api_key_bound 策略迁移失败 (可忽略): %s", e)
+
     # ── 6. 版本升级一次性通知 ──────────────────────
     notification_store = instances["notification_store"]
     try:

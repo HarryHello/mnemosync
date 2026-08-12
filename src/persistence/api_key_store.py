@@ -208,6 +208,20 @@ class SqliteApiKeyStore(SqliteStore):
                     return None
                 return await self._row_to_api_key(db, row)
 
+    async def update_strategy_id(self, key_id: str, strategy_id: str | None) -> bool:
+        """仅更新某个 Key 的 strategy_id, 不动其他列 (避免 INSERT OR REPLACE 清掉 key_encrypted).
+
+        Returns:
+            True 若 Key 存在并已更新, False 否则.
+        """
+        async with self._conn() as db:
+            cur = await db.execute(
+                "UPDATE api_keys SET strategy_id = ? WHERE id = ?",
+                (strategy_id, key_id),
+            )
+            await db.commit()
+            return cur.rowcount > 0
+
     async def list_all(self, source: str | None = None) -> list[ApiKey]:
         """列出 API Key. 传入 source 时按来源过滤 (面板视图应传 'user' 只看用户创建的)."""
         async with self._conn() as db:
