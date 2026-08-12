@@ -99,20 +99,36 @@ async def _resolve_identity_context(
     if not strategy_id:
         return None
 
+    forwarder = _get_multi_forwarder(http_request)
+    plugins = _get_plugins(http_request)
+    resolver = IdentityResolver(identity_store, forwarder, plugins)
+
+    # 内建策略: api_key_bound (Key 即身份) — 无需 identity_strategies 表记录,
+    # external_key = Key id, display_name = Key 备注, 直接解析.
+    if strategy_id == "api_key_bound":
+        if api_key is None:
+            return None
+        return await resolver.resolve(
+            request_user=request_user,
+            messages=messages,
+            strategy_type="api_key_bound",
+            strategy_config={"frontend": "api_key_bound"},
+            strategy_name="Key 即身份",
+            api_key=api_key,
+        )
+
     strategy = await identity_store.get_strategy(strategy_id)
     if strategy is None or not strategy.is_active:
         return None
 
     config = json.loads(strategy.config) if strategy.config else {}
-    forwarder = _get_multi_forwarder(http_request)
-    plugins = _get_plugins(http_request)
-    resolver = IdentityResolver(identity_store, forwarder, plugins)
     return await resolver.resolve(
         request_user=request_user,
         messages=messages,
         strategy_type=strategy.strategy_type,
         strategy_config=config,
         strategy_name=strategy.name,
+        api_key=api_key,
     )
 
 

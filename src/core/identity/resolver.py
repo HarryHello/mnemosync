@@ -52,6 +52,7 @@ class IdentityResolver:
         strategy_config: dict[str, Any] | None,  # 来自 API Key 绑定的策略
         strategy_type: str | None,
         strategy_name: str | None,
+        api_key: Any | None = None,
     ) -> IdentityContext:
         """从请求中解析身份。
 
@@ -61,6 +62,7 @@ class IdentityResolver:
             strategy_config: 策略的 config dict
             strategy_type: 策略类型 (direct / api_key_bound / regex / llm)
             strategy_name: 策略名称 (调试用)
+            api_key: 当前请求的 API Key (api_key_bound 内建策略需要 Key id + note)
 
         Returns:
             IdentityContext
@@ -84,7 +86,7 @@ class IdentityResolver:
                 case StrategyType.DIRECT.value:
                     return await self._resolve_direct(request_user, strategy_config, strategy_name)
                 case StrategyType.API_KEY_BOUND.value:
-                    return await self._resolve_api_key_bound(strategy_config, strategy_name)
+                    return await self._resolve_api_key_bound(strategy_config, strategy_name, api_key)
                 case StrategyType.REGEX.value:
                     return await self._resolve_regex(messages, strategy_config, strategy_name)
                 case StrategyType.LLM.value:
@@ -138,11 +140,21 @@ class IdentityResolver:
 
     async def _resolve_api_key_bound(
         self, config: dict[str, Any], strategy_name: str | None,
+        api_key: Any | None = None,
     ) -> IdentityContext:
-        """Key 即身份，固定 external_key。"""
-        external_key = config.get("external_key", "api-key-bound")
+        """Key 即身份.
+
+        内建策略 (无需在 identity_strategies 建记录): external_key = Key id,
+        display_name = Key 备注 (note). 每个 Key 视为不同的人.
+        兼容旧路径: 手动创建策略时仍可用 config 的 external_key / display_name.
+        """
+        if api_key is not None:
+            external_key = api_key.id
+            display_name = api_key.note or None
+        else:
+            external_key = config.get("external_key", "api-key-bound")
+            display_name = config.get("display_name")
         frontend = config.get("frontend", "api_key_bound")
-        display_name = config.get("display_name")
         actor = await self.store.find_or_create_actor(
             external_key=external_key,
             frontend=frontend,

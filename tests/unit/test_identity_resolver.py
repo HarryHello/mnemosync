@@ -98,6 +98,42 @@ async def test_api_key_bound_strategy(store: SqliteIdentityStore) -> None:
 
 
 @pytest.mark.asyncio
+async def test_api_key_bound_builtin_uses_key_id_and_note(store: SqliteIdentityStore) -> None:
+    """内建 api_key_bound (Key 即身份): external_key = Key id, display_name = Key 备注."""
+    from types import SimpleNamespace
+
+    resolver = IdentityResolver(store)
+    key_a = SimpleNamespace(id="key-aaa", note="Cherry Studio")
+    key_b = SimpleNamespace(id="key-bbb", note="桌面客户端")
+
+    ctx_a = await resolver.resolve(
+        request_user=None, messages=[],
+        strategy_config={"frontend": "api_key_bound"}, strategy_type="api_key_bound",
+        strategy_name="Key 即身份", api_key=key_a,
+    )
+    ctx_a2 = await resolver.resolve(
+        request_user=None, messages=[],
+        strategy_config={"frontend": "api_key_bound"}, strategy_type="api_key_bound",
+        strategy_name="Key 即身份", api_key=key_a,
+    )
+    ctx_b = await resolver.resolve(
+        request_user=None, messages=[],
+        strategy_config={"frontend": "api_key_bound"}, strategy_type="api_key_bound",
+        strategy_name="Key 即身份", api_key=key_b,
+    )
+
+    # 每个 Key 一个独立身份, 用 Key id 作 external_key, 备注作 display_name
+    assert ctx_a.actor_id is not None
+    assert ctx_a.external_key == "key-aaa"
+    assert ctx_a.display_name == "Cherry Studio"
+    assert ctx_b.external_key == "key-bbb"
+    assert ctx_b.display_name == "桌面客户端"
+    # 同一 Key 幂等 → 同一 Actor; 不同 Key → 不同 Actor
+    assert ctx_a.actor_id == ctx_a2.actor_id
+    assert ctx_a.actor_id != ctx_b.actor_id
+
+
+@pytest.mark.asyncio
 async def test_regex_strategy_extracts_actor_space_event(store: SqliteIdentityStore) -> None:
     """AstrBot 风格: 身份信息塞在 system 消息文本里."""
     resolver = IdentityResolver(store)
