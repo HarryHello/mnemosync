@@ -34,7 +34,7 @@ def mock_settings():
 
 @pytest.mark.asyncio
 async def test_no_actor_id_returns_none(mock_request, mock_settings):
-    """无 actor_id 时返回 None."""
+    """无 actor_id 且非绑定消息时返回 None."""
     from src.api.routes.forward.dispatch import _handle_identity_binding
 
     with patch("src.api.routes.forward.dispatch.get_settings", return_value=mock_settings):
@@ -42,6 +42,42 @@ async def test_no_actor_id_returns_none(mock_request, mock_settings):
             mock_request, MagicMock(), [], None, None, "用户",
         )
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_no_actor_id_bind_command_returns_hint(mock_request, mock_settings):
+    """无 actor_id 但发送绑定指令时, 返回提示 BindContext (而非放行让模型瞎猜)."""
+    from src.api.routes.forward.dispatch import BindContext, _handle_identity_binding
+
+    messages = [{"role": "user", "content": "绑定"}]
+
+    with patch("src.api.routes.forward.dispatch.get_settings", return_value=mock_settings):
+        result = await _handle_identity_binding(
+            mock_request, MagicMock(), messages, None, None, "用户",
+        )
+
+    assert result is not None
+    assert isinstance(result, BindContext)
+    assert result.success is False
+    assert "身份识别策略" in result.prompt_hint
+
+
+@pytest.mark.asyncio
+async def test_no_actor_id_bind_confirm_returns_hint(mock_request, mock_settings):
+    """无 actor_id 但发送绑定确认指令时, 同样返回提示 BindContext."""
+    from src.api.routes.forward.dispatch import BindContext, _handle_identity_binding
+
+    messages = [{"role": "user", "content": "绑定 123456"}]
+
+    with patch("src.api.routes.forward.dispatch.get_settings", return_value=mock_settings):
+        result = await _handle_identity_binding(
+            mock_request, MagicMock(), messages, None, None, "用户",
+        )
+
+    assert result is not None
+    assert isinstance(result, BindContext)
+    assert result.success is False
+    assert "身份识别策略" in result.prompt_hint
 
 
 @pytest.mark.asyncio
