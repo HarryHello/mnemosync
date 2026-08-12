@@ -245,6 +245,54 @@ def test_anthropic_text_then_tool_switches_blocks() -> None:
     assert events[-1]["delta"]["stop_reason"] == "tool_use"
 
 
+def test_anthropic_request_tool_use_converts_to_tool_calls() -> None:
+    """Anthropic 请求的 assistant tool_use block → OpenAI tool_calls (不再丢弃)."""
+    from src.api.routes.forward.anthropic_adapter import (
+        AnthropicContentBlock,
+        AnthropicMessage,
+        _convert_anthropic_to_openai,
+    )
+
+    body = SimpleNamespace(
+        model="mnemosync-any",
+        messages=[
+            AnthropicMessage(role="user", content="天气如何"),
+            AnthropicMessage(role="assistant", content=[
+                AnthropicContentBlock(
+                    type="text", text="我来查",
+                ),
+                AnthropicContentBlock(
+                    type="tool_use", id="toolu_1", name="get_weather",
+                    input={"city": "北京"},
+                ),
+            ]),
+            AnthropicMessage(role="user", content=[
+                AnthropicContentBlock(
+                    type="tool_result", tool_use_id="toolu_1", content="晴",
+                ),
+            ]),
+        ],
+        system=None,
+        max_tokens=4096,
+        temperature=1.0,
+        stream=False,
+        tools=None,
+        tool_choice=None,
+        metadata=None,
+    )
+    result = _convert_anthropic_to_openai(body)
+    msgs = result["messages"]
+    # assistant 消息带 tool_calls
+    assistant = next(m for m in msgs if m["role"] == "assistant" and m.get("tool_calls"))
+    assert assistant["tool_calls"][0]["id"] == "toolu_1"
+    assert assistant["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert '"city"' in assistant["tool_calls"][0]["function"]["arguments"]
+    # tool_result → tool 消息
+    tool_msg = next(m for m in msgs if m["role"] == "tool")
+    assert tool_msg["tool_call_id"] == "toolu_1"
+    assert tool_msg["content"] == "晴"
+
+
 def test_count_tokens_endpoint(client: TestClient) -> None:
     """Cherry Studio 调 POST /v1/messages/count_tokens 应返回 input_tokens 而非 405."""
     r = client.post("/v1/messages/count_tokens", json={

@@ -34,6 +34,12 @@ class AnthropicContentBlock(BaseModel):
     source: dict[str, Any] | None = None
     tool_use_id: str | None = None
     content: str | list[dict[str, Any]] | None = None
+    # tool_use block 字段
+    id: str | None = None
+    name: str | None = None
+    input: dict[str, Any] | None = None
+    # thinking block
+    thinking: str | None = None
 
 
 class AnthropicMessage(BaseModel):
@@ -79,42 +85,72 @@ def _convert_anthropic_to_openai(body: AnthropicMessagesRequest) -> dict[str, An
     for msg in body.messages:
         if isinstance(msg.content, str):
             messages.append({"role": msg.role, "content": msg.content})
-        elif isinstance(msg.content, list):
-            # Anthropic content blocks → OpenAI content parts
-            openai_content: list[dict[str, Any]] = []
-            for block in msg.content:
-                if block.type == "text":
-                    openai_content.append({"type": "text", "text": block.text or ""})
-                elif block.type == "image":
-                    # Anthropic image → OpenAI image_url
-                    source = block.source or {}
-                    if source.get("type") == "base64":
-                        media_type = source.get("media_type", "image/png")
-                        data = source.get("data", "")
-                        openai_content.append({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{media_type};base64,{data}"},
-                        })
-                    elif source.get("type") == "url":
-                        openai_content.append({
-                            "type": "image_url",
-                            "image_url": {"url": source.get("url", "")},
-                        })
-                elif block.type == "tool_use":
-                    # 工具调用结果应该在 assistant 消息中
-                    pass
-                elif block.type == "tool_result":
-                    # tool_result → tool message
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": block.tool_use_id or "",
-                        "content": block.content if isinstance(block.content, str) else json.dumps(block.content),
-                    })
+            continue
 
-            if openai_content:
-                messages.append({"role": msg.role, "content": openai_content})
-            elif not any(b.type == "tool_result" for b in msg.content):
-                messages.append({"role": msg.role, "content": ""})
+        if not isinstance(msg.content, list):
+            continue
+
+        # Anthropic content blocks → OpenAI
+        # 参考 cc-switch transform.rs convert_message_to_openai:
+        #   text → content parts; tool_use → assistant.tool_calls;
+        #   tool_result → 单独 tool 消息; thinking → 丢弃
+        text_parts: list[str] = []
+        openai_parts: list[dict[str, Any]] = []
+        tool_calls: list[dict[str, Any]] = []
+        has_tool_result = False
+
+        for block in msg.content:
+            if block.type == "text":
+                text_parts.append(block.text or "")
+                openai_parts.append({"type": "text", "text": block.text or ""})
+            elif block.type == "image":
+                source = block.source or {}
+                if source.get("type") == "base64":
+                    media_type = source.get("media_type", "image/png")
+                    data = source.get("data", "")
+                    openai_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{media_type};base64,{data}"},
+                    })
+                elif source.get("type") == "url":
+                    openai_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": source.get("url", "")},
+                    })
+            elif block.type == "tool_use":
+                # tool_use → OpenAI assistant.tool_calls (arguments 为 JSON 字符串)
+                tool_calls.append({
+                    "id": block.id or "",
+                    "type": "function",
+                    "function": {
+                        "name": block.name or "",
+                        "arguments": json.dumps(block.input or {}, ensure_ascii=False),
+                    },
+                })
+            elif block.type == "tool_result":
+                # tool_result → 单独 tool 消息
+                has_tool_result = True
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": block.tool_use_id or "",
+                    "content": block.content if isinstance(block.content, str) else json.dumps(block.content, ensure_ascii=False),
+                })
+            elif block.type == "thinking":
+                # 思考块丢弃 (内部管线不消费 Anthropic thinking)
+                pass
+
+        # assistant + tool_calls → OpenAI assistant message (content 可 null)
+        if tool_calls:
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": "\n".join(text_parts) if text_parts else None,
+            }
+            assistant_msg["tool_calls"] = tool_calls
+            messages.append(assistant_msg)
+        elif openai_parts:
+            messages.append({"role": msg.role, "content": openai_parts})
+        elif not has_tool_result:
+            messages.append({"role": msg.role, "content": ""})
 
     # tools
     openai_tools = None

@@ -101,11 +101,27 @@ def _convert_responses_to_chat(body: ResponsesRequest) -> dict[str, Any]:
                 if isinstance(item.content, str):
                     messages.append({"role": "assistant", "content": item.content})
 
+            elif item.type == "function_call":
+                # Responses function_call item → OpenAI assistant.tool_calls
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": item.call_id or "",
+                        "type": "function",
+                        "function": {
+                            "name": item.name or "",
+                            "arguments": item.arguments or "{}",
+                        },
+                    }],
+                })
+
             elif item.type == "function_call_output":
+                output = item.output or ""
                 messages.append({
                     "role": "tool",
                     "tool_call_id": item.call_id or "",
-                    "content": item.output or "",
+                    "content": output if isinstance(output, str) else json.dumps(output, ensure_ascii=False),
                 })
 
     # tools 转换
