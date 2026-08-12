@@ -243,8 +243,8 @@ def _convert_openai_chunk_to_anthropic(
             "delta": {"type": "text_delta", "text": content},
         })
 
-    # 工具调用 delta
-    tool_calls = delta.get("tool_calls", [])
+    # 工具调用 delta (注意: 键存在但值为 null 时 .get 默认值不生效, 需 or [])
+    tool_calls = delta.get("tool_calls") or []
     for tc in tool_calls:
         func = tc.get("function", {})
         if func.get("name"):

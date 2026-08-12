@@ -51,3 +51,40 @@ def test_no_prefix_nesting(client: TestClient) -> None:
         "model": "x", "input": [{"role": "user", "content": "hi"}],
     })
     assert r.status_code in (404, 405)
+
+
+# ---------------------------------------------------------------------------
+# 流式 chunk 转换: tool_calls 为 null 时的健壮性
+# ---------------------------------------------------------------------------
+
+
+def test_responses_chunk_with_null_tool_calls() -> None:
+    """SSE chunk 中 delta.tool_calls 显式为 null 不应崩溃."""
+    from src.api.routes.forward.responses_adapter import _convert_chat_chunk_to_responses
+
+    chunk = {
+        "choices": [{
+            "index": 0,
+            "delta": {"content": "你好", "tool_calls": None},
+            "finish_reason": None,
+        }],
+    }
+    events = _convert_chat_chunk_to_responses(chunk, "resp_x")
+    # 文本 delta 正常产出, 无工具调用事件
+    assert any(e["type"] == "response.output_text.delta" for e in events)
+    assert not any(e["type"] == "response.output_item.added" for e in events)
+
+
+def test_anthropic_chunk_with_null_tool_calls() -> None:
+    """SSE chunk 中 delta.tool_calls 显式为 null 不应崩溃."""
+    from src.api.routes.forward.anthropic_adapter import _convert_openai_chunk_to_anthropic
+
+    chunk = {
+        "choices": [{
+            "index": 0,
+            "delta": {"content": "你好", "tool_calls": None},
+            "finish_reason": None,
+        }],
+    }
+    events = _convert_openai_chunk_to_anthropic(chunk)
+    assert any(e["type"] == "content_block_delta" for e in events)
