@@ -193,16 +193,24 @@ def _convert_chat_to_responses(
 
 @dataclass
 class _ResponsesStreamState:
-    """跨 chunk 的流式状态: 记录已发的 item/part, 保证事件顺序符合协议."""
+    """跨 chunk 的流式状态: 记录已发的 item/part, 保证事件顺序符合协议.
+
+    AI SDK (Cherry Studio) 用 zod 严格校验事件结构:
+      - output_item.done 必须带完整 item (message 需含 content, function_call 需含 arguments)
+      - response.completed 的 response 必须带 usage (input_tokens/output_tokens)
+    """
 
     item_id: str = ""
     message_item_added: bool = False
     content_part_added: bool = False
     text_done: bool = False
-    item_done: bool = False
+    message_item_done: bool = False
     output_index: int = 0
     content_index: int = 0
     collected_text: list[str] = field(default_factory=list)
+    # function_call 追踪 (output_index → item)
+    function_calls: dict[int, dict[str, Any]] = field(default_factory=dict)
+    tool_args: dict[int, str] = field(default_factory=dict)
 
 
 def _convert_chat_chunk_to_responses(
@@ -268,48 +276,88 @@ def _convert_chat_chunk_to_responses(
     tool_calls = delta.get("tool_calls") or []
     for tc in tool_calls:
         func = tc.get("function", {})
+        idx = tc.get("index", 0) if isinstance(tc.get("index"), int) else state.output_index
         if func.get("name"):
-            events.append({
-                "type": "response.output_item.added",
-                "output_index": state.output_index,
-                "item": {
+            existing = state.function_calls.get(idx)
+            if existing is None:
+                item: dict[str, Any] = {
                     "type": "function_call",
                     "id": f"fc_{uuid.uuid4().hex[:24]}",
                     "call_id": tc.get("id", ""),
                     "name": func["name"],
                     "arguments": "",
                     "status": "in_progress",
-                },
-            })
+                }
+                state.function_calls[idx] = item
+                events.append({
+                    "type": "response.output_item.added",
+                    "output_index": idx,
+                    "item": item,
+                })
+            else:
+                # 工具名跨帧分片, 需累积 ("get_" + "weather" → "get_weather")
+                existing["name"] += func["name"]
         if func.get("arguments"):
+            state.tool_args[idx] = state.tool_args.get(idx, "") + func["arguments"]
             events.append({
                 "type": "response.function_call_arguments.delta",
-                "output_index": state.output_index,
+                "output_index": idx,
                 "delta": func["arguments"],
             })
 
     # finish_reason → 收尾事件序列
     if finish_reason:
+        # 文本 item 收尾: output_text.done → output_item.done (带完整 message item)
         if state.message_item_added and not state.text_done:
+            full_text = "".join(state.collected_text)
             events.append({
                 "type": "response.output_text.done",
                 "item_id": state.item_id,
                 "output_index": state.output_index,
                 "content_index": state.content_index,
-                "text": "".join(state.collected_text),
+                "text": full_text,
             })
             state.text_done = True
-        if state.message_item_added and not state.item_done:
+        if state.message_item_added and not state.message_item_done:
             events.append({
                 "type": "response.output_item.done",
                 "output_index": state.output_index,
+                "item": {
+                    "type": "message",
+                    "id": state.item_id,
+                    "status": "completed",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "".join(state.collected_text),
+                        "annotations": [],
+                    }],
+                },
             })
-            state.item_done = True
+            state.message_item_done = True
+
+        # function_call item 收尾 (带完整 arguments)
+        for idx, item in state.function_calls.items():
+            events.append({
+                "type": "response.output_item.done",
+                "output_index": idx,
+                "item": {
+                    **item,
+                    "arguments": state.tool_args.get(idx, ""),
+                    "status": "completed",
+                },
+            })
+
         events.append({
             "type": "response.completed",
             "response": {
                 "id": response_id,
                 "status": "completed",
+                # AI SDK zod 校验必填 usage
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                },
             },
         })
 
@@ -368,15 +416,28 @@ async def _handle_responses_stream(
         return StreamingResponse(_single_event(), media_type="text/event-stream")
 
     response_id = f"resp_{uuid.uuid4().hex[:24]}"
+    model = getattr(body, "model", None) or "mnemosync-any"
 
     async def responses_stream() -> AsyncGenerator[bytes, None]:
+        import time as _time
+
         # 跨 chunk 的流式状态 (保证 output_item.added / content_part.added 先于 delta)
         state = _ResponsesStreamState()
         # 流结束时若上游没给 finish_reason (异常中断), 补完成事件
         completed = False
 
-        # response.created
-        yield f"data: {json.dumps({'type': 'response.created', 'response': {'id': response_id, 'status': 'in_progress'}})}\n\n".encode()
+        # AI SDK zod 校验: response.created / response.in_progress 的 response
+        # 必须含 id + created_at(number) + model(string)
+        created_at = int(_time.time())
+        base_resp = {
+            "id": response_id,
+            "object": "response",
+            "created_at": created_at,
+            "model": model,
+            "status": "in_progress",
+        }
+        yield f"data: {json.dumps({'type': 'response.created', 'response': base_resp})}\n\n".encode()
+        yield f"data: {json.dumps({'type': 'response.in_progress', 'response': base_resp})}\n\n".encode()
 
         async for chunk_bytes in openai_response.body_iterator:
             chunk_str = cast(bytes, chunk_bytes).decode("utf-8", errors="ignore").strip()
@@ -394,6 +455,10 @@ async def _handle_responses_stream(
             events = _convert_chat_chunk_to_responses(chunk, response_id, state)
             for event in events:
                 if event.get("type") == "response.completed":
+                    # 补全 completed 的 response 对象 (zod 校验 usage 必填)
+                    event["response"]["created_at"] = created_at
+                    event["response"]["model"] = model
+                    event["response"]["object"] = "response"
                     completed = True
                 yield f"data: {json.dumps(event)}\n\n".encode()
 
@@ -404,6 +469,10 @@ async def _handle_responses_stream(
                 response_id, state,
             )
             for event in tail:
+                if event.get("type") == "response.completed":
+                    event["response"]["created_at"] = created_at
+                    event["response"]["model"] = model
+                    event["response"]["object"] = "response"
                 yield f"data: {json.dumps(event)}\n\n".encode()
 
     return StreamingResponse(responses_stream(), media_type="text/event-stream")

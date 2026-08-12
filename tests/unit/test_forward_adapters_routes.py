@@ -79,33 +79,81 @@ def test_responses_chunk_with_null_tool_calls() -> None:
 
 
 def test_responses_stream_full_sequence() -> None:
-    """完整流: 文本 chunk → 结束 chunk, 事件序列符合 Responses 协议."""
+    """完整流: 文本 chunk → 结束 chunk, 事件序列符合 Responses 协议 (含 AI SDK zod 必填字段)."""
     from src.api.routes.forward.responses_adapter import (
         _convert_chat_chunk_to_responses,
         _ResponsesStreamState,
     )
 
     state = _ResponsesStreamState()
-    events: list[str] = []
-    events += [e["type"] for e in _convert_chat_chunk_to_responses(
+    all_events: list[dict] = []
+    all_events += _convert_chat_chunk_to_responses(
         {"choices": [{"index": 0, "delta": {"content": "你好"}, "finish_reason": None}]},
         "resp_x", state,
-    )]
-    events += [e["type"] for e in _convert_chat_chunk_to_responses(
+    )
+    all_events += _convert_chat_chunk_to_responses(
         {"choices": [{"index": 0, "delta": {"content": "!"}, "finish_reason": None}]},
         "resp_x", state,
-    )]
-    events += [e["type"] for e in _convert_chat_chunk_to_responses(
+    )
+    all_events += _convert_chat_chunk_to_responses(
         {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
         "resp_x", state,
-    )]
+    )
+    types = [e["type"] for e in all_events]
 
-    assert events[0] == "response.output_item.added"
-    assert events[1] == "response.content_part.added"
-    assert events.count("response.output_text.delta") == 2
-    assert "response.output_text.done" in events
-    assert "response.output_item.done" in events
-    assert events[-1] == "response.completed"
+    assert types[0] == "response.output_item.added"
+    assert types[1] == "response.content_part.added"
+    assert types.count("response.output_text.delta") == 2
+    assert "response.output_text.done" in types
+    assert "response.output_item.done" in types
+    assert types[-1] == "response.completed"
+
+    # AI SDK zod 必填: output_item.done 带完整 message item (id + content)
+    done_item = next(e for e in all_events if e["type"] == "response.output_item.done")
+    assert done_item["item"]["type"] == "message"
+    assert done_item["item"]["id"]
+    assert done_item["item"]["content"][0]["text"] == "你好!"
+
+    # AI SDK zod 必填: completed 的 response 带 usage (input_tokens/output_tokens)
+    completed = next(e for e in all_events if e["type"] == "response.completed")
+    assert "input_tokens" in completed["response"]["usage"]
+    assert "output_tokens" in completed["response"]["usage"]
+
+
+def test_responses_stream_tool_call_done_item() -> None:
+    """工具调用流: output_item.done 带完整 function_call item (含累积 arguments)."""
+    from src.api.routes.forward.responses_adapter import (
+        _convert_chat_chunk_to_responses,
+        _ResponsesStreamState,
+    )
+
+    state = _ResponsesStreamState()
+    all_events: list[dict] = []
+    all_events += _convert_chat_chunk_to_responses(
+        {"choices": [{"index": 0, "delta": {"tool_calls": [
+            {"index": 0, "id": "call_1", "type": "function",
+             "function": {"name": "get_", "arguments": ""}},
+        ]}, "finish_reason": None}]},
+        "resp_x", state,
+    )
+    all_events += _convert_chat_chunk_to_responses(
+        {"choices": [{"index": 0, "delta": {"tool_calls": [
+            {"index": 0, "function": {"name": "weather", "arguments": "{}"}},
+        ]}, "finish_reason": None}]},
+        "resp_x", state,
+    )
+    all_events += _convert_chat_chunk_to_responses(
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        "resp_x", state,
+    )
+
+    done_items = [e for e in all_events if e["type"] == "response.output_item.done"]
+    assert len(done_items) == 1
+    item = done_items[0]["item"]
+    assert item["type"] == "function_call"
+    assert item["name"] == "get_weather"
+    assert item["arguments"] == "{}"
+    assert item["status"] == "completed"
 
 
 def test_anthropic_chunk_with_null_tool_calls() -> None:
