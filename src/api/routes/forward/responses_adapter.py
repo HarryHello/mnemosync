@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
@@ -164,6 +165,16 @@ def _convert_chat_to_responses(
     message = choice.get("message", {})
     output: list[dict[str, Any]] = []
 
+    # 推理 (代理推理 reasoning_content → Responses reasoning item)
+    reasoning = message.get("reasoning_content")
+    if reasoning:
+        output.append({
+            "type": "reasoning",
+            "id": f"rs_{uuid.uuid4().hex[:24]}",
+            "summary": [{"type": "summary_text", "text": reasoning}],
+            "content": [{"type": "reasoning_text", "text": reasoning}],
+        })
+
     # 文本内容
     text = message.get("content", "")
     if text:
@@ -193,6 +204,7 @@ def _convert_chat_to_responses(
     return {
         "id": f"resp_{uuid.uuid4().hex[:24]}",
         "object": "response",
+        "created_at": int(time.time()),
         "model": openai_response.get("model", ""),
         "output": output,
         "usage": {

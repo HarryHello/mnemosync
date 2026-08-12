@@ -304,3 +304,36 @@ def test_count_tokens_endpoint(client: TestClient) -> None:
     body = r.json()
     assert "input_tokens" in body
     assert body["input_tokens"] > 0
+
+
+def test_anthropic_nonstream_reasoning_to_thinking() -> None:
+    """下游非流式: OpenAI reasoning_content → Anthropic thinking block."""
+    from src.api.routes.forward.anthropic_adapter import _convert_openai_to_anthropic_response
+
+    resp = {"choices": [{"message": {
+        "role": "assistant",
+        "content": "你好",
+        "reasoning_content": "内心思考",
+    }, "finish_reason": "stop"}]}
+    result = _convert_openai_to_anthropic_response(resp)
+    blocks = result["content"]
+    assert any(b["type"] == "thinking" and b["thinking"] == "内心思考" for b in blocks)
+    assert any(b["type"] == "text" and b["text"] == "你好" for b in blocks)
+
+
+def test_responses_nonstream_reasoning_item() -> None:
+    """下游非流式: OpenAI reasoning_content → Responses reasoning item."""
+    from src.api.routes.forward.responses_adapter import _convert_chat_to_responses
+
+    resp = {"choices": [{"message": {
+        "role": "assistant",
+        "content": "你好",
+        "reasoning_content": "内心思考",
+    }}]}
+    result = _convert_chat_to_responses(resp)
+    assert result["object"] == "response"
+    assert "created_at" in result
+    reasoning = next(o for o in result["output"] if o["type"] == "reasoning")
+    assert reasoning["summary"][0]["text"] == "内心思考"
+    msg = next(o for o in result["output"] if o["type"] == "message")
+    assert msg["content"][0]["text"] == "你好"

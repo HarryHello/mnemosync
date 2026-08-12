@@ -45,6 +45,10 @@ def _convert_messages_to_anthropic(
 ) -> tuple[str | None, list[dict[str, Any]]]:
     """将 OpenAI 格式 messages 转换为 Anthropic 格式.
 
+    参考 cc-switch transform.rs:
+    - assistant 消息顶层 tool_calls → content 里的 tool_use blocks
+    - tool 消息 → user 消息的 tool_result block
+
     Returns:
         (system_prompt, anthropic_messages) 元组
     """
@@ -60,7 +64,55 @@ def _convert_messages_to_anthropic(
             system_prompt = content if isinstance(content, str) else str(content)
             continue
 
-        if role in ("user", "assistant"):
+        if role == "assistant":
+            # assistant: content (字符串/数组) + 顶层 tool_calls → Anthropic blocks
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                # 无工具调用: 保持旧行为 (字符串 content 原样)
+                if isinstance(content, str):
+                    anthropic_messages.append({"role": "assistant", "content": content})
+                    continue
+            blocks: list[dict[str, Any]] = []
+            if isinstance(content, str):
+                if content:
+                    blocks.append({"type": "text", "text": content})
+            elif isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    part_type = part.get("type", "")
+                    if part_type == "text":
+                        blocks.append({"type": "text", "text": part.get("text", "")})
+                    elif part_type == "image_url":
+                        image_url = part.get("image_url", {})
+                        url = image_url.get("url", "")
+                        if url.startswith("data:"):
+                            media_type, data = _parse_data_url(url)
+                            blocks.append({
+                                "type": "image",
+                                "source": {"type": "base64", "media_type": media_type, "data": data},
+                            })
+                        else:
+                            blocks.append({
+                                "type": "image",
+                                "source": {"type": "url", "url": url},
+                            })
+            # assistant 消息顶层的 tool_calls → tool_use blocks
+            for tc in tool_calls:
+                func = tc.get("function", {})
+                try:
+                    args = json.loads(func.get("arguments") or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                blocks.append({
+                    "type": "tool_use",
+                    "id": tc.get("id", ""),
+                    "name": func.get("name", ""),
+                    "input": args,
+                })
+            anthropic_messages.append({"role": "assistant", "content": blocks or ""})
+
+        elif role == "user":
             # 转换 content 格式
             if isinstance(content, str):
                 anthropic_messages.append({"role": role, "content": content})
@@ -108,14 +160,15 @@ def _convert_messages_to_anthropic(
                 anthropic_messages.append({"role": role, "content": str(content) or ""})
 
         elif role == "tool":
-            # Anthropic 使用 tool_result
+            # Anthropic 使用 tool_result (content 非字符串时 JSON 序列化)
             tool_id = msg.get("tool_call_id", "")
+            tc_content = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
             anthropic_messages.append({
                 "role": "user",
                 "content": [{
                     "type": "tool_result",
                     "tool_use_id": tool_id,
-                    "content": content if isinstance(content, str) else str(content),
+                    "content": tc_content,
                 }],
             })
 
@@ -152,10 +205,14 @@ def _convert_anthropic_response_to_openai(
     response: Any,
     model: str,
 ) -> dict[str, Any]:
-    """将 Anthropic 响应转换为 OpenAI 格式."""
+    """将 Anthropic 响应转换为 OpenAI 格式.
+
+    - text → content; tool_use → tool_calls; thinking → reasoning_content
+    """
     content_parts = response.content
     text_parts = []
     tool_calls = []
+    thinking_parts: list[str] = []
 
     for part in content_parts:
         if part.type == "text":
@@ -169,6 +226,8 @@ def _convert_anthropic_response_to_openai(
                     "arguments": json.dumps(part.input),
                 },
             })
+        elif part.type == "thinking":
+            thinking_parts.append(part.thinking or "")
 
     result: dict[str, Any] = {
         "id": response.id,
@@ -191,6 +250,8 @@ def _convert_anthropic_response_to_openai(
 
     if tool_calls:
         result["choices"][0]["message"]["tool_calls"] = tool_calls
+    if thinking_parts:
+        result["choices"][0]["message"]["reasoning_content"] = "\n".join(thinking_parts)
 
     return result
 
@@ -442,6 +503,21 @@ def _convert_stream_event(
                 "choices": [{
                     "index": 0,
                     "delta": {"content": text},
+                    "finish_reason": None,
+                }],
+            }
+
+        if delta_type == "thinking_delta":
+            thinking = getattr(delta, "thinking", "")
+            if not thinking:
+                return None
+            return {
+                "id": chatcmpl_id,
+                "object": "chat.completion.chunk",
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {"reasoning_content": thinking},
                     "finish_reason": None,
                 }],
             }

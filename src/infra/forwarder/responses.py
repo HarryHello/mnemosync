@@ -67,8 +67,17 @@ def _convert_chat_to_responses(
                     input_items.append({"role": "user", "content": input_content})
 
         elif role == "assistant":
-            if isinstance(content, str):
+            # assistant: 文本 + 顶层 tool_calls → function_call input items
+            if isinstance(content, str) and content:
                 input_items.append({"role": "assistant", "content": content})
+            for tc in msg.get("tool_calls") or []:
+                func = tc.get("function", {})
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": tc.get("id", "") or func.get("name", ""),
+                    "name": func.get("name", ""),
+                    "arguments": func.get("arguments", "{}"),
+                })
 
         elif role == "tool":
             # tool result → function_call_output
@@ -285,9 +294,10 @@ class ResponsesForwarder:
 
         try:
             stream = await client.responses.create(**sdk_kwargs)
+            _stream_state: dict[str, Any] = {"saw_tool_call": False}
             async for event in stream:
                 # 将 Responses API 事件转为 Chat Completions SSE 格式
-                openai_chunk = _convert_stream_event(event, chatcmpl_id, resolved_model)
+                openai_chunk = _convert_stream_event(event, chatcmpl_id, resolved_model, _stream_state)
                 if openai_chunk is not None:
                     sse_line = f"data: {json.dumps(openai_chunk, ensure_ascii=False)}\n\n"
                     sse_bytes = sse_line.encode("utf-8")
@@ -336,8 +346,19 @@ def _convert_stream_event(
     event: Any,
     chatcmpl_id: str,
     model: str,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """将 Responses API 流式事件转换为 Chat Completions SSE chunk 格式."""
+    """将 Responses API 流式事件转换为 Chat Completions SSE chunk 格式.
+
+    映射 (参考 cc-switch streaming_responses.rs):
+    - output_text.delta → content
+    - reasoning_text.delta → reasoning_content
+    - output_item.added (function_call) → tool_calls start (id+name)
+    - function_call_arguments.delta → tool_calls arguments (分片累积)
+    - completed → finish_reason (有工具调用则 tool_calls)
+    """
+    if state is None:
+        state = {"saw_tool_call": False}
     event_type = getattr(event, "type", "")
 
     if event_type == "response.output_text.delta":
@@ -355,9 +376,25 @@ def _convert_stream_event(
             }],
         }
 
-    if event_type == "response.output_item.done":
+    if event_type == "response.reasoning_text.delta":
+        reasoning = getattr(event, "delta", "")
+        if not reasoning:
+            return None
+        return {
+            "id": chatcmpl_id,
+            "object": "chat.completion.chunk",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {"reasoning_content": reasoning},
+                "finish_reason": None,
+            }],
+        }
+
+    if event_type == "response.output_item.added":
         item = getattr(event, "item", None)
         if item and getattr(item, "type", "") == "function_call":
+            state["saw_tool_call"] = True
             return {
                 "id": chatcmpl_id,
                 "object": "chat.completion.chunk",
@@ -371,15 +408,37 @@ def _convert_stream_event(
                             "type": "function",
                             "function": {
                                 "name": getattr(item, "name", ""),
-                                "arguments": getattr(item, "arguments", "{}"),
+                                "arguments": "",
                             },
                         }],
                     },
                     "finish_reason": None,
                 }],
             }
+        return None
+
+    if event_type == "response.function_call_arguments.delta":
+        args = getattr(event, "delta", "")
+        if not args:
+            return None
+        return {
+            "id": chatcmpl_id,
+            "object": "chat.completion.chunk",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": {"arguments": args},
+                    }],
+                },
+                "finish_reason": None,
+            }],
+        }
 
     if event_type == "response.completed":
+        finish_reason = "tool_calls" if state.get("saw_tool_call") else "stop"
         return {
             "id": chatcmpl_id,
             "object": "chat.completion.chunk",
@@ -387,7 +446,7 @@ def _convert_stream_event(
             "choices": [{
                 "index": 0,
                 "delta": {},
-                "finish_reason": "stop",
+                "finish_reason": finish_reason,
             }],
         }
 

@@ -209,6 +209,11 @@ def _convert_openai_to_anthropic_response(
     message = choice.get("message", {})
     content_parts: list[dict[str, Any]] = []
 
+    # 推理 (代理推理 reasoning_content → Anthropic thinking block)
+    reasoning = message.get("reasoning_content")
+    if reasoning:
+        content_parts.append({"type": "thinking", "thinking": reasoning})
+
     # 文本内容
     text = message.get("content", "")
     if text:
