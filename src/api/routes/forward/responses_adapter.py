@@ -20,7 +20,8 @@ from src.api.schemas.forward import ChatCompletionRequest
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1")
+# 无 prefix — 由父 router (forward/__init__.py, prefix="/v1") 拼接, 否则会变成 /v1/v1/responses
+router = APIRouter()
 
 
 # ── 请求/响应 Schema ──────────────────────────────────────────
