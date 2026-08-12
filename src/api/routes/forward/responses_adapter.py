@@ -10,6 +10,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from fastapi import APIRouter, Request
@@ -190,12 +191,36 @@ def _convert_chat_to_responses(
 # ── 流式转换 ──────────────────────────────────────────────────
 
 
+@dataclass
+class _ResponsesStreamState:
+    """跨 chunk 的流式状态: 记录已发的 item/part, 保证事件顺序符合协议."""
+
+    item_id: str = ""
+    message_item_added: bool = False
+    content_part_added: bool = False
+    text_done: bool = False
+    item_done: bool = False
+    output_index: int = 0
+    content_index: int = 0
+    collected_text: list[str] = field(default_factory=list)
+
+
 def _convert_chat_chunk_to_responses(
     chunk: dict[str, Any],
     response_id: str,
+    state: _ResponsesStreamState | None = None,
 ) -> list[dict[str, Any]]:
-    """将 Chat Completions SSE chunk 转换为 Responses API 事件列表."""
+    """将 Chat Completions SSE chunk 转换为 Responses API 事件列表.
+
+    Responses API 流式协议要求按序发:
+      output_item.added (message) → content_part.added (output_text)
+      → output_text.delta → output_text.done → output_item.done → completed
+    缺 output_item.added / content_part.added 时, 客户端无法建立 part 索引,
+    会报 "text part ... not found". 因此转换需要跨 chunk 状态 (state).
+    """
     events: list[dict[str, Any]] = []
+    if state is None:
+        state = _ResponsesStreamState()
     choices = chunk.get("choices", [])
     if not choices:
         return events
@@ -204,14 +229,38 @@ def _convert_chat_chunk_to_responses(
     delta = choice.get("delta", {})
     finish_reason = choice.get("finish_reason")
 
-    # 文本 delta
+    # 文本输出
     content = delta.get("content")
     if content:
+        if not state.message_item_added:
+            state.item_id = f"msg_{response_id}"
+            state.output_index = 0
+            events.append({
+                "type": "response.output_item.added",
+                "output_index": state.output_index,
+                "item": {
+                    "type": "message",
+                    "id": state.item_id,
+                    "status": "in_progress",
+                    "content": [],
+                },
+            })
+            state.message_item_added = True
+        if not state.content_part_added:
+            events.append({
+                "type": "response.content_part.added",
+                "item_id": state.item_id,
+                "output_index": state.output_index,
+                "content_index": state.content_index,
+                "part": {"type": "output_text", "text": "", "annotations": []},
+            })
+            state.content_part_added = True
+        state.collected_text.append(content)
         events.append({
             "type": "response.output_text.delta",
-            "item_id": f"msg_{response_id}",
-            "output_index": 0,
-            "content_index": 0,
+            "item_id": state.item_id,
+            "output_index": state.output_index,
+            "content_index": state.content_index,
             "delta": content,
         })
 
@@ -222,7 +271,7 @@ def _convert_chat_chunk_to_responses(
         if func.get("name"):
             events.append({
                 "type": "response.output_item.added",
-                "output_index": len(events),
+                "output_index": state.output_index,
                 "item": {
                     "type": "function_call",
                     "id": f"fc_{uuid.uuid4().hex[:24]}",
@@ -235,12 +284,27 @@ def _convert_chat_chunk_to_responses(
         if func.get("arguments"):
             events.append({
                 "type": "response.function_call_arguments.delta",
-                "output_index": len(events) - 1,
+                "output_index": state.output_index,
                 "delta": func["arguments"],
             })
 
-    # finish_reason → completed
+    # finish_reason → 收尾事件序列
     if finish_reason:
+        if state.message_item_added and not state.text_done:
+            events.append({
+                "type": "response.output_text.done",
+                "item_id": state.item_id,
+                "output_index": state.output_index,
+                "content_index": state.content_index,
+                "text": "".join(state.collected_text),
+            })
+            state.text_done = True
+        if state.message_item_added and not state.item_done:
+            events.append({
+                "type": "response.output_item.done",
+                "output_index": state.output_index,
+            })
+            state.item_done = True
         events.append({
             "type": "response.completed",
             "response": {
@@ -306,6 +370,11 @@ async def _handle_responses_stream(
     response_id = f"resp_{uuid.uuid4().hex[:24]}"
 
     async def responses_stream() -> AsyncGenerator[bytes, None]:
+        # 跨 chunk 的流式状态 (保证 output_item.added / content_part.added 先于 delta)
+        state = _ResponsesStreamState()
+        # 流结束时若上游没给 finish_reason (异常中断), 补完成事件
+        completed = False
+
         # response.created
         yield f"data: {json.dumps({'type': 'response.created', 'response': {'id': response_id, 'status': 'in_progress'}})}\n\n".encode()
 
@@ -322,8 +391,19 @@ async def _handle_responses_stream(
             except json.JSONDecodeError:
                 continue
 
-            events = _convert_chat_chunk_to_responses(chunk, response_id)
+            events = _convert_chat_chunk_to_responses(chunk, response_id, state)
             for event in events:
+                if event.get("type") == "response.completed":
+                    completed = True
+                yield f"data: {json.dumps(event)}\n\n".encode()
+
+        # 上游异常中断 (无 finish_reason): 补收尾事件, 避免客户端挂起
+        if not completed:
+            tail = _convert_chat_chunk_to_responses(
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+                response_id, state,
+            )
+            for event in tail:
                 yield f"data: {json.dumps(event)}\n\n".encode()
 
     return StreamingResponse(responses_stream(), media_type="text/event-stream")

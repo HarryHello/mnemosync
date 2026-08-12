@@ -54,7 +54,7 @@ def test_no_prefix_nesting(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 流式 chunk 转换: tool_calls 为 null 时的健壮性
+# 流式 chunk 转换: 协议顺序 + tool_calls 为 null 的健壮性
 # ---------------------------------------------------------------------------
 
 
@@ -70,9 +70,42 @@ def test_responses_chunk_with_null_tool_calls() -> None:
         }],
     }
     events = _convert_chat_chunk_to_responses(chunk, "resp_x")
-    # 文本 delta 正常产出, 无工具调用事件
-    assert any(e["type"] == "response.output_text.delta" for e in events)
-    assert not any(e["type"] == "response.output_item.added" for e in events)
+    # 首次出现文本: 先 output_item.added (message) → content_part.added → output_text.delta
+    types = [e["type"] for e in events]
+    assert types[0] == "response.output_item.added"
+    assert types[1] == "response.content_part.added"
+    assert "response.output_text.delta" in types
+    assert not any(e["type"] == "response.completed" for e in events)
+
+
+def test_responses_stream_full_sequence() -> None:
+    """完整流: 文本 chunk → 结束 chunk, 事件序列符合 Responses 协议."""
+    from src.api.routes.forward.responses_adapter import (
+        _convert_chat_chunk_to_responses,
+        _ResponsesStreamState,
+    )
+
+    state = _ResponsesStreamState()
+    events: list[str] = []
+    events += [e["type"] for e in _convert_chat_chunk_to_responses(
+        {"choices": [{"index": 0, "delta": {"content": "你好"}, "finish_reason": None}]},
+        "resp_x", state,
+    )]
+    events += [e["type"] for e in _convert_chat_chunk_to_responses(
+        {"choices": [{"index": 0, "delta": {"content": "!"}, "finish_reason": None}]},
+        "resp_x", state,
+    )]
+    events += [e["type"] for e in _convert_chat_chunk_to_responses(
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+        "resp_x", state,
+    )]
+
+    assert events[0] == "response.output_item.added"
+    assert events[1] == "response.content_part.added"
+    assert events.count("response.output_text.delta") == 2
+    assert "response.output_text.done" in events
+    assert "response.output_item.done" in events
+    assert events[-1] == "response.completed"
 
 
 def test_anthropic_chunk_with_null_tool_calls() -> None:
