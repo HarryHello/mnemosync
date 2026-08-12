@@ -122,13 +122,14 @@ async def _resolve_identity_context(
         return None
 
     config = json.loads(strategy.config) if strategy.config else {}
+    # 手动创建的策略不传 api_key — 保持旧行为 (config 驱动 external_key/display_name),
+    # 仅内建 api_key_bound 路径使用 Key id + 备注.
     return await resolver.resolve(
         request_user=request_user,
         messages=messages,
         strategy_type=strategy.strategy_type,
         strategy_config=config,
         strategy_name=strategy.name,
-        api_key=api_key,
     )
 
 
