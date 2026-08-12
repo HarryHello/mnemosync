@@ -208,6 +208,43 @@ def test_anthropic_tool_call_fragmented_name() -> None:
     assert deltas and deltas[0]["delta"]["stop_reason"] == "tool_use"
 
 
+def test_anthropic_text_then_tool_switches_blocks() -> None:
+    """文本后出现工具调用: 先 stop 文本块, 再 start tool_use 块."""
+    from src.api.routes.forward.anthropic_adapter import (
+        _AnthropicStreamState,
+        _convert_openai_chunk_to_anthropic,
+    )
+
+    state = _AnthropicStreamState()
+    events: list[dict] = []
+    events += _convert_openai_chunk_to_anthropic(
+        {"choices": [{"index": 0, "delta": {"content": "我先查一下"}, "finish_reason": None}]},
+        state,
+    )
+    events += _convert_openai_chunk_to_anthropic(
+        {"choices": [{"index": 0, "delta": {"tool_calls": [
+            {"index": 0, "id": "call_1", "type": "function",
+             "function": {"name": "get_weather", "arguments": "{}"}},
+        ]}, "finish_reason": None}]},
+        state,
+    )
+    events += _convert_openai_chunk_to_anthropic(
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        state,
+    )
+
+    types = [e["type"] for e in events]
+    # 文本块: start → delta → (切换时) stop
+    assert types[0] == "content_block_start"
+    assert types[1] == "content_block_delta"
+    stop_idx = types.index("content_block_stop")
+    # 工具块: start → delta
+    assert "content_block_start" in types[stop_idx + 1:]
+    # 收尾: 工具块 stop + message_delta (tool_use)
+    assert types[-1] == "message_delta"
+    assert events[-1]["delta"]["stop_reason"] == "tool_use"
+
+
 def test_count_tokens_endpoint(client: TestClient) -> None:
     """Cherry Studio 调 POST /v1/messages/count_tokens 应返回 input_tokens 而非 405."""
     r = client.post("/v1/messages/count_tokens", json={

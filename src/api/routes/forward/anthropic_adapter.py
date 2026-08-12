@@ -223,23 +223,58 @@ def _convert_openai_to_anthropic_response(
 
 @dataclass
 class _AnthropicStreamState:
-    """跨 chunk 的 Anthropic 流式状态.
+    """跨 chunk 的 Anthropic 流式状态 (参考 cc-switch src-tauri/src/proxy/providers/streaming.rs).
 
-    OpenAI 工具名/参数跨帧分片, 且 tool_use 的 content_block 只能 start 一次.
-    Anthropic 要求 content_block_start 带**完整工具名**, 因此延迟 start:
-    先累积 name, 等到 arguments 出现或流结束时才发 start (此时 name 已完整).
-    结束时需对每个已 start 的 block 发 content_block_stop, 否则 Claude Code
-    无法解析工具调用.
+    关键实践:
+    - 块切换管理: 文本/thinking/工具 block 切换时先 stop 上一个, 再 start 新的
+    - tool_use 延迟 start: id+name 都齐了才 start, start 前累积的 args 在 start 后补发
+    - message_delta 去重: 上游可能发多个 finish_reason chunk, 只发一次, 否则
+      Claude Code abort 连接
     """
 
-    text_block_started: bool = False
-    text_index: int = 0
-    # 已 start 的 tool_use block (index → block)
-    started_tool_blocks: dict[int, dict[str, str]] = field(default_factory=dict)
-    # 待 start 的 (累积 name/id)
-    pending_tool_starts: dict[int, dict[str, str]] = field(default_factory=dict)
-    tool_args: dict[int, str] = field(default_factory=dict)
-    next_index: int = 0
+    next_content_index: int = 0
+    # 当前非工具块 (text / thinking)
+    current_block_type: str | None = None
+    current_block_index: int | None = None
+    # openai tool index → 工具块状态
+    tool_blocks: dict[int, dict[str, Any]] = field(default_factory=dict)
+    open_tool_indices: set[int] = field(default_factory=set)
+    # message_delta 去重 (只发一次)
+    has_emitted_message_delta: bool = False
+
+
+def _stop_current_block(state: _AnthropicStreamState, events: list[dict[str, Any]]) -> None:
+    """stop 当前非工具块 (text/thinking)."""
+    if state.current_block_index is not None:
+        events.append({
+            "type": "content_block_stop",
+            "index": state.current_block_index,
+        })
+        state.current_block_type = None
+        state.current_block_index = None
+
+
+def _start_non_tool_block(
+    block_type: str, state: _AnthropicStreamState, events: list[dict[str, Any]],
+) -> None:
+    """切换到新的非工具块 (text/thinking), 先 stop 旧的."""
+
+    if state.current_block_type == block_type:
+        return
+    _stop_current_block(state, events)
+    index = state.next_content_index
+    state.next_content_index += 1
+    if block_type == "text":
+        block: dict[str, Any] = {"type": "text", "text": ""}
+    else:
+        block = {"type": "thinking", "thinking": ""}
+    events.append({
+        "type": "content_block_start",
+        "index": index,
+        "content_block": block,
+    })
+    state.current_block_type = block_type
+    state.current_block_index = index
 
 
 def _convert_openai_chunk_to_anthropic(
@@ -248,9 +283,10 @@ def _convert_openai_chunk_to_anthropic(
 ) -> list[dict[str, Any]]:
     """将 OpenAI SSE chunk 转换为 Anthropic SSE 事件列表.
 
-    状态化处理:
-    - 工具名跨帧累积, 避免重复 content_block_start
-    - 文本 block 懒创建 (无文本时不发空 text block)
+    状态化处理 (参考 cc-switch streaming.rs):
+    - 块切换: text ↔ thinking ↔ tool 切换时先 stop 再 start
+    - 工具名跨帧累积, id+name 齐才 start, args 缓冲后补发
+    - message_delta 去重 (只发一次)
     """
     events: list[dict[str, Any]] = []
     if state is None:
@@ -263,49 +299,125 @@ def _convert_openai_chunk_to_anthropic(
     delta = choice.get("delta", {})
     finish_reason = choice.get("finish_reason")
 
+    # 思考块 (OpenAI reasoning → Anthropic thinking)
+    reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+    if reasoning:
+        _start_non_tool_block("thinking", state, events)
+        events.append({
+            "type": "content_block_delta",
+            "index": state.current_block_index,
+            "delta": {"type": "thinking_delta", "thinking": reasoning},
+        })
+
     # 文本 delta
     content = delta.get("content")
     if content:
-        if not state.text_block_started:
-            state.text_index = state.next_index
-            state.next_index += 1
-            events.append({
-                "type": "content_block_start",
-                "index": state.text_index,
-                "content_block": {"type": "text", "text": ""},
-            })
-            state.text_block_started = True
+        _start_non_tool_block("text", state, events)
         events.append({
             "type": "content_block_delta",
-            "index": state.text_index,
+            "index": state.current_block_index,
             "delta": {"type": "text_delta", "text": content},
         })
 
-    # 工具调用 delta (注意: 键存在但值为 null 时 .get 默认值不生效, 需 or [])
+    # 工具调用 (注意: 键存在但值为 null 时 .get 默认值不生效, 需 or [])
     tool_calls = delta.get("tool_calls") or []
-    for tc in tool_calls:
-        func = tc.get("function", {})
-        idx = tc.get("index", 0) if isinstance(tc.get("index"), int) else state.next_index
-        if func.get("name"):
-            # 累积 name, 延迟到 arguments 出现或结束时才 start (name 需完整)
-            pending = state.pending_tool_starts.setdefault(idx, {"id": "", "name": ""})
+    if tool_calls:
+        # 工具调用出现 → stop 当前非工具块
+        _stop_current_block(state, events)
+        for tc in tool_calls:
+            func = tc.get("function", {})
+            oidx = tc.get("index", 0) if isinstance(tc.get("index"), int) else len(state.tool_blocks)
+            if oidx not in state.tool_blocks:
+                block: dict[str, Any] = {
+                    "anthropic_index": state.next_content_index,
+                    "id": "",
+                    "name": "",
+                    "started": False,
+                    "pending_args": "",
+                }
+                state.next_content_index += 1
+                state.tool_blocks[oidx] = block
+            else:
+                block = state.tool_blocks[oidx]
             if tc.get("id"):
-                pending["id"] = tc["id"]
-            pending["name"] += func["name"]
-        if func.get("arguments"):
-            _ensure_anthropic_tool_start(idx, tc.get("id", ""), state, events)
-            state.tool_args[idx] = state.tool_args.get(idx, "") + func["arguments"]
-            events.append({
-                "type": "content_block_delta",
-                "index": idx,
-                "delta": {"type": "input_json_delta", "partial_json": func["arguments"]},
-            })
+                block["id"] = tc["id"]
+            if func.get("name"):
+                block["name"] += func["name"]
 
-    # finish_reason → flush 未 start 的工具 + message_delta
-    if finish_reason:
-        # 纯工具调用 (arguments 为空): 此时 name 已完整, 补发 start
-        for idx, pending in list(state.pending_tool_starts.items()):
-            _ensure_anthropic_tool_start(idx, pending.get("id", ""), state, events)
+            args_delta = func.get("arguments") or ""
+            if args_delta:
+                # 到 arguments 时 start — 此时 name 已累积完整 (跨帧分片也正确)
+                if not block["started"] and bool(block["id"]) and bool(block["name"]):
+                    block["started"] = True
+                    events.append({
+                        "type": "content_block_start",
+                        "index": block["anthropic_index"],
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": block["id"],
+                            "name": block["name"],
+                            "input": {},
+                        },
+                    })
+                    state.open_tool_indices.add(block["anthropic_index"])
+                    # start 前缓冲的 args 补发
+                    pending = block.get("pending_args", "")
+                    if pending:
+                        events.append({
+                            "type": "content_block_delta",
+                            "index": block["anthropic_index"],
+                            "delta": {"type": "input_json_delta", "partial_json": pending},
+                        })
+                        block["pending_args"] = ""
+                if block["started"]:
+                    events.append({
+                        "type": "content_block_delta",
+                        "index": block["anthropic_index"],
+                        "delta": {"type": "input_json_delta", "partial_json": args_delta},
+                    })
+                else:
+                    # 未 start (id/name 缺失): 缓冲, start 后补发
+                    block["pending_args"] += args_delta
+
+    # finish_reason → 收尾 (去重 message_delta)
+    if finish_reason and not state.has_emitted_message_delta:
+        state.has_emitted_message_delta = True
+        _stop_current_block(state, events)
+
+        # late start: 未 start 但有 payload 的工具 (id/name 缺失时 fallback)
+        for oidx in sorted(state.tool_blocks):
+            block = state.tool_blocks[oidx]
+            if block["started"]:
+                continue
+            has_payload = bool(block.get("pending_args")) or bool(block["id"]) or bool(block["name"])
+            if not has_payload:
+                continue
+            block["started"] = True
+            block["id"] = block["id"] or f"tool_call_{oidx}"
+            block["name"] = block["name"] or "unknown_tool"
+            events.append({
+                "type": "content_block_start",
+                "index": block["anthropic_index"],
+                "content_block": {
+                    "type": "tool_use",
+                    "id": block["id"],
+                    "name": block["name"],
+                    "input": {},
+                },
+            })
+            state.open_tool_indices.add(block["anthropic_index"])
+            pending = block.get("pending_args", "")
+            if pending:
+                events.append({
+                    "type": "content_block_delta",
+                    "index": block["anthropic_index"],
+                    "delta": {"type": "input_json_delta", "partial_json": pending},
+                })
+
+        # stop 所有 open 的工具块 (排序)
+        for index in sorted(state.open_tool_indices):
+            events.append({"type": "content_block_stop", "index": index})
+        state.open_tool_indices.clear()
 
         stop_reason = "end_turn"
         if finish_reason == "tool_calls":
@@ -319,30 +431,6 @@ def _convert_openai_chunk_to_anthropic(
         })
 
     return events
-
-
-def _ensure_anthropic_tool_start(
-    idx: int,
-    tc_id: str,
-    state: _AnthropicStreamState,
-    events: list[dict[str, Any]],
-) -> None:
-    """若该 index 的 tool_use 未 start, 用累积的完整 name 发 content_block_start."""
-    if idx in state.started_tool_blocks:
-        return
-    pending = state.pending_tool_starts.get(idx, {"id": "", "name": ""})
-    block = {"id": tc_id or pending.get("id", ""), "name": pending.get("name", "")}
-    state.started_tool_blocks[idx] = block
-    events.append({
-        "type": "content_block_start",
-        "index": idx,
-        "content_block": {
-            "type": "tool_use",
-            "id": block["id"],
-            "name": block["name"],
-            "input": {},
-        },
-    })
 
 
 # ── 端点 ──────────────────────────────────────────────────────
@@ -457,18 +545,14 @@ async def _handle_anthropic_stream(
                 event_type = event.get("type", "")
                 yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n".encode()
 
-        # flush 未 start 的工具 (name 已累积完整), 再对每个已 start 的 block 发 stop
-        pending_events: list[dict[str, Any]] = []
-        for idx, pending in list(state.pending_tool_starts.items()):
-            _ensure_anthropic_tool_start(idx, pending.get("id", ""), state, pending_events)
-        for event in pending_events:
-            yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode()
-
-        for idx in sorted(
-            [state.text_index] if state.text_block_started else []
-            + list(state.started_tool_blocks.keys())
-        ):
-            yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': idx})}\n\n".encode()
+        # 上游未给 finish_reason (异常中断): 触发收尾 (late start + stop 块 + message_delta)
+        if not state.has_emitted_message_delta:
+            tail = _convert_openai_chunk_to_anthropic(
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+                state,
+            )
+            for event in tail:
+                yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode()
 
         # message_stop
         yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n".encode()
