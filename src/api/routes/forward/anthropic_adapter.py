@@ -10,6 +10,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from fastapi import APIRouter, Request
@@ -220,12 +221,40 @@ def _convert_openai_to_anthropic_response(
 # ── 流式转换 ──────────────────────────────────────────────────
 
 
+@dataclass
+class _AnthropicStreamState:
+    """跨 chunk 的 Anthropic 流式状态.
+
+    OpenAI 工具名/参数跨帧分片, 且 tool_use 的 content_block 只能 start 一次.
+    Anthropic 要求 content_block_start 带**完整工具名**, 因此延迟 start:
+    先累积 name, 等到 arguments 出现或流结束时才发 start (此时 name 已完整).
+    结束时需对每个已 start 的 block 发 content_block_stop, 否则 Claude Code
+    无法解析工具调用.
+    """
+
+    text_block_started: bool = False
+    text_index: int = 0
+    # 已 start 的 tool_use block (index → block)
+    started_tool_blocks: dict[int, dict[str, str]] = field(default_factory=dict)
+    # 待 start 的 (累积 name/id)
+    pending_tool_starts: dict[int, dict[str, str]] = field(default_factory=dict)
+    tool_args: dict[int, str] = field(default_factory=dict)
+    next_index: int = 0
+
+
 def _convert_openai_chunk_to_anthropic(
     chunk: dict[str, Any],
-    content_block_index: int = 0,
+    state: _AnthropicStreamState | None = None,
 ) -> list[dict[str, Any]]:
-    """将 OpenAI SSE chunk 转换为 Anthropic SSE 事件列表."""
+    """将 OpenAI SSE chunk 转换为 Anthropic SSE 事件列表.
+
+    状态化处理:
+    - 工具名跨帧累积, 避免重复 content_block_start
+    - 文本 block 懒创建 (无文本时不发空 text block)
+    """
     events: list[dict[str, Any]] = []
+    if state is None:
+        state = _AnthropicStreamState()
     choices = chunk.get("choices", [])
     if not choices:
         return events
@@ -237,9 +266,18 @@ def _convert_openai_chunk_to_anthropic(
     # 文本 delta
     content = delta.get("content")
     if content:
+        if not state.text_block_started:
+            state.text_index = state.next_index
+            state.next_index += 1
+            events.append({
+                "type": "content_block_start",
+                "index": state.text_index,
+                "content_block": {"type": "text", "text": ""},
+            })
+            state.text_block_started = True
         events.append({
             "type": "content_block_delta",
-            "index": content_block_index,
+            "index": state.text_index,
             "delta": {"type": "text_delta", "text": content},
         })
 
@@ -247,27 +285,28 @@ def _convert_openai_chunk_to_anthropic(
     tool_calls = delta.get("tool_calls") or []
     for tc in tool_calls:
         func = tc.get("function", {})
+        idx = tc.get("index", 0) if isinstance(tc.get("index"), int) else state.next_index
         if func.get("name"):
-            # 新工具调用开始
-            events.append({
-                "type": "content_block_start",
-                "index": content_block_index + 1,
-                "content_block": {
-                    "type": "tool_use",
-                    "id": tc.get("id", ""),
-                    "name": func["name"],
-                    "input": {},
-                },
-            })
+            # 累积 name, 延迟到 arguments 出现或结束时才 start (name 需完整)
+            pending = state.pending_tool_starts.setdefault(idx, {"id": "", "name": ""})
+            if tc.get("id"):
+                pending["id"] = tc["id"]
+            pending["name"] += func["name"]
         if func.get("arguments"):
+            _ensure_anthropic_tool_start(idx, tc.get("id", ""), state, events)
+            state.tool_args[idx] = state.tool_args.get(idx, "") + func["arguments"]
             events.append({
                 "type": "content_block_delta",
-                "index": content_block_index + 1,
+                "index": idx,
                 "delta": {"type": "input_json_delta", "partial_json": func["arguments"]},
             })
 
-    # finish_reason → message_delta
+    # finish_reason → flush 未 start 的工具 + message_delta
     if finish_reason:
+        # 纯工具调用 (arguments 为空): 此时 name 已完整, 补发 start
+        for idx, pending in list(state.pending_tool_starts.items()):
+            _ensure_anthropic_tool_start(idx, pending.get("id", ""), state, events)
+
         stop_reason = "end_turn"
         if finish_reason == "tool_calls":
             stop_reason = "tool_use"
@@ -282,7 +321,57 @@ def _convert_openai_chunk_to_anthropic(
     return events
 
 
+def _ensure_anthropic_tool_start(
+    idx: int,
+    tc_id: str,
+    state: _AnthropicStreamState,
+    events: list[dict[str, Any]],
+) -> None:
+    """若该 index 的 tool_use 未 start, 用累积的完整 name 发 content_block_start."""
+    if idx in state.started_tool_blocks:
+        return
+    pending = state.pending_tool_starts.get(idx, {"id": "", "name": ""})
+    block = {"id": tc_id or pending.get("id", ""), "name": pending.get("name", "")}
+    state.started_tool_blocks[idx] = block
+    events.append({
+        "type": "content_block_start",
+        "index": idx,
+        "content_block": {
+            "type": "tool_use",
+            "id": block["id"],
+            "name": block["name"],
+            "input": {},
+        },
+    })
+
+
 # ── 端点 ──────────────────────────────────────────────────────
+
+
+@router.post("/messages/count_tokens", tags=["Anthropic"])
+async def count_tokens(body: AnthropicMessagesRequest) -> dict[str, Any]:
+    """估算输入 token 数 (Anthropic Messages API 兼容).
+
+    Cherry Studio / Claude Code 客户端在发送前调用该端点预估 token 用量.
+    返回结构: {"input_tokens": N}. 使用与短期记忆一致的启发式估算
+    (len//2 + 8), 不保证与上游 tokenizer 完全一致 (仅用于预估).
+    """
+    total = 0
+
+    def _est(text: str) -> int:
+        return len(text) // 2 + 8
+
+    if body.system:
+        system_text = body.system if isinstance(body.system, str) else json.dumps(body.system, ensure_ascii=False)
+        total += _est(system_text)
+    for msg in body.messages:
+        if isinstance(msg.content, str):
+            total += _est(msg.content)
+        elif isinstance(msg.content, list):
+            for block in msg.content:
+                if block.text:
+                    total += _est(block.text)
+    return {"input_tokens": total}
 
 
 @router.post("/messages", tags=["Anthropic"])
@@ -343,14 +432,12 @@ async def _handle_anthropic_stream(
     async def anthropic_stream() -> AsyncGenerator[bytes, None]:
         message_id = f"msg_{uuid.uuid4().hex[:24]}"
         model = body.model
+        state = _AnthropicStreamState()
 
         # message_start 事件
         yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': message_id, 'type': 'message', 'role': 'assistant', 'content': [], 'model': model, 'stop_reason': None, 'stop_sequence': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n".encode()
 
-        # content_block_start
-        yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n".encode()
-
-        # 转发流式数据
+        # 转发流式数据 (文本 block 懒创建, 工具 block 状态化累积)
         async for chunk_bytes in openai_response.body_iterator:
             chunk_str = cast(bytes, chunk_bytes).decode("utf-8", errors="ignore").strip()
             if not chunk_str or chunk_str == "data: [DONE]":
@@ -365,13 +452,23 @@ async def _handle_anthropic_stream(
                 continue
 
             # 转换为 Anthropic 事件
-            anthropic_events = _convert_openai_chunk_to_anthropic(chunk)
+            anthropic_events = _convert_openai_chunk_to_anthropic(chunk, state)
             for event in anthropic_events:
                 event_type = event.get("type", "")
                 yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n".encode()
 
-        # content_block_stop
-        yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n".encode()
+        # flush 未 start 的工具 (name 已累积完整), 再对每个已 start 的 block 发 stop
+        pending_events: list[dict[str, Any]] = []
+        for idx, pending in list(state.pending_tool_starts.items()):
+            _ensure_anthropic_tool_start(idx, pending.get("id", ""), state, pending_events)
+        for event in pending_events:
+            yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode()
+
+        for idx in sorted(
+            [state.text_index] if state.text_block_started else []
+            + list(state.started_tool_blocks.keys())
+        ):
+            yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': idx})}\n\n".encode()
 
         # message_stop
         yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n".encode()

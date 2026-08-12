@@ -169,3 +169,53 @@ def test_anthropic_chunk_with_null_tool_calls() -> None:
     }
     events = _convert_openai_chunk_to_anthropic(chunk)
     assert any(e["type"] == "content_block_delta" for e in events)
+
+
+def test_anthropic_tool_call_fragmented_name() -> None:
+    """工具名跨帧分片: 只 start 一次, name 累积, 不重复 content_block_start."""
+    from src.api.routes.forward.anthropic_adapter import (
+        _AnthropicStreamState,
+        _convert_openai_chunk_to_anthropic,
+    )
+
+    state = _AnthropicStreamState()
+    events: list[dict] = []
+    events += _convert_openai_chunk_to_anthropic(
+        {"choices": [{"index": 0, "delta": {"tool_calls": [
+            {"index": 0, "id": "call_1", "type": "function",
+             "function": {"name": "get_", "arguments": ""}},
+        ]}, "finish_reason": None}]},
+        state,
+    )
+    events += _convert_openai_chunk_to_anthropic(
+        {"choices": [{"index": 0, "delta": {"tool_calls": [
+            {"index": 0, "function": {"name": "weather", "arguments": "{}"}},
+        ]}, "finish_reason": None}]},
+        state,
+    )
+    events += _convert_openai_chunk_to_anthropic(
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        state,
+    )
+
+    starts = [e for e in events if e["type"] == "content_block_start"]
+    assert len(starts) == 1  # 只 start 一次
+    assert starts[0]["content_block"]["type"] == "tool_use"
+    assert starts[0]["content_block"]["name"] == "get_weather"
+    assert starts[0]["content_block"]["id"] == "call_1"
+    # 结束时 message_delta 带 tool_use stop_reason
+    deltas = [e for e in events if e["type"] == "message_delta"]
+    assert deltas and deltas[0]["delta"]["stop_reason"] == "tool_use"
+
+
+def test_count_tokens_endpoint(client: TestClient) -> None:
+    """Cherry Studio 调 POST /v1/messages/count_tokens 应返回 input_tokens 而非 405."""
+    r = client.post("/v1/messages/count_tokens", json={
+        "model": "mnemosync-any",
+        "messages": [{"role": "user", "content": "你好世界"}],
+    })
+    assert r.status_code != 405
+    assert r.status_code == 200
+    body = r.json()
+    assert "input_tokens" in body
+    assert body["input_tokens"] > 0
