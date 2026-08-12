@@ -331,26 +331,10 @@ async def _handle_identity_binding(
     bind_cmd = settings.runtime.identity_bind_command
     bind_prefix = settings.runtime.identity_bind_confirm_prefix
 
-    last_user_msg = last_user_message(messages_dict).strip()
-
-    # 无 actor_id (API Key 未配置身份策略, 非归属模式): 仍拦截绑定指令,
-    # 但给出明确提示而非直接放行让模型瞎猜.
     if not actor_id:
-        if last_user_msg == bind_cmd or (
-            last_user_msg.startswith(bind_prefix + " ") and len(last_user_msg.split()) == 2
-        ):
-            return BindContext(
-                kind="initiate",
-                success=False,
-                message="当前接入未启用身份识别",
-                prompt_hint=(
-                    f"用户请求跨平台身份绑定, 但当前 API Key 未配置身份识别策略,\n"
-                    f"无法建立身份进行绑定。请用你的风格告知用户: 需要先在面板的"
-                    f"「API Key」页面为该 Key 配置身份识别策略 (direct / api_key_bound / "
-                    f"regex / llm), 才能使用跨平台绑定功能。"
-                ),
-            )
         return None
+
+    last_user_msg = last_user_message(messages_dict).strip()
 
     if last_user_msg == bind_cmd:
         return await _bind_initiate(
