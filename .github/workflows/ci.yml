@@ -38,7 +38,8 @@ jobs:
           uv pip install pip-audit
           # mnemosync 不在 PyPI, --ignore-vuln 是必须的 (否则 pip-audit 报错);
           # 移除 || true 使漏洞阻断 CI
-          uv run pip-audit -l --ignore-vuln mnemosync
+          # PYSEC-2026-311 (chromadb<=1.5.9): 上游尚未发布修复版, 升级 chromadb 到 1.5.10 时移除
+          uv run pip-audit -l --ignore-vuln mnemosync --ignore-vuln PYSEC-2026-311
 
   frontend:
     name: Frontend (Node 24)
@@ -72,4 +73,5 @@ jobs:
         run: npm run build
 
       - name: Security audit (npm audit)
-        run: npm audit --audit-level=high
+        # --omit=dev: 仅审计生产依赖; dev 构建工具链漏洞不进入产物 (Vite bundle)
+        run: npm audit --audit-level=high --omit=dev
