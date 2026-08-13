@@ -224,9 +224,6 @@ onMounted(() => {
                 <el-option v-for="f in frontendOptions" :key="f" :value="f" :label="f" />
               </el-select>
             </el-form-item>
-            <el-form-item label="当前前台模块">
-              <el-input v-model="settingsFrontend" placeholder="如 cherry" style="display:none" />
-            </el-form-item>
           </el-form>
           <p class="hint">
             按前台配置「不清洗」的模块: 该前台的这些模块将原样保留, 不调 LLM 清洗。

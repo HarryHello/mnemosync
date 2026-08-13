@@ -85,8 +85,12 @@ async def list_clean_cache(
 ) -> PromptCacheListResponse:
     store = _store(request)
     items, total = await store.list_cache(limit=page_size, offset=(page - 1) * page_size, frontend=frontend)
+    # 列表只返回原文摘要 (详情接口 get_clean_cache 才返回全文), 避免大响应
     return PromptCacheListResponse(
-        items=[PromptCacheItem(**i.__dict__) for i in items],
+        items=[
+            PromptCacheItem(**{**i.__dict__, "module_text": i.module_text[:200]})
+            for i in items
+        ],
         total=total,
     )
 

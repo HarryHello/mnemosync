@@ -20,6 +20,7 @@ from src.api.tool_transactions import (
     ToolTransactionError,
     extract_tool_transaction_tail,
 )
+from src.core.agents.spec import get_spec
 from src.core.config import get_settings
 from src.core.constants import VIRTUAL_MODEL_ANY
 from src.core.utils import last_user_message
@@ -30,6 +31,8 @@ from ._accessors import (
     _get_debug_bus,
     _get_identity_store,
     _get_multi_forwarder,
+    _get_prompt_cache_store,
+    _get_prompt_clean_semaphore,
 )
 
 logger = logging.getLogger(__name__)
@@ -265,8 +268,9 @@ async def _extract_and_resolve_tool_transaction(
 # ── 提示词清洗 + 内部工具 ────────────────────────────────────
 
 
-# 提示词清洗: 单模块前台等待上限 (秒), 超时本次丢弃 + 后台继续
-PROMPT_CLEAN_FRONT_TIMEOUT = 30.0
+# 提示词清洗: 单模块前台等待上限 (秒, 与 AgentSpec timeout 单一来源),
+# 超时本次丢弃 + 后台继续
+PROMPT_CLEAN_FRONT_TIMEOUT = float(get_spec("prompt_cleaning").timeout_seconds)
 # 429 限流退避重试 (秒)
 _PROMPT_CLEAN_RETRY_DELAYS = (1.0, 2.0, 4.0)
 # in-flight 去重表: (frontend, module_hash) -> Task
@@ -421,10 +425,6 @@ async def _prepare_prompt(
         (persona, prompt_cleaning_result) — persona 已追加清洗后指令;
         prompt_cleaning_result 为 None 表示无清洗动作.
     """
-    from src.api.routes.forward._accessors import (
-        _get_prompt_cache_store,
-        _get_prompt_clean_semaphore,
-    )
     from src.core.agents.cleaning_module import split_prompt_modules
 
     client_system_msg = ""

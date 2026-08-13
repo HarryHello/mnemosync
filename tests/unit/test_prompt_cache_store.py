@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
 from src.persistence.prompt_cache_store import (
-    MAX_CACHE_ENTRIES,
     PromptCacheEntry,
     PromptCacheStore,
 )

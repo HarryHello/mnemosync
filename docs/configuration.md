@@ -105,6 +105,7 @@ context            = "..."
 | `checkpoint_backend` | `memory` | LangGraph checkpoint 后端 (`memory` / `sqlite`); v0.2.6 起 checkpoint 仅作单请求内节点共享 state 用, 不再承担跨请求短期记忆 |
 | `proxy_thinking_default` | false | 代理推理的**兜底**开关: 请求无 `reasoning_effort` 等提示、主模型也没原生推理时, 是否强制启用 |
 | `proxy_thinking_native_reasoning_models` | 见下 | 视为具备原生推理的模型前缀白名单 (命中即 skip 代理推理) |
+| `prompt_clean_max_concurrency` | 20 | (v0.4.1) 提示词清洗全局并发上限 (所有进行中模块清洗的并发总额); 低配额 key 可调小 |
 
 **默认前缀白名单**:
 ```

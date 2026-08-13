@@ -62,6 +62,8 @@ Mnemosync/
 - `persona.db` — **v0.3.3** 结构化人格版本存储 (personas + persona_versions)
 - `lorebook.db` — **v0.3.3** Lorebook 关键词知识条目
 - `space_policy.db` — **v0.3.3** 空间社交策略
+- `agent_runs.db` — **v0.3.5** Agent 运行记录
+- `prompt_cache.db` — **v0.4.1** 提示词清洗模块缓存 + 跳过配置 (prompt_cache / prompt_clean_settings)
 - `chroma/` — ChromaDB 向量库 (含 v0.2.4 embedding lock metadata)
 - `prompts/` — v0.2.1 用户提示词覆盖层 (可选; 无覆盖时读默认层)
 - `prompts/.history/` — 提示词覆盖备份 (每个 name 保留最近 10 份)

@@ -10,10 +10,15 @@
 - **版本列表**：新增 `mnemosync versions` 命令 + 面板设置页版本下拉，列出所有可用版本及发布描述。
 - **版本锁定**：install.sh 支持 `MNEMOSYNC_VERSION` 检出指定 tag，UI 用对应版本 release。
 - **发布描述**：release.yml 改为从 CHANGELOG.md 提取章节作为 GitHub Release 描述。
+- **模块化提示词清洗**：客户端 system 提示词按 markdown 标题拆分为模块并发清洗（≤3 级标题 + `---` 边界）；按前台哈希缓存清洗结果（上限 10000 LRU），缓存命中零 LLM；同一模块并发请求 in-flight 去重复用；单模块超时（30s）本次丢弃 + 后台继续写缓存。
+- **清洗跳过配置**：按前台（api_key.note）+ `*` 通配配置「不清洗」模块，跳过的模块原样保留。
+- **429 分流**：解析错误码分类限流/配额——限流退避重试（1s/2s/4s），配额不足（`insufficient_quota` 等）触发模型候选 fallback。
+- **面板「清洗缓存」页**：按前台列出模块缓存、textarea 直接编辑清洗结果、当场重新清洗、删除（下次自动重洗）、清空、跳过配置管理。
 
 ### 架构
 - 后端新增 `GET /panel/admin/versions` 端点；`POST /panel/admin/upgrade` 支持 `version` 参数。
 - `update_checker` 新增 `list_releases()`。
+- 新增 `data/prompt_cache.db`（`prompt_cache` + `prompt_clean_settings` 两表）；提示词清洗全局并发信号量（`[graph] prompt_clean_max_concurrency`，默认 20）；`_should_fallback` 对配额类 429 返回 True（全局 fallback 行为变更）。
 
 ## [v0.4.0] - 2026-08
 
