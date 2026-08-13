@@ -16,6 +16,7 @@ import os
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from functools import lru_cache
 from types import TracebackType
 from typing import Any, cast
 
@@ -63,10 +64,12 @@ _RATE_KEYWORDS = (
 )
 
 
+@lru_cache(maxsize=256)
 def classify_429(message: str) -> str:
     """分类 429 错误.
 
     结构化提取优先 (error.code / error.type, 递归找), 找不到则全文关键词兜底.
+    相同错误文本只解析一次 (lru_cache), 服务商固定错误模板下零重复开销.
     Returns:
         "quota" (余额不足, 应 fallback) | "rate" (限流, 应重试) | "unknown"
     """

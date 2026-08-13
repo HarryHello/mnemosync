@@ -175,13 +175,20 @@ class PromptCacheStore(SqliteStore):
         return items, total
 
     async def _trim(self, db: aiosqlite.Connection) -> None:
-        """超过上限时按 updated_at LRU 裁剪最旧 (SQLite 隐式 rowid)."""
-        async with db.execute("SELECT COUNT(*) FROM prompt_cache") as cur:
-            total_row = await cur.fetchone()
-        total = int(total_row[0]) if total_row else 0
-        if total <= MAX_CACHE_ENTRIES:
+        """超过上限时按 updated_at LRU 裁剪最旧 (SQLite 隐式 rowid).
+
+        用 LIMIT 短路快速判断 (仅在疑似超限时才取 COUNT), 避免每次写入全表 COUNT.
+        """
+        cur = await db.execute(
+            f"SELECT rowid FROM prompt_cache LIMIT {MAX_CACHE_ENTRIES + 1}"
+        )
+        over_limit_rows = list(await cur.fetchall())
+        if len(over_limit_rows) <= MAX_CACHE_ENTRIES:
             return
-        overflow = total - MAX_CACHE_ENTRIES
+        async with db.execute("SELECT COUNT(*) FROM prompt_cache") as cnt:
+            total_row = await cnt.fetchone()
+        total = int(total_row[0]) if total_row else 0
+        overflow = max(total - MAX_CACHE_ENTRIES, 1)
         await db.execute(
             "DELETE FROM prompt_cache WHERE rowid IN ("
             " SELECT rowid FROM prompt_cache ORDER BY updated_at ASC LIMIT ?)",
