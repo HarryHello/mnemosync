@@ -266,18 +266,93 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.tab-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
-.tab-title { margin: 0 0 4px; font-size: 18px; }
-.tab-subtitle { margin: 0; color: var(--el-text-color-secondary); font-size: 13px; }
-.head-actions { display: flex; gap: 8px; }
-.filter-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
-.muted { color: var(--el-text-color-secondary); font-size: 12px; }
-.mono { font-family: ui-monospace, monospace; font-size: 12px; }
-.text-clip { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
-.tag-skip { color: var(--el-color-warning); font-size: 12px; }
-.pagination { margin-top: 12px; justify-content: flex-end; }
-.hint { color: var(--el-text-color-secondary); font-size: 12px; margin: 0 0 10px; }
-.skip-list { max-height: 360px; overflow: auto; }
-.skip-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--el-border-color-lighter); }
-.raw-box { max-height: 160px; overflow: auto; white-space: pre-wrap; font-size: 11px; margin: 0; background: var(--el-fill-color-light); padding: 8px; border-radius: 4px; }
+.tab-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.tab-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.tab-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.filter-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.muted {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.mono {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.text-clip {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.tag-skip {
+  font-size: 12px;
+  color: var(--el-color-warning);
+}
+
+.pagination {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.skip-list {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.skip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.raw-box {
+  max-height: 160px;
+  padding: 8px;
+  margin: 0;
+  overflow: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+}
 </style>

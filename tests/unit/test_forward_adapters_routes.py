@@ -14,7 +14,19 @@ from src.cli.cli import _build_api_app
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(monkeypatch) -> TestClient:
+    """打桩内部管线: 本测试只验证「路由命中 adapter + 格式转换」,
+    不依赖真实 data/ 里的模型配置 (CI 无配置会导致 Graph 执行 500)."""
+    from fastapi.responses import JSONResponse as _JSONResponse
+
+    async def fake_create_chat(request, http_request):
+        return _JSONResponse(content={"choices": [{
+            "message": {"role": "assistant", "content": "hi"},
+        }]})
+
+    monkeypatch.setattr(
+        "src.api.routes.forward.create_chat_completion", fake_create_chat,
+    )
     app = _build_api_app(SimpleNamespace(debug=False))
     with TestClient(app) as c:
         yield c
