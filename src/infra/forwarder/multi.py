@@ -50,8 +50,11 @@ def _should_fallback(exc: BaseException) -> bool:
     if isinstance(exc, UpstreamTimeout):
         return True
     if isinstance(exc, UpstreamError):
-        # 4xx = 客户端请求本身有问题, 换服务也没用
+        # 4xx = 客户端请求本身有问题, 换服务也没用 (429 例外: 配额类应换候选)
         if exc.status_code is not None and 400 <= exc.status_code < 500:
+            if exc.status_code == 429 and exc.category == "quota":
+                # 余额/配额不足: 等待无用, 换备选模型
+                return True
             return False
         return True
     if isinstance(exc, (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError)):

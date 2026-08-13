@@ -50,12 +50,71 @@ def _log_upstream(direction: str, base_url: str, data: Any, status: int | None =
     )
 
 
+# 429 错误的配额类关键词: 命中表示余额/配额问题, 等待无用, 应 fallback 换候选
+_QUOTA_KEYWORDS = (
+    "insufficient_quota", "quota_exceeded", "quota", "billing", "payment",
+    "insufficient_credits", "insufficient_balance", "insufficient balance",
+    "purchase a plan", "api key expired", "forbidden",
+)
+# 429 错误的限流类关键词: 命中表示并发/速率限制, 等待有效
+_RATE_KEYWORDS = (
+    "rate_limit", "rate limit", "too_many_requests", "too many requests",
+    "overloaded", "throttl", "temporarily unavailable",
+)
+
+
+def classify_429(message: str) -> str:
+    """分类 429 错误.
+
+    结构化提取优先 (error.code / error.type, 递归找), 找不到则全文关键词兜底.
+    Returns:
+        "quota" (余额不足, 应 fallback) | "rate" (限流, 应重试) | "unknown"
+    """
+    # 结构化提取 error.code / error.type
+    try:
+        import json
+        parsed = json.loads(message)
+        for value in _walk_error_codes(parsed):
+            lowered = str(value).lower()
+            if any(k in lowered for k in _RATE_KEYWORDS):
+                return "rate"
+            if any(k in lowered for k in _QUOTA_KEYWORDS):
+                return "quota"
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 全文关键词兜底: 先查限流 (宁可重试不误换候选), 再查配额
+    lowered = message.lower()
+    if any(k in lowered for k in _RATE_KEYWORDS):
+        return "rate"
+    if any(k in lowered for k in _QUOTA_KEYWORDS):
+        return "quota"
+    return "unknown"
+
+
+def _walk_error_codes(obj: Any) -> list[Any]:
+    """递归遍历 dict 提取 error.code / error.type 类字段的值."""
+    results: list[Any] = []
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if isinstance(key, str) and key in ("code", "type") and isinstance(value, str):
+                results.append(value)
+            else:
+                results.extend(_walk_error_codes(value))
+    elif isinstance(obj, list):
+        for item in obj:
+            results.extend(_walk_error_codes(item))
+    return results
+
+
 class UpstreamError(Exception):
     """上游服务错误."""
 
     def __init__(self, status_code: int | None = None, message: str = ""):
         self.status_code = status_code
         self.message = message
+        # 429 分类: "quota" / "rate" / "unknown"
+        self.category: str | None = classify_429(message) if status_code == 429 else None
         super().__init__(f"Upstream error {status_code}: {message}")
 
 

@@ -337,7 +337,7 @@ async def create_chat_completion(
 
     # 10. 提示词清洗
     persona, prompt_cleaning_result = await _prepare_prompt(
-        request.messages, persona, http_request,
+        request.messages, persona, http_request, source_frontend,
     )
 
     # 11. 入站工具过滤 + 内部工具注入

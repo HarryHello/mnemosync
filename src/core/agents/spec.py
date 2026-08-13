@@ -27,7 +27,7 @@ AGENT_SPECS: dict[str, AgentSpec] = {
         purpose="清洗客户端 system 消息",
         model_role="ASSIST",
         runner_type="simple",
-        timeout_seconds=15,
+        timeout_seconds=30,
         max_iterations=1,
     ),
     "expressor": AgentSpec(

@@ -337,3 +337,22 @@ def test_responses_nonstream_reasoning_item() -> None:
     assert reasoning["summary"][0]["text"] == "内心思考"
     msg = next(o for o in result["output"] if o["type"] == "message")
     assert msg["content"][0]["text"] == "你好"
+
+
+def test_429_classify_rate_vs_quota() -> None:
+    """429 分类: 限流 vs 配额 vs 未知."""
+    from src.infra.forwarder.forwarder import UpstreamError, classify_429
+
+    assert classify_429('{"error": {"type": "rate_limit_error", "message": "rate limit"}}') == "rate"
+    assert classify_429('{"error": {"code": "too_many_requests"}}') == "rate"
+    assert classify_429('{"error": {"code": "insufficient_quota", "message": "quota"}}') == "quota"
+    assert classify_429('{"error": {"message": "insufficient balance to cover the request"}}') == "quota"
+    assert classify_429("plain text no keywords") == "unknown"
+
+    # fallback 行为: 配额类 429 fallback; 限流不 fallback
+    from src.infra.forwarder.multi import _should_fallback
+
+    assert _should_fallback(UpstreamError(429, '{"error": {"code": "insufficient_quota"}}')) is True
+    assert _should_fallback(UpstreamError(429, '{"error": {"code": "rate_limit_error"}}')) is False
+    assert _should_fallback(UpstreamError(429, "plain 429")) is False
+    assert _should_fallback(UpstreamError(400, "bad")) is False

@@ -2,7 +2,7 @@
 
 import type { HealthResponse, HttpLog, HttpLogListResponse } from '@/types/api'
 import { API_BASE, buildQuery } from '@/utils/constants'
-import { apiDelete, apiGet, apiPost, request } from './http'
+import { apiDelete, apiGet, apiPost, apiPut, request } from './http'
 
 // ============================================================================
 // Health
@@ -107,4 +107,62 @@ export interface UpgradeResult {
 
 export async function upgradeService(version?: string): Promise<UpgradeResult> {
   return apiPost<UpgradeResult>('/admin/upgrade', version ? { version } : {})
+}
+
+// ============================================================================
+// Prompt Cleaning Cache (v0.4.1)
+// ============================================================================
+
+export interface PromptCacheEntryDto {
+  frontend: string
+  module_hash: string
+  module_title: string
+  module_text: string
+  clean_prompt: string
+  skipped: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PromptCacheListDto {
+  items: PromptCacheEntryDto[]
+  total: number
+}
+
+export async function listPromptCleanCache(frontend?: string, page = 1, pageSize = 50): Promise<PromptCacheListDto> {
+  const params = new URLSearchParams()
+  if (frontend) params.set('frontend', frontend)
+  params.set('page', String(page))
+  params.set('page_size', String(pageSize))
+  return apiGet<PromptCacheListDto>(`/admin/prompt-cleaning/cache?${params}`)
+}
+
+export async function deletePromptCleanCache(frontend: string, hash: string): Promise<{ success: boolean }> {
+  return apiDelete(`/admin/prompt-cleaning/cache/${hash}?frontend=${encodeURIComponent(frontend)}`)
+}
+
+export async function updatePromptCleanCache(frontend: string, hash: string, cleanPrompt: string): Promise<{ success: boolean }> {
+  return apiPut(`/admin/prompt-cleaning/cache/${hash}?frontend=${encodeURIComponent(frontend)}`, { clean_prompt: cleanPrompt })
+}
+
+export async function reCleanPromptCache(frontend: string, hash: string): Promise<{ success: boolean; clean_prompt: string }> {
+  return apiPost(`/admin/prompt-cleaning/cache/${hash}/re-clean?frontend=${encodeURIComponent(frontend)}`)
+}
+
+export async function clearPromptCleanCache(): Promise<{ success: boolean; deleted: number }> {
+  return apiDelete('/admin/prompt-cleaning/cache')
+}
+
+export interface PromptCleanSettingDto {
+  frontend: string
+  module_title: string
+  skip: boolean
+}
+
+export async function listPromptCleanSettings(): Promise<{ items: PromptCleanSettingDto[]; total: number }> {
+  return apiGet('/admin/prompt-cleaning/settings')
+}
+
+export async function setPromptCleanSetting(frontend: string, moduleTitle: string, skip: boolean): Promise<{ success: boolean }> {
+  return apiPut('/admin/prompt-cleaning/settings', { frontend, module_title: moduleTitle, skip })
 }

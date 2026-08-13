@@ -44,6 +44,7 @@ class StorageConfig:
     prompts_override_dir: str = "data/prompts"
     conversation_db_path: str = "data/conversation.db"
     agent_run_db_path: str = "data/agent_runs.db"
+    prompt_cache_db_path: str = "data/prompt_cache.db"
     short_term_days: int = 7
 
     @property
@@ -93,6 +94,10 @@ class StorageConfig:
     @property
     def agent_run_db_abs(self) -> Path:
         return PROJECT_ROOT / self.agent_run_db_path
+
+    @property
+    def prompt_cache_db_abs(self) -> Path:
+        return PROJECT_ROOT / self.prompt_cache_db_path
 
 
 @dataclass
@@ -216,6 +221,8 @@ class GraphConfig:
     proxy_thinking_native_reasoning_models: list[str] = field(
         default_factory=lambda: list(DEFAULT_NATIVE_REASONING_MODELS)
     )
+    # 提示词清洗全局并发上限 (v0.4.1, 默认 20; 低配额 key 可调小)
+    prompt_clean_max_concurrency: int = 20
 
 
 @dataclass

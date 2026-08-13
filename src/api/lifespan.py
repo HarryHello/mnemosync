@@ -40,6 +40,7 @@ from src.persistence.lorebook_store import SqliteLorebookStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.persistence.notification_store import NotificationStore
 from src.persistence.persona_store import SqlitePersonaStore
+from src.persistence.prompt_cache_store import PromptCacheStore
 from src.persistence.relationship_store import SqliteRelationshipStore
 from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
@@ -99,6 +100,7 @@ async def _connect_stores(settings: Any) -> dict[str, Any]:
     lorebook_store = SqliteLorebookStore(str(storage.identity_db_abs))
     space_policy_store = SqliteSpacePolicyStore(str(storage.identity_db_abs))
     agent_run_store = AgentRunStore(str(storage.agent_run_db_abs))
+    prompt_cache_store = PromptCacheStore(str(storage.prompt_cache_db_abs))
 
     instances: dict[str, Any] = {
         "auth_store": auth_store,
@@ -115,6 +117,7 @@ async def _connect_stores(settings: Any) -> dict[str, Any]:
         "lorebook_store": lorebook_store,
         "space_policy_store": space_policy_store,
         "agent_run_store": agent_run_store,
+        "prompt_cache_store": prompt_cache_store,
     }
 
     connect_order = [
@@ -125,7 +128,8 @@ async def _connect_stores(settings: Any) -> dict[str, Any]:
     for key in connect_order:
         await instances[key].connect()
 
-    for key in ("llm_service_store", "persona_store", "lorebook_store", "space_policy_store", "agent_run_store"):
+    for key in ("llm_service_store", "persona_store", "lorebook_store", "space_policy_store",
+            "agent_run_store", "prompt_cache_store"):
         await instances[key].init_db()
 
     return instances
@@ -136,7 +140,7 @@ async def _close_all(instances: dict[str, Any]) -> None:
     close_order = [
         "conversation_store", "notification_store", "identity_store",
         "idempotency_store", "http_log_store", "relationship_store", "memory_store",
-        "api_key_store", "auth_store",
+        "api_key_store", "auth_store", "prompt_cache_store",
     ]
     for key in close_order:
         instance = instances.get(key)
@@ -225,6 +229,11 @@ async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
         internal_tools=internal_tools,
         space_locks=SpaceLockManager(),
         agent_run_store=instances["agent_run_store"],
+        prompt_cache_store=instances["prompt_cache_store"],
+        # 提示词清洗全局并发信号量 (默认 20, 可配置)
+        prompt_clean_semaphore=asyncio.Semaphore(
+            get_settings().graph.prompt_clean_max_concurrency,
+        ),
         active_bg_tasks={},
     )
     app.state = cast(Any, state)

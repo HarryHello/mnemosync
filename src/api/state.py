@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from src.persistence.memory_store import SqliteMemoryStore
     from src.persistence.notification_store import NotificationStore
     from src.persistence.persona_store import SqlitePersonaStore
+    from src.persistence.prompt_cache_store import PromptCacheStore
     from src.persistence.relationship_store import SqliteRelationshipStore
     from src.persistence.space_policy_store import SqliteSpacePolicyStore
 
@@ -68,6 +69,9 @@ class AppState:
     lorebook_store: SqliteLorebookStore | None = None
     space_policy_store: SqliteSpacePolicyStore | None = None
     agent_run_store: AgentRunStore | None = None
+    prompt_cache_store: PromptCacheStore | None = None
+    # 提示词清洗全局并发信号量 (默认 20)
+    prompt_clean_semaphore: asyncio.Semaphore | None = None
     active_bg_tasks: dict[str, asyncio.Task[Any]] | None = None
 
     # ── 服务 / 管理器 ──────────────────────────────────
