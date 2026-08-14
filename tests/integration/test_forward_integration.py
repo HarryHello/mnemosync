@@ -425,8 +425,7 @@ class TestStreamBasicFlow:
         relationship_store = AsyncMock(
             get_relationship=AsyncMock(return_value=SimpleNamespace(
                 type="friend",
-                intimacy_score=0.5,
-                trust_level=0.6,
+                favor=0.5,
                 interaction_count=10,
                 notes=None,
             ))

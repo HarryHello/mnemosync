@@ -2,6 +2,11 @@
 
 SQLite 存储关系状态 (relationships 表) + 关系审计日志 (relationship_audit_log 表).
 与 SqliteMemoryStore 共享同一个数据库文件.
+
+v0.4.1: 亲密度 + 信任度统一为单一好感度 (favor, -1.0~1.0).
+- 新库直接建 favor 列; 旧库 (≤ v0.4.0) 由迁移 ``006_add_favor`` 加列并回填
+  ``favor = MAX(intimacy_score, trust_level)`` (RFC: 迁移零缩放).
+- 旧列 intimacy_score/trust_level 保留不再写入, 避免破坏旧库结构.
 """
 
 from __future__ import annotations
@@ -14,6 +19,17 @@ import aiosqlite
 
 from src.core.memory.models import Relationship, RelationshipAuditEntry
 from src.persistence.base import SqliteStore, _dt, _parse_dt, resolve_sort_params
+
+#: 兼容排序: 旧 UI/API 的排序键映射到 favor
+_SORT_ALIASES = {
+    "intimacy_score": "favor",
+    "trust_level": "favor",
+    "favor": "favor",
+    "interaction_count": "interaction_count",
+    "last_active": "last_active",
+    "user_id": "user_id",
+    "type": "type",
+}
 
 
 class SqliteRelationshipStore(SqliteStore):
@@ -29,8 +45,7 @@ class SqliteRelationshipStore(SqliteStore):
                 persona_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
                 type TEXT NOT NULL DEFAULT 'stranger',
-                intimacy_score REAL NOT NULL DEFAULT 0.0,
-                trust_level REAL NOT NULL DEFAULT 0.0,
+                favor REAL NOT NULL DEFAULT 0.0,
                 interaction_count INTEGER NOT NULL DEFAULT 0,
                 last_active TIMESTAMP,
                 notes TEXT,
@@ -63,6 +78,7 @@ class SqliteRelationshipStore(SqliteStore):
             ("002_add_persona_addressing", add_column_if_missing("relationships", "persona_addressing", "TEXT")),
             ("003_add_user_addressing", add_column_if_missing("relationships", "user_addressing", "TEXT")),
             ("004_add_context", add_column_if_missing("relationships", "context", "TEXT")),
+            ("006_add_favor", _migrate_add_favor),
         ]).apply(db)
 
     async def init_db(self) -> None:
@@ -78,7 +94,7 @@ class SqliteRelationshipStore(SqliteStore):
         async with self._conn() as db:
             async with db.execute(
                 """
-                SELECT persona_id, user_id, type, intimacy_score, trust_level,
+                SELECT persona_id, user_id, type, favor,
                        interaction_count, last_active, notes,
                        persona_addressing, user_addressing, context
                 FROM relationships WHERE persona_id = ? AND user_id = ?
@@ -94,17 +110,16 @@ class SqliteRelationshipStore(SqliteStore):
             await db.execute(
                 """
                 INSERT OR REPLACE INTO relationships
-                (persona_id, user_id, type, intimacy_score, trust_level,
+                (persona_id, user_id, type, favor,
                  interaction_count, last_active, notes,
                  persona_addressing, user_addressing, context)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rel.persona_id,
                     rel.user_id,
                     rel.type,
-                    rel.intimacy_score,
-                    rel.trust_level,
+                    rel.favor,
                     rel.interaction_count,
                     _dt(rel.last_active),
                     rel.notes,
@@ -129,7 +144,7 @@ class SqliteRelationshipStore(SqliteStore):
 
         迁移策略:
         - 找到所有 persona_id + user_id = actor_id 的关系行
-        - 若 group_id 已有关系行, 合并两行 (取较高亲密度/信任度,
+        - 若 group_id 已有关系行, 合并两行 (取较高好感度,
           累加交互次数, 保留最新 last_active, 非空 addressing 优先)
         - 删除旧的 actor_id 行
         - 返回迁移/合并的关系数
@@ -146,7 +161,7 @@ class SqliteRelationshipStore(SqliteStore):
             # 1. 查出 actor 现有的所有关系
             async with db.execute(
                 """
-                SELECT persona_id, user_id, type, intimacy_score, trust_level,
+                SELECT persona_id, user_id, type, favor,
                        interaction_count, last_active, notes,
                        persona_addressing, user_addressing, context
                 FROM relationships
@@ -162,7 +177,7 @@ class SqliteRelationshipStore(SqliteStore):
             # 2. 尝试加载已有的 group_id 关系行 (每个 persona 最多一个)
             async with db.execute(
                 """
-                SELECT persona_id, user_id, type, intimacy_score, trust_level,
+                SELECT persona_id, user_id, type, favor,
                        interaction_count, last_active, notes,
                        persona_addressing, user_addressing, context
                 FROM relationships
@@ -173,17 +188,16 @@ class SqliteRelationshipStore(SqliteStore):
                 existing = await cur.fetchone()
 
             for row in actor_rows:
-                p_id, u_id, r_type, intimacy, trust, icount, last_active, notes, \
+                p_id, u_id, r_type, favor, icount, last_active, notes, \
                     p_addr, u_addr, ctx = row
 
                 if existing:
-                    # 合并: 取较高的 intimacy/trust, 累加 interaction_count,
+                    # 合并: 取较高的 favor, 累加 interaction_count,
                     # 取更新的 last_active, 非空 addressing/context 优先
-                    e_pid, e_uid, e_type, e_intimacy, e_trust, e_icount, \
+                    e_pid, e_uid, e_type, e_favor, e_icount, \
                         e_last, e_notes, e_p_addr, e_u_addr, e_ctx = existing
 
-                    merged_intimacy = max(intimacy, e_intimacy)
-                    merged_trust = max(trust, e_trust)
+                    merged_favor = max(favor, e_favor)
                     merged_icount = icount + e_icount
                     merged_last = max(
                         _parse_dt(last_active) or datetime.min,
@@ -198,13 +212,13 @@ class SqliteRelationshipStore(SqliteStore):
                     await db.execute(
                         """
                         UPDATE relationships
-                        SET type = ?, intimacy_score = ?, trust_level = ?,
+                        SET type = ?, favor = ?,
                             interaction_count = ?, last_active = ?, notes = ?,
                             persona_addressing = ?, user_addressing = ?, context = ?
                         WHERE persona_id = ? AND user_id = ?
                         """,
                         (
-                            r_type, merged_intimacy, merged_trust,
+                            r_type, merged_favor,
                             merged_icount, merged_last.isoformat(), merged_notes,
                             merged_p_addr, merged_u_addr, merged_ctx,
                             persona_id, group_id,
@@ -280,17 +294,16 @@ class SqliteRelationshipStore(SqliteStore):
                 await db.execute(
                     """
                     INSERT INTO relationships
-                    (persona_id, user_id, type, intimacy_score, trust_level,
+                    (persona_id, user_id, type, favor,
                      interaction_count, last_active, notes,
                      persona_addressing, user_addressing, context)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
                     """,
                     (
                         new_rel.persona_id,
                         new_rel.user_id,
                         new_rel.type,
-                        new_rel.intimacy_score,
-                        new_rel.trust_level,
+                        new_rel.favor,
                         new_rel.interaction_count,
                         _dt(new_rel.last_active),
                         new_rel.notes,
@@ -401,26 +414,20 @@ class SqliteRelationshipStore(SqliteStore):
         *,
         limit: int = 20,
         offset: int = 0,
-        sort_by: str = "intimacy_score",
+        sort_by: str = "favor",
         sort_order: str = "desc",
     ) -> tuple[list[Relationship], int]:
         """面板分页: 返回 (当前页, 匹配总数). 仅返回指定 persona 的关系.
 
-        sort_by 白名单: intimacy_score / trust_level / interaction_count /
-        last_active / user_id / type. 非法值退回 intimacy_score.
+        sort_by 白名单: favor / intimacy_score (旧别名→favor) / trust_level
+        (旧别名→favor) / interaction_count / last_active / user_id / type.
+        非法值退回 favor.
         sort_order: 'asc' / 'desc', 其它值退回 desc.
         """
         sort_col, direction = resolve_sort_params(
             sort_by, sort_order,
-            {
-                "intimacy_score": "intimacy_score",
-                "trust_level": "trust_level",
-                "interaction_count": "interaction_count",
-                "last_active": "last_active",
-                "user_id": "user_id",
-                "type": "type",
-            },
-            default_col="intimacy_score",
+            _SORT_ALIASES,
+            default_col="favor",
         )
 
         async with self._conn() as db:
@@ -433,7 +440,7 @@ class SqliteRelationshipStore(SqliteStore):
 
             async with db.execute(
                 f"""
-                SELECT persona_id, user_id, type, intimacy_score, trust_level,
+                SELECT persona_id, user_id, type, favor,
                        interaction_count, last_active, notes,
                        persona_addressing, user_addressing, context
                 FROM relationships
@@ -455,12 +462,33 @@ class SqliteRelationshipStore(SqliteStore):
             persona_id=row[0],
             user_id=row[1],
             type=row[2],
-            intimacy_score=row[3],
-            trust_level=row[4],
-            interaction_count=row[5],
-            last_active=_parse_dt(row[6]),
-            notes=row[7] or "",
-            persona_addressing=row[8] if len(row) > 8 else None,
-            user_addressing=row[9] if len(row) > 9 else None,
-            context=row[10] if len(row) > 10 else None,
+            favor=row[3],
+            interaction_count=row[4],
+            last_active=_parse_dt(row[5]),
+            notes=row[6] or "",
+            persona_addressing=row[7] if len(row) > 7 else None,
+            user_addressing=row[8] if len(row) > 8 else None,
+            context=row[9] if len(row) > 9 else None,
+        )
+
+
+async def _migrate_add_favor(db: aiosqlite.Connection) -> None:
+    """v0.4.1: relationships 表加 favor 列并回填存量数据.
+
+    升级兼容: 覆盖 v0.3.5 / v0.4.0b1 的旧库 (含 intimacy_score/trust_level).
+    回填规则 (RFC §2.2): favor = MAX(intimacy_score, trust_level) — 零缩放.
+    旧列保留不再写入 (避免重写表, 兼容旧工具读取).
+    """
+    from src.persistence.migrations import add_column_if_missing
+
+    migrate = add_column_if_missing("relationships", "favor", "REAL NOT NULL DEFAULT 0.0")
+    await migrate(db)
+    # 回填仅对旧库有意义 (新库 CREATE TABLE 无 intimacy_score 列)
+    async with db.execute("PRAGMA table_info(relationships)") as cur:
+        cols = {row[1] for row in await cur.fetchall()}
+    if "intimacy_score" in cols:
+        await db.execute(
+            "UPDATE relationships "
+            "SET favor = MAX(intimacy_score, trust_level) "
+            "WHERE MAX(intimacy_score, trust_level) != 0.0"
         )

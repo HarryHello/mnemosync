@@ -123,6 +123,83 @@ DEFAULT_NATIVE_REASONING_MODELS: tuple[str, ...] = (
 
 
 @dataclass
+class RelationshipAlphaPreset:
+    """好感度演进预设 (v0.4.1, RFC §2.3).
+
+    不对称更新: favor += (delta >= 0 ? alpha_up : alpha_down) × delta
+    慢热快冷: alpha_up 小 (信任建立慢), alpha_down 大 (冒犯掉得快).
+    """
+
+    id: str
+    label: str
+    alpha_up: float
+    alpha_down: float
+
+
+DEFAULT_RELATIONSHIP_ALPHAS: tuple[RelationshipAlphaPreset, ...] = (
+    RelationshipAlphaPreset(id="normal", label="普通", alpha_up=0.2, alpha_down=0.5),
+    RelationshipAlphaPreset(id="sensitive", label="高敏感", alpha_up=0.5, alpha_down=0.8),
+    RelationshipAlphaPreset(id="rational", label="理性", alpha_up=0.1, alpha_down=0.3),
+    RelationshipAlphaPreset(id="gullible", label="轻信", alpha_up=0.5, alpha_down=0.4),
+    RelationshipAlphaPreset(id="guarded", label="戒备", alpha_up=0.1, alpha_down=0.8),
+)
+
+
+def get_relationship_alpha(
+    preset_id: str | None,
+    *,
+    presets: dict[str, RelationshipAlphaPreset] | None = None,
+) -> RelationshipAlphaPreset:
+    """按预设 id 查好感度演进参数; 未知 id 回退 normal (RFC §2.3)."""
+    table = presets if presets is not None else {p.id: p for p in DEFAULT_RELATIONSHIP_ALPHAS}
+    return table.get(preset_id or "normal") or table["normal"]
+
+
+def _build_relationship_alphas(raw: Any) -> dict[str, RelationshipAlphaPreset]:
+    """从 config.local.toml [relationship_alpha] 段构造预设表.
+
+    TOML 形态:
+        [relationship_alpha]
+        default_preset = "normal"
+        [[relationship_alpha.presets]]
+        id = "custom"
+        label = "自定义"
+        alpha_up = 0.3
+        alpha_down = 0.6
+
+    解析失败/字段缺失的条目跳过; 全部无效时回退内置默认.
+    """
+    defaults = {p.id: p for p in DEFAULT_RELATIONSHIP_ALPHAS}
+    if not isinstance(raw, dict):
+        return defaults
+    raw_presets = raw.get("presets")
+    if not isinstance(raw_presets, list) or not raw_presets:
+        return defaults
+    built: dict[str, RelationshipAlphaPreset] = {}
+    for item in raw_presets:
+        if not isinstance(item, dict):
+            continue
+        pid = str(item.get("id") or "").strip()
+        if not pid:
+            continue
+        try:
+            alpha_up = float(item.get("alpha_up", 0.2))
+            alpha_down = float(item.get("alpha_down", 0.5))
+        except (TypeError, ValueError):
+            continue
+        built[pid] = RelationshipAlphaPreset(
+            id=pid,
+            label=str(item.get("label") or pid),
+            alpha_up=alpha_up,
+            alpha_down=alpha_down,
+        )
+    # 未覆盖的默认预设保留 (含 normal 兜底)
+    for pid, preset in defaults.items():
+        built.setdefault(pid, preset)
+    return built
+
+
+@dataclass
 class RelationConfig:
     """人格与用户的关系框架 (记忆分析 / 关系分析 Agent 会看到).
 
@@ -252,6 +329,9 @@ class Settings:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     graph: GraphConfig = field(default_factory=GraphConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    relationship_alpha: dict[str, RelationshipAlphaPreset] = field(
+        default_factory=lambda: {p.id: p for p in DEFAULT_RELATIONSHIP_ALPHAS}
+    )
 
 
 def _load_persona_override() -> dict[str, Any] | None:
@@ -367,11 +447,13 @@ def load_settings() -> Settings:
     else:
         with open(LOCAL_CONFIG_PATH, "rb") as f:
             data = tomllib.load(f)
+        raw_alphas = _build_relationship_alphas(data.get("relationship_alpha"))
         settings = Settings(
             storage=StorageConfig(**data.get("storage", {})),
             memory=MemoryConfig(**data.get("memory", {})),
             graph=GraphConfig(**data.get("graph", {})),
             runtime=RuntimeConfig(**data.get("runtime", {})),
+            relationship_alpha=raw_alphas,
         )
         raw_persona = dict(data.get("persona", {}))
 

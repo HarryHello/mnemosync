@@ -120,21 +120,32 @@ def test_override_priority_clamps():
 
 def test_relationship_delta_clamps_upper():
     rel = Relationship.create("default", "u")
-    rel.apply_delta(intimacy_delta=2.0, trust_delta=2.0)
-    assert rel.intimacy_score == 1.0
-    assert rel.trust_level == 1.0
+    rel.apply_delta(favor_delta=2.0)
+    assert rel.favor == 1.0
 
 
-def test_relationship_delta_clamps_lower():
+def test_relationship_delta_allows_negative():
+    """v0.4.1: 好感度允许为负 — 表达厌恶/敌对."""
     rel = Relationship.create("default", "u")
-    rel.intimacy_score = 0.1
-    rel.apply_delta(intimacy_delta=-5.0, trust_delta=-5.0)
-    assert rel.intimacy_score == 0.0
-    assert rel.trust_level == 0.0
+    rel.favor = 0.1
+    rel.apply_delta(favor_delta=-5.0)
+    assert rel.favor == -1.0
 
 
 def test_relationship_delta_increments_interaction():
     rel = Relationship.create("default", "u")
-    rel.apply_delta(intimacy_delta=0.05, trust_delta=0.05)
-    rel.apply_delta(intimacy_delta=0.05, trust_delta=0.05)
+    rel.apply_delta(favor_delta=0.05)
+    rel.apply_delta(favor_delta=0.05)
     assert rel.interaction_count == 2
+
+
+def test_relationship_type_projection():
+    """v0.4.1: 类型谱系 — 数值推导真相."""
+    from src.core.memory.models import relationship_type_from_favor
+
+    assert relationship_type_from_favor(-0.8) == "hostile"
+    assert relationship_type_from_favor(-0.4) == "cold"
+    assert relationship_type_from_favor(0.0) == "stranger"
+    assert relationship_type_from_favor(0.35) == "acquaintance"
+    assert relationship_type_from_favor(0.65) == "friend"
+    assert relationship_type_from_favor(0.95) == "intimate"

@@ -20,8 +20,7 @@ async def test_get_relationship_missing_returns_none(relationship_store) -> None
 async def test_save_then_get_roundtrip(relationship_store) -> None:
     """save 后 get 能取回同一份关系."""
     rel = Relationship.create("default", "alice")
-    rel.intimacy_score = 0.42
-    rel.trust_level = 0.31
+    rel.favor = 0.42
     rel.type = "friend"
     rel.interaction_count = 7
     rel.last_active = datetime(2026, 7, 18, 10, 0, 0, tzinfo=UTC)
@@ -35,8 +34,7 @@ async def test_save_then_get_roundtrip(relationship_store) -> None:
     assert got is not None
     assert got.persona_id == "default"
     assert got.user_id == "alice"
-    assert got.intimacy_score == pytest.approx(0.42)
-    assert got.trust_level == pytest.approx(0.31)
+    assert got.favor == pytest.approx(0.42)
     assert got.type == "friend"
     assert got.interaction_count == 7
     assert got.notes == "关系不错"
@@ -48,15 +46,15 @@ async def test_save_then_get_roundtrip(relationship_store) -> None:
 async def test_save_upsert_updates_existing(relationship_store) -> None:
     """多次 save 同一 (persona, user) → 覆盖旧值, 不产生重复行."""
     rel = Relationship.create("default", "alice")
-    rel.intimacy_score = 0.1
+    rel.favor = 0.1
     await relationship_store.save_relationship(rel)
 
-    rel.intimacy_score = 0.9
+    rel.favor = 0.9
     rel.type = "intimate"
     await relationship_store.save_relationship(rel)
 
     got = await relationship_store.get_relationship("default", "alice")
-    assert got.intimacy_score == pytest.approx(0.9)
+    assert got.favor == pytest.approx(0.9)
     assert got.type == "intimate"
     assert await relationship_store.count_relationships() == 1
 
@@ -81,11 +79,11 @@ async def test_count_relationships(relationship_store) -> None:
     assert await relationship_store.count_relationships() == 2
 
 
-async def test_list_relationships_sorted_by_intimacy_desc(relationship_store) -> None:
-    """默认按亲密度降序返回."""
-    for uid, intimacy in [("alice", 0.3), ("bob", 0.9), ("carol", 0.1)]:
+async def test_list_relationships_sorted_by_favor_desc(relationship_store) -> None:
+    """默认按好感度降序返回."""
+    for uid, favor in [("alice", 0.3), ("bob", 0.9), ("carol", 0.1)]:
         rel = Relationship.create("default", uid)
-        rel.intimacy_score = intimacy
+        rel.favor = favor
         await relationship_store.save_relationship(rel)
 
     items, total = await relationship_store.list_relationships("default")

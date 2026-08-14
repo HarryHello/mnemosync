@@ -142,3 +142,23 @@ proxy_thinking_native_reasoning_models = [
     "qwq*",
     "gpt-5-thinking-*",
 ]
+
+# ── 好感度演进预设 (v0.4.1, RFC §2.3) ──────────────────────────
+# 人格内通过 relationship_alpha 预设 id 引用; 面板不做自定义,
+# 直接改本文件 (或 config.local.toml 同段) 即可, 服务照常读取.
+# 不对称更新: favor += (delta >= 0 ? alpha_up : alpha_down) × delta
+# 慢热快冷: alpha_up 小 (信任建立慢), alpha_down 大 (冒犯掉得快)
+[relationship_alpha]
+default_preset = "normal"
+# 内置预设 (可覆盖或追加; 未知 id 回退 normal):
+#   normal    普通     alpha_up=0.2 alpha_down=0.5
+#   sensitive 高敏感   alpha_up=0.5 alpha_down=0.8
+#   rational  理性     alpha_up=0.1 alpha_down=0.3
+#   gullible  轻信     alpha_up=0.5 alpha_down=0.4
+#   guarded   戒备     alpha_up=0.1 alpha_down=0.8
+# 自定义示例:
+# [[relationship_alpha.presets]]
+# id = "custom"
+# label = "自定义"
+# alpha_up = 0.3
+# alpha_down = 0.6

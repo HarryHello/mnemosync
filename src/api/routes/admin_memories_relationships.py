@@ -52,8 +52,8 @@ async def list_relationships(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     sort_by: str = Query(
-        "intimacy_score",
-        description="intimacy_score | trust_level | interaction_count | last_active | user_id | type",
+        "favor",
+        description="favor | interaction_count | last_active | user_id | type (兼容旧键 intimacy_score/trust_level)",
     ),
     sort_order: str = Query("desc", description="asc | desc"),
     store: SqliteRelationshipStore = Depends(get_relationship_store),

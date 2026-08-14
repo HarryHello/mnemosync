@@ -199,14 +199,13 @@ async def test_relationship_roundtrip(rel_store):
     assert await rel_store.get_relationship("default", "alice") is None
 
     rel = Relationship.create("default", "alice")
-    rel.apply_delta(intimacy_delta=0.15, trust_delta=0.10, new_type="friend",
+    rel.apply_delta(favor_delta=0.15, new_type="friend",
                     notes="首次见面, 分享了一些个人信息")
     await rel_store.save_relationship(rel)
 
     loaded = await rel_store.get_relationship("default", "alice")
     assert loaded is not None
-    assert loaded.intimacy_score == pytest.approx(0.15)
-    assert loaded.trust_level == pytest.approx(0.10)
+    assert loaded.favor == pytest.approx(0.15)
     assert loaded.interaction_count == 1
     assert loaded.type == "friend"
     assert "分享" in loaded.notes
@@ -215,10 +214,10 @@ async def test_relationship_roundtrip(rel_store):
 async def test_relationship_upsert_overwrites(rel_store):
     rel = Relationship.create("default", "alice")
     await rel_store.save_relationship(rel)
-    rel.apply_delta(intimacy_delta=0.5, trust_delta=0.5)
+    rel.apply_delta(favor_delta=0.5)
     await rel_store.save_relationship(rel)
     loaded = await rel_store.get_relationship("default", "alice")
-    assert loaded.intimacy_score == pytest.approx(0.5)
+    assert loaded.favor == pytest.approx(0.5)
     assert loaded.interaction_count == 1
 
 
@@ -323,9 +322,9 @@ async def test_relationship_addressing_survives_save_relationship(rel_store):
         source="agent", reason="设置初值",
     )
     rel = await rel_store.get_relationship("default", "alice")
-    rel.apply_delta(intimacy_delta=0.2, trust_delta=0.1)
+    rel.apply_delta(favor_delta=0.2)
     await rel_store.save_relationship(rel)
 
     loaded = await rel_store.get_relationship("default", "alice")
     assert loaded.user_addressing == "小哥"
-    assert loaded.intimacy_score == pytest.approx(0.2)
+    assert loaded.favor == pytest.approx(0.2)

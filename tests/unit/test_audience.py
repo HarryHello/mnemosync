@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from src.core.memory.audience import (
-    CONFIDENTIAL_TRUST_THRESHOLD,
+    CONFIDENTIAL_FAVOR_THRESHOLD,
     AudienceFilter,
     RetrievalContext,
 )
@@ -47,10 +47,10 @@ def _ctx(
     )
 
 
-def _rel(type_: str = "stranger", trust: float = 0.0) -> Relationship:
+def _rel(type_: str = "stranger", favor: float = 0.0) -> Relationship:
     r = Relationship.create("default", "bob")
     r.type = type_
-    r.trust_level = trust
+    r.favor = favor
     return r
 
 
@@ -124,13 +124,13 @@ def test_friends_only_requires_friend_relationship() -> None:
     assert not AudienceFilter.is_visible(e, _ctx(user="bob", rel=None))
 
 
-def test_confidential_requires_trust_threshold() -> None:
+def test_confidential_requires_favor_threshold() -> None:
     e = _entry(source_user="alice", visibility=Visibility.CONFIDENTIAL)
     assert not AudienceFilter.is_visible(
-        e, _ctx(user="bob", rel=_rel("friend", trust=CONFIDENTIAL_TRUST_THRESHOLD - 0.01))
+        e, _ctx(user="bob", rel=_rel("friend", favor=CONFIDENTIAL_FAVOR_THRESHOLD - 0.01))
     )
     assert AudienceFilter.is_visible(
-        e, _ctx(user="bob", rel=_rel("friend", trust=CONFIDENTIAL_TRUST_THRESHOLD))
+        e, _ctx(user="bob", rel=_rel("friend", favor=CONFIDENTIAL_FAVOR_THRESHOLD))
     )
 
 

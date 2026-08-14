@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.core.memory.models import MemoryEntry, Relationship, Visibility
+from src.core.memory.models import (
+    RELATIONSHIP_STAGE_LABELS,
+    MemoryEntry,
+    Relationship,
+    Visibility,
+)
 from src.core.memory.trigger_reason import (
     TriggerReason,
     format_trigger_reason,
@@ -63,15 +68,22 @@ def format_retrieved_memories(
     return _format_memories(entries, "（暂无相关记忆）", channel_type)
 
 
-def format_relationship(rel: Relationship | None) -> str:
-    """格式化关系状态为 prompt 文本."""
+def format_relationship(rel: Relationship | None, include_score: bool = True) -> str:
+    """格式化关系状态为 prompt 文本.
+
+    v0.4.1: 亲密度/信任度统一为好感度.
+    - include_score=True (关系分析 Agent 基线): 输出数值, 供 Agent 计算 delta.
+    - include_score=False (主对话注入): 只输出阶段描述, 不注入连续数值
+      (防模型"演数值"; 枚举标签经 RELATIONSHIP_STAGE_LABELS 转为自然语言).
+    """
     if rel is None:
         return "新用户（尚未建立关系）"
-    return (
-        f"关系类型: {rel.type}（亲密度 {rel.intimacy_score:.2f}/1.0, "
-        f"信任度 {rel.trust_level:.2f}/1.0, 互动 {rel.interaction_count} 次）"
-        + (f"\n备注: {rel.notes}" if rel.notes else "")
-    )
+    stage = RELATIONSHIP_STAGE_LABELS.get(rel.type, rel.type)
+    if include_score:
+        head = f"关系类型: {rel.type}（好感度 {rel.favor:.2f}, 互动 {rel.interaction_count} 次）"
+    else:
+        head = f"与对方的关系：{stage}（互动 {rel.interaction_count} 次）"
+    return head + (f"\n备注: {rel.notes}" if rel.notes else "")
 
 
 def _proxy_thinking_section(proxy_thinking_result: str | None) -> str:
@@ -209,7 +221,7 @@ def render_main_dialogue_system(
         .replace("__ACTIVE_PARTICIPANTS__", _participants_label(active_participants, speaker))
         .replace("__TRIGGER_REASON__", format_trigger_reason(reason))
         .replace("__TOOL_CAPABILITY_HINT__", _tool_capability_hint(tools))
-        .replace("__RELATIONSHIP__", format_relationship(relationship))
+        .replace("__RELATIONSHIP__", format_relationship(relationship, include_score=False))
         .replace(
             "__PERMANENT_MEMORIES__",
             format_permanent_memories(permanent_memories, channel_type),
