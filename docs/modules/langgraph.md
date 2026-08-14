@@ -100,7 +100,7 @@ relationship_analysis        memory_analysis
 | `proxy_thinking` | Agent (CoT) | 可选; 为主对话生成 CoT 推理 | 是 (若启用) |
 | `main_dialogue` | Agent | 拼上下文 + 预计算情绪 + 生成回复 | 是 |
 | `memory_analysis` | Agent (ReAct) | 提取候选记忆 + 受众过滤查重 + 向量入库; 非归属模式跳过 | 否 (流式模式下后台跑) |
-| `relationship_analysis` | Agent (ReAct) | 亲密度/信任度分析; 非归属模式跳过 | 否 (流式模式下后台跑) |
+| `relationship_analysis` | Agent (ReAct) | 好感度增量分析 (v0.4.1: 单 `favor_delta`, 可负, 慢热快冷); 非归属模式跳过 | 否 (流式模式下后台跑) |
 
 **没有独立的 `vector_index` 节点**——嵌入向量的写入 (Chroma) 在 `memory_analysis_node` 内由 `MemoryLifecycle.store_candidate()` 顺手完成。
 

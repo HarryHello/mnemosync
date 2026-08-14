@@ -20,7 +20,7 @@ Mnemosync 一次请求由 LangGraph + API 层编排 **6 个 Agent** 完成。其
 | 2 | 代理推理 | CoT (无工具) | 辅助模型 | 主模型无原生推理 & (前台点名推理 或 `proxy_thinking_default=true`) 时启用 | 供主对话参考的思考文本 + 前台 `reasoning_content` 字段 |
 | 3 | Expressor | 单次改写 | 辅助模型 | 群聊最终文本（finish_reason=stop），≥10 字符 | 改写后的口语化回复 |
 | 4 | 记忆分析 | ReAct | 辅助模型 | 主对话后, 与关系分析并行 | 新记忆候选 + 衰减评估 JSON |
-| 5 | 关系分析 | ReAct | 辅助模型 | 主对话后, 与记忆分析并行 | 亲密度/信任度增量 JSON |
+| 5 | 关系分析 | ReAct | 辅助模型 | 主对话后, 与记忆分析并行 | 好感度增量 JSON (v0.4.1: 单 `favor_delta`, 可负) |
 | 6 | 提示词清洗 | ReAct | 辅助模型 | API 层预处理, 客户端 system 消息非空时 | 保留的功能性指令 + 丢弃的人格描述 JSON |
 
 **代码位置**: 所有 Agent 的执行函数集中在 [src/core/agents/factory.py](../../src/core/agents/factory.py); ReAct 循环由 [src/core/agents/base.py](../../src/core/agents/base.py) 的 `run_react_loop` 驱动。
@@ -302,7 +302,7 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 
 ### 5.1 职责
 
-从本轮对话中量化亲密度 / 信任度增量, 更新 `RelationshipState`。**非归属守卫** (v0.3.0): `source_user` 为空时节点直接返回 `{"relationship_delta": {}}`, 不调用 LLM、不更新关系。
+从本轮对话中量化**好感度增量** (`favor_delta`, 可正可负), 更新 `Relationship`。v0.4.1 起亲密度 + 信任度统一为单一好感度 (`favor`, -1.0~1.0), 关系可恶化。**非归属守卫** (v0.3.0): `source_user` 为空时节点直接返回 `{"relationship_delta": {}}`, 不调用 LLM、不更新关系。
 
 ### 5.2 循环与工具
 
@@ -312,33 +312,37 @@ Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
 - 情绪信号不再经工具: `main_dialogue_node` 预计算的 `emotion_analysis` 作为文本参数传入提示词
 - 提示词流程: 读取情绪分析 → 识别关系信号 → (如有称呼演化) 调 `update_addressing` → 量化 → 输出 JSON
 
-### 5.3 信号量化参考
+### 5.3 信号量化参考 (prompt v5, 三段式)
 
-| 信号 | 亲密度影响 |
-|------|-----------|
-| 称呼变亲昵 | +0.05 ~ +0.10 |
-| 隐私分享 | +0.10 ~ +0.20 |
-| 情感表达 | +0.05 ~ +0.15 |
-| 互动频率 | +0.01/天 |
-| 长期沉默 (>30 天) | -0.01/天 |
-| 距离信号 | -0.10 ~ -0.20 |
+| 信号 | favor_delta |
+|------|------------|
+| 称呼变亲昵 / 隐私分享 / 情感表达 | +0.05 ~ +0.20 |
+| 主动示好 / 道歉 / 和解 | +0.05 ~ +0.15 |
+| 羞辱 / 贬低 / 嘲讽人格 | -0.20 ~ -0.40 |
+| 欺骗 / 隐瞒 / 背信 (证据充分) | -0.20 ~ -0.50 |
+| 威胁 / 攻击人格核心价值 | -0.25 ~ -0.50 |
+| 玩笑 / 转述 / 群体压力 / 不确定 | 0 (增量为零) |
 
-关系类型阈值: `<0.2 stranger`, `0.2-0.5 acquaintance`, `0.5-0.8 friend`, `>0.8 intimate`。
+关系类型谱系 (6 档): `hostile(-1.0~-0.5)` → `cold(-0.5~-0.1)` → `stranger(-0.1~0.2)` → `acquaintance(0.2~0.5)` → `friend(0.5~0.8)` → `intimate(0.8~1.0)`。类型是阶段标签投影: Agent 未显式指定时按 favor 数值推导。
+
+**演进系数** (v0.4.1): 运行时按人格引用的 `[relationship_alpha]` 预设应用不对称系数 (慢热快冷): `favor += (delta ≥ 0 ? α_up : α_down) × delta`。
 
 ### 5.4 输出 JSON schema
 
 ```json
 {
-  "signals_detected": [{"type": "name_change", "detail": "...", "impact": 0.15}],
-  "intimacy_delta": 0.23,
-  "trust_delta": 0.10,
-  "new_relationship_type": "friend",
+  "signals_detected": [{"type": "insult", "detail": "...", "impact": -0.30}],
+  "favor_delta": -0.30,
+  "new_relationship_type": null,
+  "mood_anchor": "被当众羞辱，感到恼火",
   "notes": "...",
   "reasoning": "..."
 }
 ```
 
-`RelationshipAnalysisOutput` 只消费 `intimacy_delta / trust_delta / new_relationship_type / notes / reasoning`; `signals_detected` 用于日志观察, 不落库。
+`RelationshipAnalysisOutput` 消费 `favor_delta / new_relationship_type / notes / reasoning / mood_anchor`; `signals_detected` 用于日志观察, 不落库。
+
+**mood_anchor** (v0.4.1): 仅当 `favor_delta ≤ -0.15` 时输出一句**脱敏**情绪锚点 (只写"被谁/大致原因", 不写私密细节)。节点写入 `EPHEMERAL` 高衰减记忆 (按 subject 定位, supersedes 旧锚点), 并同步更新全局 mood 的 cause。
 
 ### 5.5 提示词构建
 
@@ -448,7 +452,8 @@ v0.2.12 起从逐句 ReAct 改为单次 LLM completion:
 | `prompt_cleaning_system` | 提示词清洗 Agent 的 system prompt | (无) |
 | `prompt_cleaning_user` | 提示词清洗 Agent 的 user prompt | `SYSTEM_MESSAGE` |
 | `proxy_thinking` | 代理推理 Agent | `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
-| `main_dialogue_frame` | 主对话上下文框架 | `PERSONA_NAME`, `PERSONA_PROMPT`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `SPACE_LABEL`, `ACTIVE_PARTICIPANTS`, `TRIGGER_REASON`, `TOOL_CAPABILITY_HINT`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION` |
+| `main_dialogue_frame` | 主对话上下文框架 | `PERSONA_NAME`, `PERSONA_PROMPT`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `SPACE_LABEL`, `ACTIVE_PARTICIPANTS`, `TRIGGER_REASON`, `TOOL_CAPABILITY_HINT`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION`, `MOOD_STATE` (v0.4.1) |
+| `mood_matrix` (v0.4.1) | 好感度×情绪 6×6 状态引导矩阵 (非 Agent 提示词, 每格一段文本, 覆盖合并) | (无) |
 
 权威列表: [`src/core/prompts/registry.py`](../../src/core/prompts/registry.py) 的 `PROMPT_REGISTRY`. 未在 registry 中的 name 一律拒绝加载/保存 (**路径穿越防御**)。
 
@@ -596,3 +601,4 @@ class AgentState(TypedDict, total=False):
 | v0.2.11 | 2026-07-19 | 文档补齐 v0.2.7–v0.2.11 (persona_override.toml, /conversation-turns/sources, /panel/admin/persona) |
 | v0.3.1 | 2026-07-28 | 新增第 3 个 Agent: Expressor (群聊最终文本表达改写, 不改写工具调用); 触发原因识别 (`__TRIGGER_REASON__`); 平台能力提示 (`__TOOL_CAPABILITY_HINT__`); 工具参数隐私检查; 工具事务桥接; 逻辑交互 ID; 模型候选工具能力声明; Agent 总数从 5 更新为 6; 触发原因识别从 §2.5 升为独立小节; 所有章节重编号 |
 | v0.4.0 | 2026-08-08 | 新增 Vision Description Agent (图片转文字描述, ASSIST 角色); Vision Agent 内部工具名加 `mnemosync_` 前缀 |
+| v0.4.1 | 2026-08-14 | 好感度系统: 亲密度+信任度统一为单一 `favor` (允许为负), 关系分析 prompt v5 (三段式信号 + 负向示例 + 单 `favor_delta` + `mood_anchor`); 演进预设 `[relationship_alpha]`; 全局 mood 状态机 (personas 表, 前置情绪通道, interaction 幂等); 6×6 状态引导矩阵 (`mood_matrix`, 覆盖合并); EPHEMERAL 对象化情绪锚点记忆 (按 subject 加载, supersedes 去重) |

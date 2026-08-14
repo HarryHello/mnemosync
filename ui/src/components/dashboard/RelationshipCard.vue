@@ -19,16 +19,19 @@ function goToRelationships() {
   router.push('/relationships')
 }
 
-// 根据值返回进度条颜色
+function clamp(v: number, min: number, max: number): number {
+  if (Number.isNaN(v)) return 0
+  return Math.max(min, Math.min(max, v))
+}
+
+// 根据好感度返回进度条颜色 (负数一律用 exception)
 function getProgressType(value: number): '' | 'success' | 'warning' | 'exception' {
+  if (value < 0) return 'exception'
   if (value >= RELATIONSHIP_LEVEL_HIGH) return 'success'
   if (value >= RELATIONSHIP_LEVEL_MEDIUM) return ''
   if (value >= RELATIONSHIP_LEVEL_LOW) return 'warning'
   return 'exception'
 }
-
-// 格式化显示值 (三位小数)
-const formatValue = (v: number) => v.toFixed(3)
 
 function identityName(rel: Relationship): string {
   const account = rel.identity?.accounts[0]
@@ -73,24 +76,14 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
         </div>
         <div class="user-metrics">
           <div class="metric-line">
-            <span class="metric-label">亲密度</span>
+            <span class="metric-label">好感度</span>
             <el-progress
-              :percentage="rel.intimacy * 100"
+              :percentage="(clamp(rel.favor, -1, 1) + 1) * 50"
               :stroke-width="6"
-              :status="getProgressType(rel.intimacy)"
+              :status="getProgressType(rel.favor)"
               :show-text="false"
             />
-            <span class="metric-value">{{ formatValue(rel.intimacy) }}</span>
-          </div>
-          <div class="metric-line">
-            <span class="metric-label">信任度</span>
-            <el-progress
-              :percentage="rel.trust * 100"
-              :stroke-width="6"
-              :status="getProgressType(rel.trust)"
-              :show-text="false"
-            />
-            <span class="metric-value">{{ formatValue(rel.trust) }}</span>
+            <span class="metric-value">{{ Math.round(clamp(rel.favor, -1, 1) * 100) }}</span>
           </div>
         </div>
       </div>

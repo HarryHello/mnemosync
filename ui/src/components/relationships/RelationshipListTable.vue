@@ -57,6 +57,15 @@ function identityDetail(row: Relationship): string {
     .map((account) => `${account.frontend} · ${account.external_key}`)
     .join(' / ')
 }
+
+function clamp(v: number, min: number, max: number): number {
+  if (Number.isNaN(v)) return 0
+  return Math.max(min, Math.min(max, v))
+}
+
+function favorScore(row: Relationship): number {
+  return Math.round(clamp(row.favor, -1, 1) * 100)
+}
 </script>
 
 <template>
@@ -84,14 +93,9 @@ function identityDetail(row: Relationship): string {
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="亲密度" width="120" sortable="custom" prop="intimacy">
+      <el-table-column label="好感度" width="120" sortable="custom" prop="favor">
         <template #default="{ row }: { row: Relationship }">
-          <span class="mono">{{ row.intimacy.toFixed(3) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="信任度" width="120" sortable="custom" prop="trust">
-        <template #default="{ row }: { row: Relationship }">
-          <span class="mono">{{ row.trust.toFixed(3) }}</span>
+          <span class="mono">{{ favorScore(row) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="用户称呼" width="140" show-overflow-tooltip>

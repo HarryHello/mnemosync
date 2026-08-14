@@ -393,7 +393,7 @@ reranker 精排后:
 | `entry.source_user == 自己的 effective_user_id` | 可见 (自己桶的记忆, 任何可见性) |
 | `entry.space_id == 当前 space_id` 且非 SOURCE_RESTRICTED | 空间成员可见 (群聊共享记忆) |
 | `FRIENDS_ONLY` (非来源用户) | 需要 friend / intimate 关系 |
-| `CONFIDENTIAL` (非来源用户) | 需要 `trust_level >= 0.7` |
+| `CONFIDENTIAL` (非来源用户) | 需要 `favor >= 0.8` (v0.4.1 起; 阈值仅适用人格自生产内容, 用户内容只走 `custom_policies` 授权) |
 | `custom_policies` 含 `deny:user:<id>` / `deny:actor:<id>` | 一票否决 |
 | `custom_policies` 含 `allow:*` 规则 | 构成白名单, 不在名单内不可见 |
 | 其余 (SOURCE_RESTRICTED 且非来源用户) | 不可见 |

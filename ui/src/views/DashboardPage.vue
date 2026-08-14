@@ -48,7 +48,7 @@ async function refresh() {
   }
 
   try {
-    const res = await listRelationships({ page_size: 5, sort_by: 'intimacy_score', sort_order: 'desc' })
+    const res = await listRelationships({ page_size: 5, sort_by: 'favor', sort_order: 'desc' })
     relationships.value = res.items
   } catch (err) {
     console.warn('Failed to load relationships:', err)

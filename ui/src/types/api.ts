@@ -195,8 +195,7 @@ export interface Relationship {
   persona_id: string
   user_id: string
   identity: RelationshipIdentity | null
-  intimacy: number
-  trust: number
+  favor: number
   relationship_type: string | null
   notes: string | null
   updated_at: string

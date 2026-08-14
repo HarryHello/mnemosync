@@ -15,10 +15,19 @@
 - **429 分流**：解析错误码分类限流/配额——限流退避重试（1s/2s/4s），配额不足（`insufficient_quota` 等）触发模型候选 fallback。
 - **面板「清洗缓存」页**：按前台列出模块缓存、textarea 直接编辑清洗结果、当场重新清洗、删除（下次自动重洗）、清空、跳过配置管理。
 
+### 功能
+- **好感度系统**：亲密度 + 信任度统一为单一好感度（`favor`，-1.0~1.0，允许为负表达厌恶/敌对）。类型谱系扩展为 6 档（hostile/cold/stranger/acquaintance/friend/intimate）；主对话提示词不再注入数值，只注入阶段描述；升级自动回填 `favor = MAX(intimacy, trust)`（兼容 v0.3.5 / v0.4.0b1，旧列保留）。
+- **关系可恶化**：关系分析 Agent 提示词 v5 重构——正向/负向/中性三段信号参考 + 负向示例（羞辱/欺骗/威胁等），输出单 `favor_delta`（可负）。
+- **演进预设**：好感度更新采用不对称系数（慢热快冷），`[relationship_alpha]` 配置预设（normal/sensitive/rational/gullible/guarded），人格按 id 引用，面板不做自定义。
+- **全局人格情绪（mood）**：连续 valence 状态机并入 `personas` 表，跨空间共享。惯性 0.8 + 时间衰减 + 单步 clamp 0.3 + 最小阈值 0.05；标签只用"心情"级 6 段（不细分具体情绪），具体情绪写入脱敏 cause（public 注入）。情绪分析前置（非流式零额外延迟，流式 +1~2s TTFT），"本条激怒本条生效"；同一交互幂等冲击。
+- **状态引导矩阵**：好感度档 × 心情段 6×6 矩阵（36 格每格一段引导文本），经提示词两层存储配置化（defaults + 覆盖合并），面板提示词页统一管理；主对话 system 新增"你此刻的状态"段。
+- **对象化情绪锚点**：显著负面（favor_delta ≤ -0.15）时写 `EPHEMERAL` 高衰减记忆（~2-3 天半衰期，同对象 supersedes 去重），按 subject 确定性加载，对当事人注入细节、对第三方只受全局 mood 影响；写路径卫生规则（不写私密内容）。
+
 ### 架构
 - 后端新增 `GET /panel/admin/versions` 端点；`POST /panel/admin/upgrade` 支持 `version` 参数。
 - `update_checker` 新增 `list_releases()`。
 - 新增 `data/prompt_cache.db`（`prompt_cache` + `prompt_clean_settings` 两表）；提示词清洗全局并发信号量（`[graph] prompt_clean_max_concurrency`，默认 20）；`_should_fallback` 对配额类 429 返回 True（全局 fallback 行为变更）。
+- `relationships` 表新增 `favor` 列（迁移 006）；`personas` 表新增 mood 四列（迁移 003）；`memory_entries` 表新增 `subject_actor_id` 列（迁移 006）；关系分析输出契约由双 delta 改为单 `favor_delta` + 可选 `mood_anchor`。
 
 ## [v0.4.0] - 2026-08
 
