@@ -20,7 +20,7 @@
 - **关系可恶化**：关系分析 Agent 提示词 v5 重构——正向/负向/中性三段信号参考 + 负向示例（羞辱/欺骗/威胁等），输出单 `favor_delta`（可负）。
 - **演进预设**：好感度更新采用不对称系数（慢热快冷），`[relationship_alpha]` 配置预设（normal/sensitive/rational/gullible/guarded），人格按 id 引用，面板不做自定义。
 - **全局人格情绪（mood）**：连续 valence 状态机并入 `personas` 表，跨空间共享。惯性 0.8 + 时间衰减 + 单步 clamp 0.3 + 最小阈值 0.05；标签只用"心情"级 6 段（不细分具体情绪），具体情绪写入脱敏 cause（public 注入）。情绪分析前置（非流式零额外延迟，流式 +1~2s TTFT），"本条激怒本条生效"；同一交互幂等冲击。
-- **状态引导矩阵**：好感度档 × 心情段 6×6 矩阵（36 格每格一段引导文本），经提示词两层存储配置化（defaults + 覆盖合并），面板提示词页统一管理；主对话 system 新增"你此刻的状态"段。
+- **状态引导矩阵**：好感度档 × 心情段 6×6 矩阵（36 格每格一段引导文本），**每格一个 markdown 文件**（defaults/mood_matrix/<cell>.md + data/prompts/mood_matrix/<cell>.md 覆盖，单格编辑只碰对应文件），标签全英文（hostile_dreadful），注入模型时经中文映射；面板「情绪矩阵」tab 以 7×7 grid 点击编辑（独立于提示词管理，不在 registry 中）；主对话 system 新增"你此刻的状态"段。
 - **对象化情绪锚点**：显著负面（favor_delta ≤ -0.15）时写 `EPHEMERAL` 高衰减记忆（~2-3 天半衰期，同对象 supersedes 去重），按 subject 确定性加载，对当事人注入细节、对第三方只受全局 mood 影响；写路径卫生规则（不写私密内容）。
 
 ### 架构

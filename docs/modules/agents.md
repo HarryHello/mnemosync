@@ -443,7 +443,7 @@ v0.2.12 起从逐句 ReAct 改为单次 LLM completion:
 - `load` 时覆盖文件不存在 → 静默回退默认
 - `load` 时覆盖文件 YAML frontmatter 解析失败 → warn 日志 + 回退默认
 
-### 7.2 已注册的 7 个提示词 (v0.4.1 含 mood_matrix)
+### 7.2 已注册的 6 个提示词 (v0.4.1)
 
 | name | 用途 | 必需占位符 |
 |------|------|-----------|
@@ -453,9 +453,10 @@ v0.2.12 起从逐句 ReAct 改为单次 LLM completion:
 | `prompt_cleaning_user` | 提示词清洗 Agent 的 user prompt | `SYSTEM_MESSAGE` |
 | `proxy_thinking` | 代理推理 Agent | `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
 | `main_dialogue_frame` | 主对话上下文框架 | `PERSONA_NAME`, `PERSONA_PROMPT`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `SPACE_LABEL`, `ACTIVE_PARTICIPANTS`, `TRIGGER_REASON`, `TOOL_CAPABILITY_HINT`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION`, `MOOD_STATE` (v0.4.1) |
-| `mood_matrix` (v0.4.1, hidden) | 好感度×情绪 6×6 状态引导矩阵 (非 Agent 提示词, 每格一段文本, 覆盖合并; 由面板「情绪矩阵」grid 编辑, 不在提示词列表显示) | (无) |
 
 权威列表: [`src/core/prompts/registry.py`](../../src/core/prompts/registry.py) 的 `PROMPT_REGISTRY`. 未在 registry 中的 name 一律拒绝加载/保存 (**路径穿越防御**)。
+
+**例外 (v0.4.1)**: 情绪矩阵 (`mood_matrix`) **不在 registry 中** — 它不是单个提示词文件, 而是 36 个格子文件 (默认层 `defaults/mood_matrix/<cell>.md` + 覆盖层 `data/prompts/mood_matrix/<cell>.md`, 每格一个文件, 单格编辑只碰对应文件), 由面板「情绪矩阵」grid 编辑器管理, 加载/编辑走 [`src/core/memory/mood_matrix.py`](../../src/core/memory/mood_matrix.py) 与 `/panel/admin/mood-matrix` API。标签全英文 (如 `hostile_dreadful`), 注入模型时经中文映射。
 
 ### 7.3 文件格式
 

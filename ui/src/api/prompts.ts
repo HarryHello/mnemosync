@@ -57,7 +57,7 @@ export interface MoodMatrixCell {
 
 export interface MoodMatrixResponse {
   favor_tiers: { id: string; label: string }[]
-  mood_labels: string[]
+  mood_labels: { id: string; label: string }[]
   cells: MoodMatrixCell[]
 }
 

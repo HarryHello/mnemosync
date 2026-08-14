@@ -199,12 +199,11 @@ def test_same_second_backups_do_not_collide(store: PromptStore) -> None:
 # ─── list / get_info / list_history ─────────────────────
 
 
-def test_list_returns_visible_registry_entries(store: PromptStore) -> None:
+def test_list_returns_all_registry_entries(store: PromptStore) -> None:
     infos = store.list()
-    expected = {n for n, s in PROMPT_REGISTRY.items() if not s.hidden}
-    assert {info.name for info in infos} == expected
-    # mood_matrix 有专属编辑器 → 不暴露为普通提示词
-    assert "mood_matrix" not in {info.name for info in infos}
+    assert {info.name for info in infos} == set(PROMPT_REGISTRY)
+    # mood_matrix 已脱离 registry (每格一文件, 专属 grid 编辑)
+    assert "mood_matrix" not in PROMPT_REGISTRY
     # 默认无覆盖
     assert all(not info.overridden for info in infos)
 

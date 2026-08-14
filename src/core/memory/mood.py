@@ -15,15 +15,31 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-#: mood 阶段投影 (使用时): 心情级描述, 边界左闭右开
+#: mood 阶段投影 (使用时): 心情级描述, 边界左闭右开.
+#: 标签为全英文内部标识 (v0.4.1); 注入模型/面板显示用 MOOD_LABELS_ZH 中文映射.
 MOOD_TIERS: tuple[tuple[str, float, float], ...] = (
-    ("心情极差", -1.0, -0.6),
-    ("心情差", -0.6, -0.2),
-    ("心情不佳", -0.2, 0.0),
-    ("心情不错", 0.0, 0.2),
-    ("心情好", 0.2, 0.6),
-    ("心情极好", 0.6, 1.0),
+    ("dreadful", -1.0, -0.6),
+    ("bad", -0.6, -0.2),
+    ("low", -0.2, 0.0),
+    ("decent", 0.0, 0.2),
+    ("good", 0.2, 0.6),
+    ("great", 0.6, 1.0),
 )
+
+#: 心情级标签 → 中文显示 (注入主对话 system / 面板表头)
+MOOD_LABELS_ZH: dict[str, str] = {
+    "dreadful": "心情极差",
+    "bad": "心情差",
+    "low": "心情不佳",
+    "decent": "心情不错",
+    "good": "心情好",
+    "great": "心情极好",
+}
+
+
+def mood_label_zh(tier: str) -> str:
+    """英文 tier → 中文心情描述 (未知回退原文)."""
+    return MOOD_LABELS_ZH.get(tier, tier)
 
 #: 更新参数 (RFC §4.2)
 MOOD_INERTIA = 0.8          # 惯性: 情绪不随单条消息剧烈跳变
@@ -41,7 +57,7 @@ def mood_tier_from_valence(valence: float) -> str:
     for label, lo, hi in MOOD_TIERS:
         if lo <= v < hi:
             return label
-    return "心情极好"  # v == 1.0
+    return "great"  # v == 1.0
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:

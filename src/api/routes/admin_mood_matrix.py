@@ -23,8 +23,12 @@ class MoodMatrixCellBody(BaseModel):
 
 @router.get("/mood-matrix")
 async def get_mood_matrix() -> dict[str, Any]:
-    """返回 6×6 矩阵: 档位/心情段元数据 + 36 格 (含覆盖标记)."""
+    """返回 6×6 矩阵: 档位/心情段元数据 + 36 格 (含覆盖标记).
+
+    标签全英文 (id), 中文显示经 label 映射.
+    """
     from src.core.memory.models import RELATIONSHIP_STAGE_LABELS
+    from src.core.memory.mood import MOOD_LABELS_ZH
     from src.core.memory.mood_matrix import (
         CELL_IDS,
         FAVOR_TIERS,
@@ -39,7 +43,9 @@ async def get_mood_matrix() -> dict[str, Any]:
         "favor_tiers": [
             {"id": t, "label": RELATIONSHIP_STAGE_LABELS.get(t, t)} for t in FAVOR_TIERS
         ],
-        "mood_labels": list(MOOD_LABELS),
+        "mood_labels": [
+            {"id": m, "label": MOOD_LABELS_ZH.get(m, m)} for m in MOOD_LABELS
+        ],
         "cells": [
             {"id": cid, "text": cells.get(cid, ""), "overridden": cid in overridden}
             for cid in CELL_IDS

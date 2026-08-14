@@ -54,9 +54,7 @@ def _resolve_name(name: str) -> int | None:
         return None
     print(f"❌ 未知的提示词: {name!r}", file=sys.stderr)
     print("可用名称:", file=sys.stderr)
-    for n, spec in PROMPT_REGISTRY.items():
-        if spec.hidden:
-            continue
+    for n in PROMPT_REGISTRY:
         print(f"  - {n}", file=sys.stderr)
     return 2
 
@@ -167,9 +165,7 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     store = get_prompt_store()
     if args.all:
         touched: list[str] = []
-        for n, spec in PROMPT_REGISTRY.items():
-            if spec.hidden:
-                continue  # 专属编辑器管理 (mood_matrix grid), 不随普通提示词重置
+        for n in PROMPT_REGISTRY:
             if store.reset(n):
                 touched.append(n)
         if touched:
@@ -207,9 +203,7 @@ def _validate_one(name: str) -> tuple[bool, str]:
 def _cmd_validate(args: argparse.Namespace) -> int:
     if args.all:
         all_ok = True
-        for n, spec in PROMPT_REGISTRY.items():
-            if spec.hidden:
-                continue
+        for n in PROMPT_REGISTRY:
             ok, msg = _validate_one(n)
             if not ok:
                 all_ok = False

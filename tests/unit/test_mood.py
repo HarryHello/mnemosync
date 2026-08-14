@@ -15,13 +15,13 @@ from src.core.memory.mood import (
 
 
 def test_mood_tier_boundaries() -> None:
-    assert mood_tier_from_valence(-0.9) == "心情极差"
-    assert mood_tier_from_valence(-0.4) == "心情差"
-    assert mood_tier_from_valence(-0.1) == "心情不佳"
-    assert mood_tier_from_valence(0.1) == "心情不错"
-    assert mood_tier_from_valence(0.4) == "心情好"
-    assert mood_tier_from_valence(0.9) == "心情极好"
-    assert mood_tier_from_valence(1.0) == "心情极好"  # 边界
+    assert mood_tier_from_valence(-0.9) == "dreadful"
+    assert mood_tier_from_valence(-0.4) == "bad"
+    assert mood_tier_from_valence(-0.1) == "low"
+    assert mood_tier_from_valence(0.1) == "decent"
+    assert mood_tier_from_valence(0.4) == "good"
+    assert mood_tier_from_valence(0.9) == "great"
+    assert mood_tier_from_valence(1.0) == "great"  # 边界
 
 
 def test_apply_mood_impact_inertia_limits_step() -> None:
@@ -108,6 +108,6 @@ async def test_update_persona_mood_returns_tier_and_cause() -> None:
     )
     # 单轮冲击温和: 0.8×0.5(系数) 惯性混合后仅小幅为正 (情绪变化克制)
     assert r["valence"] > 0
-    assert r["tier"] == "心情不错"
+    assert r["tier"] == "decent"
     assert r["cause"] == "收到礼物"
     assert MOOD_MIN_DELTA > 0 and MOOD_STEP_CLAMP > 0  # 常量存在

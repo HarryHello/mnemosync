@@ -159,7 +159,7 @@ async def test_stream_mood_section_includes_matrix_cause_and_anchor():
 
     anchor = SimpleNamespace(content="被当众羞辱，感到恼火")
     request = SimpleNamespace()  # _state 被 patch
-    mood_state = {"tier": "心情差", "cause": "被羞辱", "valence": -0.4}
+    mood_state = {"tier": "bad", "cause": "被羞辱", "valence": -0.4}
     rel = SimpleNamespace(type="friend")
 
     with patch("src.api.deps._state", return_value=SimpleNamespace(memory_store=FakeMemoryStore([anchor]))):
@@ -177,7 +177,7 @@ async def test_stream_mood_section_includes_matrix_cause_and_anchor():
 async def test_stream_mood_section_no_anchor_when_actor_missing():
     from src.api.routes.forward.stream import _build_stream_mood_section
 
-    mood_state = {"tier": "心情不错", "cause": None, "valence": 0.1}
+    mood_state = {"tier": "decent", "cause": None, "valence": 0.1}
     with patch("src.api.deps._state", return_value=SimpleNamespace(memory_store=FakeMemoryStore())):
         section = await _build_stream_mood_section(
             SimpleNamespace(), {"actor_id": None}, mood_state, SimpleNamespace(type="stranger"),

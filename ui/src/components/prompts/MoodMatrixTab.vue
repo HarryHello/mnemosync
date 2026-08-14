@@ -16,7 +16,7 @@ interface MatrixRow {
 
 const loading = ref(false)
 const tiers = ref<{ id: string; label: string; cells: MoodMatrixCell[] }[]>([])
-const moodLabels = ref<string[]>([])
+const moodLabels = ref<{ id: string; label: string }[]>([])
 
 const rows = computed<MatrixRow[]>(() =>
   tiers.value.map((t) => {
@@ -167,22 +167,22 @@ onMounted(() => {
             <b>{{ row.tierLabel }}</b>
           </template>
         </el-table-column>
-        <el-table-column v-for="m in moodLabels" :key="m" :label="m" min-width="180">
+        <el-table-column v-for="m in moodLabels" :key="m.id" :label="m.label" min-width="180">
           <template #default="{ row }: { row: MatrixRow }">
             <el-tooltip
-              :content="cellOf(row, m)?.text || '(默认)'"
+              :content="cellOf(row, m.id)?.text || '(默认)'"
               placement="top"
-              :disabled="!cellOf(row, m)?.text"
+              :disabled="!cellOf(row, m.id)?.text"
             >
               <button
                 class="cell-btn"
                 type="button"
-                :class="{ 'cell-overridden': cellOf(row, m)?.overridden }"
-                @click="openEdit(cellOf(row, m), cellId(row.tierId, m))"
+                :class="{ 'cell-overridden': cellOf(row, m.id)?.overridden }"
+                @click="openEdit(cellOf(row, m.id), cellId(row.tierId, m.id))"
               >
-                <template v-if="cellOf(row, m)?.text">
-                  <b v-if="cellOf(row, m)?.overridden">{{ summarize(cellOf(row, m)!.text) }}</b>
-                  <template v-else>{{ summarize(cellOf(row, m)!.text) }}</template>
+                <template v-if="cellOf(row, m.id)?.text">
+                  <b v-if="cellOf(row, m.id)?.overridden">{{ summarize(cellOf(row, m.id)!.text) }}</b>
+                  <template v-else>{{ summarize(cellOf(row, m.id)!.text) }}</template>
                 </template>
                 <span v-else class="cell-default">(默认)</span>
               </button>
