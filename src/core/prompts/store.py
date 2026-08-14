@@ -230,6 +230,8 @@ class PromptStore:
     def list(self) -> list[PromptInfo]:
         infos: list[PromptInfo] = []
         for name, spec in PROMPT_REGISTRY.items():
+            if spec.hidden:
+                continue  # 有专属编辑器 (如 mood_matrix grid), 不暴露为普通提示词
             override_path = self._override_path(name)
             overridden = override_path.is_file()
             version = 0

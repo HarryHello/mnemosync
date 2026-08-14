@@ -106,7 +106,8 @@ def test_list_prompts_returns_registry(app_auth: FastAPI, temp_store: PromptStor
     resp = client.get("/panel/admin/prompts")
     assert resp.status_code == 200
     body = resp.json()
-    assert {item["name"] for item in body} == set(PROMPT_REGISTRY)
+    expected = {n for n, s in PROMPT_REGISTRY.items() if not s.hidden}
+    assert {item["name"] for item in body} == expected
 
 
 def test_get_prompt_detail(app_auth: FastAPI, temp_store: PromptStore) -> None:

@@ -30,6 +30,7 @@ class PromptSpec:
     name: str
     placeholders: tuple[str, ...]
     description: str
+    hidden: bool = False  # 从列表接口隐藏, 但仍接受加载/保存 (如 mood_matrix 有专属 grid 编辑器)
 
 
 PROMPT_REGISTRY: dict[str, PromptSpec] = {
@@ -116,8 +117,10 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         description=(
             "好感度×情绪 6×6 状态引导矩阵 (v0.4.1): 每格一段文本, "
             "标题格式 ## <好感度档>_<心情段>, 如 ## hostile_心情极差。"
-            "覆盖文件可只写要改的格子 (defaults 打底合并)"
+            "覆盖文件可只写要改的格子 (defaults 打底合并)。"
+            "由面板「情绪矩阵」grid 编辑器管理, 不在提示词列表显示"
         ),
+        hidden=True,
     ),
 }
 

@@ -453,7 +453,7 @@ v0.2.12 起从逐句 ReAct 改为单次 LLM completion:
 | `prompt_cleaning_user` | 提示词清洗 Agent 的 user prompt | `SYSTEM_MESSAGE` |
 | `proxy_thinking` | 代理推理 Agent | `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
 | `main_dialogue_frame` | 主对话上下文框架 | `PERSONA_NAME`, `PERSONA_PROMPT`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `SPACE_LABEL`, `ACTIVE_PARTICIPANTS`, `TRIGGER_REASON`, `TOOL_CAPABILITY_HINT`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION`, `MOOD_STATE` (v0.4.1) |
-| `mood_matrix` (v0.4.1) | 好感度×情绪 6×6 状态引导矩阵 (非 Agent 提示词, 每格一段文本, 覆盖合并) | (无) |
+| `mood_matrix` (v0.4.1, hidden) | 好感度×情绪 6×6 状态引导矩阵 (非 Agent 提示词, 每格一段文本, 覆盖合并; 由面板「情绪矩阵」grid 编辑, 不在提示词列表显示) | (无) |
 
 权威列表: [`src/core/prompts/registry.py`](../../src/core/prompts/registry.py) 的 `PROMPT_REGISTRY`. 未在 registry 中的 name 一律拒绝加载/保存 (**路径穿越防御**)。
 

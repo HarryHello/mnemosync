@@ -199,9 +199,12 @@ def test_same_second_backups_do_not_collide(store: PromptStore) -> None:
 # ─── list / get_info / list_history ─────────────────────
 
 
-def test_list_returns_all_registry_entries(store: PromptStore) -> None:
+def test_list_returns_visible_registry_entries(store: PromptStore) -> None:
     infos = store.list()
-    assert {info.name for info in infos} == set(PROMPT_REGISTRY)
+    expected = {n for n, s in PROMPT_REGISTRY.items() if not s.hidden}
+    assert {info.name for info in infos} == expected
+    # mood_matrix 有专属编辑器 → 不暴露为普通提示词
+    assert "mood_matrix" not in {info.name for info in infos}
     # 默认无覆盖
     assert all(not info.overridden for info in infos)
 
