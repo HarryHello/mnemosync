@@ -428,6 +428,8 @@ class TestStreamBasicFlow:
                 favor=0.5,
                 interaction_count=10,
                 notes=None,
+                user_addressing=None,
+                persona_addressing=None,
             ))
         )
 

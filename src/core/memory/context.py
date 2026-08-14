@@ -75,6 +75,8 @@ def format_relationship(rel: Relationship | None, include_score: bool = True) ->
     - include_score=True (关系分析 Agent 基线): 输出数值, 供 Agent 计算 delta.
     - include_score=False (主对话注入): 只输出阶段描述, 不注入连续数值
       (防模型"演数值"; 枚举标签经 RELATIONSHIP_STAGE_LABELS 转为自然语言).
+    - v0.4.1: 称呼注入 — 人格对用户的称呼 (user_addressing) 与人格自称
+      (persona_addressing), None 回退 TOML 基线; 中性默认值 ("你"/"我") 不注入.
     """
     if rel is None:
         return "新用户（尚未建立关系）"
@@ -83,7 +85,33 @@ def format_relationship(rel: Relationship | None, include_score: bool = True) ->
         head = f"关系类型: {rel.type}（好感度 {rel.favor:.2f}, 互动 {rel.interaction_count} 次）"
     else:
         head = f"与对方的关系：{stage}（互动 {rel.interaction_count} 次）"
-    return head + (f"\n备注: {rel.notes}" if rel.notes else "")
+    parts = [head]
+    addressing = _format_addressing(rel)
+    if addressing:
+        parts.append(addressing)
+    if rel.notes:
+        parts.append(f"备注: {rel.notes}")
+    return "\n".join(parts)
+
+
+def _format_addressing(rel: Relationship) -> str:
+    """人格对用户的称呼 + 人格自称 (v0.4.1).
+
+    None 回退 TOML 基线 (settings.persona.relation); 中性默认值
+    (user_addressing="你" / persona_addressing="我") 不注入 — system 本身就是
+    第二人称, 注入 "你叫他：你" 反而是噪音.
+    """
+    from src.core.config import get_settings
+
+    base = get_settings().persona.relation
+    user_addr = (getattr(rel, "user_addressing", None) or "").strip() or base.user_addressing
+    persona_addr = (getattr(rel, "persona_addressing", None) or "").strip() or base.persona_addressing
+    bits: list[str] = []
+    if user_addr and user_addr not in ("你",):
+        bits.append(f"你叫他：{user_addr}")
+    if persona_addr and persona_addr not in ("我",):
+        bits.append(f"他叫你：{persona_addr}")
+    return "；".join(bits)
 
 
 def _proxy_thinking_section(proxy_thinking_result: str | None) -> str:
