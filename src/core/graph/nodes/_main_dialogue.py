@@ -159,6 +159,23 @@ async def _prepare_context(
         except aiosqlite.Error:
             logger.warning("Lorebook match failed", exc_info=True)
 
+    # v0.4.1: 对象化情绪锚点 (EPHEMERAL) — 当前说话者在场时确定性加载 (RFC §6.2)
+    anchor_section = ""
+    actor_id = state.get("actor_id")
+    if actor_id:
+        try:
+            anchors = await memory_store.list_ephemeral_by_subject(actor_id, limit=1)
+            if anchors:
+                anchor_section = "\n对当前发言者的近期情绪：" + anchors[0].content
+        except Exception as e:
+            logger.debug("  锚点加载失败 (忽略): %s", e)
+
+    mood_section = _build_mood_section(state, mood_state, rel)
+    if mood_section and anchor_section:
+        mood_section = mood_section + anchor_section
+    elif anchor_section:
+        mood_section = anchor_section
+
     messages = build_main_dialogue_messages(
         persona_prompt=state.get("persona") or settings.persona.prompt,
         persona_name=state.get("persona_name") or settings.persona.name,
@@ -177,7 +194,7 @@ async def _prepare_context(
         persona_definition=state.get("persona_definition"),
         space_id=state.get("space_id"),
         lorebook_entries=lorebook_entries,
-        mood_state_section=_build_mood_section(state, mood_state, rel),
+        mood_state_section=mood_section,
     )
 
     logger.debug("  📝 拼装消息数: %d", len(messages))

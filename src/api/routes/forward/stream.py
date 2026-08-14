@@ -404,22 +404,39 @@ async def _run_proxy_thinking(
     return reasoning_text
 
 
-def _build_stream_mood_section(
+async def _build_stream_mood_section(
+    http_request: Request,
     initial_state: dict[str, Any],
     mood_state: dict[str, Any] | None,
     rel: Relationship | None,
 ) -> str:
-    """构建流式路径的"人格当前状态"注入段 (v0.4.1)."""
-    if mood_state is None:
-        return ""
+    """构建流式路径的"人格当前状态"注入段 (v0.4.1).
+
+    含全局 mood (矩阵引导 + cause) 与对象化锚点 (对当前说话者的近期情绪).
+    """
     from src.core.memory.mood_matrix import build_persona_state_section
 
-    favor_tier = getattr(rel, "type", None) or "stranger"
-    mood_label = mood_state.get("tier") or "心情不错"
-    section = build_persona_state_section(favor_tier=favor_tier, mood_label=mood_label)
-    cause = mood_state.get("cause")
-    if cause:
-        section += "\n心情缘由：" + str(cause)
+    section = ""
+    if mood_state is not None:
+        favor_tier = getattr(rel, "type", None) or "stranger"
+        mood_label = mood_state.get("tier") or "心情不错"
+        section = build_persona_state_section(favor_tier=favor_tier, mood_label=mood_label)
+        cause = mood_state.get("cause")
+        if cause:
+            section += "\n心情缘由：" + str(cause)
+
+    actor_id = initial_state.get("actor_id")
+    if actor_id:
+        try:
+            from src.api.deps import _state as _api_state
+            memory_store = getattr(_api_state(http_request), "memory_store", None)
+            if memory_store is not None:
+                anchors = await memory_store.list_ephemeral_by_subject(actor_id, limit=1)
+                if anchors:
+                    anchor_text = "\n对当前发言者的近期情绪：" + anchors[0].content
+                    section = section + anchor_text if section else anchor_text
+        except Exception as e:
+            logger.debug("  流式锚点加载失败 (忽略): %s", e)
     return section
 
 
@@ -777,7 +794,9 @@ async def _handle_stream(
         new_user_content=new_user_content,
         space_id=space_id,
         source_user=source_user,
-        mood_state_section=_build_stream_mood_section(initial_state, mood_state, rel),
+        mood_state_section=await _build_stream_mood_section(
+            http_request, initial_state, mood_state, rel,
+        ),
     )
 
     # 3.5 多模态图片处理: 模型支持图片则从原始消息恢复 image parts
