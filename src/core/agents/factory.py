@@ -341,10 +341,12 @@ async def run_relationship_analysis(
     current_speaker: str = "未知参与者",
     channel_type: str | None = None,
 ) -> RelationshipAnalysisOutput:
-    """关系分析 Agent: CoT, 调用 emotion_analyzer 后输出亲密度增量.
+    """关系分析 Agent: CoT, 输出好感度增量 (v0.4.1: 单 favor_delta, 可负).
 
     persona_name / persona_addressing / user_addressing / relation_context: v0.2.9 起
     透传给 prompt, 让 Agent 用兄妹/主仆等关系基线判断信号, 不再默认助手-用户.
+    v0.4.1: 情绪由 graph 层预计算注入 (__EMOTION_ANALYSIS__), 不再自行调用工具;
+    输出契约含 mood_anchor (显著负面时的脱敏情绪锚点).
     """
     user_prompt = build_relationship_analysis_prompt(
         current_relationship=current_relationship, conversation=conversation,

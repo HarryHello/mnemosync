@@ -477,7 +477,8 @@ async def _migrate_add_favor(db: aiosqlite.Connection) -> None:
 
     升级兼容: 覆盖 v0.3.5 / v0.4.0b1 的旧库 (含 intimacy_score/trust_level).
     回填规则 (RFC §2.2): favor = MAX(intimacy_score, trust_level) — 零缩放.
-    旧列保留不再写入 (避免重写表, 兼容旧工具读取).
+    已知技术债: 旧列保留不再写入 (避免 SQLite 重写表) — 计划 v0.5 大版本
+    清理时再 DROP COLUMN (SQLite 3.35+ 支持).
     """
     from src.persistence.migrations import add_column_if_missing
 

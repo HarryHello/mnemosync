@@ -89,6 +89,55 @@ def _mood_impact_from_emotion(emotion_analysis: dict[str, Any]) -> float:
     return _clamp(valence * MOOD_IMPACT_ALPHA, -1.0, 1.0)
 
 
+async def run_emotion_mood_channel(
+    forwarder: Any,
+    persona_store: Any,
+    persona_id: str,
+    *,
+    interaction_id: str | None,
+    extracted: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """前置情绪通道 (非流式/流式共用): 情绪分析 + mood 更新, 失败降级.
+
+    返回 (emotion_analysis, mood_state); 任一步失败都不阻塞主流程
+    (情绪分析失败 → 空 dict, mood 保持原值).
+    """
+    emotion_analysis: dict[str, Any] = {}
+    mood_state: dict[str, Any] | None = None
+    try:
+        from src.core.graph.nodes import _compute_emotion
+
+        emotion_analysis = await _compute_emotion(forwarder, extracted)
+        if persona_store is not None:
+            mood_state = await update_persona_mood(
+                persona_store,
+                persona_id,
+                interaction_id=interaction_id,
+                emotion_analysis=emotion_analysis,
+                cause=emotion_analysis.get("summary") or None,
+            )
+    except Exception as e:
+        logger.debug("情绪/mood 前置通道失败 (降级): %s", e)
+    return emotion_analysis, mood_state
+
+
+async def load_subject_anchor(memory_store: Any, actor_id: str | None) -> str:
+    """加载当前说话者的对象化情绪锚点 (EPHEMERAL, RFC §6.2).
+
+    返回注入文本 (空串 = 无锚点). 失败静默降级.
+    """
+    if not actor_id or memory_store is None:
+        return ""
+    try:
+        anchors = await memory_store.list_ephemeral_by_subject(actor_id, limit=1)
+        if anchors:
+            content = anchors[0].content
+            return "对当前发言者的近期情绪：" + str(content)
+    except Exception as e:
+        logger.debug("锚点加载失败 (忽略): %s", e)
+    return ""
+
+
 async def update_persona_mood(
     persona_store: Any,
     persona_id: str,

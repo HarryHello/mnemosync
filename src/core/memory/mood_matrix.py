@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 
 from src.core.memory.models import RELATIONSHIP_TIERS
 from src.core.memory.mood import MOOD_TIERS
@@ -91,3 +92,26 @@ def build_persona_state_section(
     if guide:
         return head + "\n" + guide
     return head
+
+
+def build_state_section(
+    *,
+    favor_tier: str,
+    mood_state: dict[str, Any] | None,
+    anchor_text: str = "",
+) -> str:
+    """完整"人格当前状态"段 (非流式/流式共用): 矩阵格 + cause + 锚点.
+
+    - mood_state 为 None (通道降级) 时仅注入锚点 (若有)
+    - cause 是 public 脱敏文本; anchor_text 已由调用方按 subject 加载
+    """
+    section = ""
+    if mood_state is not None:
+        mood_label = mood_state.get("tier") or "心情不错"
+        section = build_persona_state_section(favor_tier=favor_tier, mood_label=mood_label)
+        cause = mood_state.get("cause")
+        if cause:
+            section += "\n心情缘由：" + str(cause)
+    if anchor_text:
+        section = section + "\n" + anchor_text if section else anchor_text
+    return section

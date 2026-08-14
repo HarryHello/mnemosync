@@ -412,32 +412,19 @@ async def _build_stream_mood_section(
 ) -> str:
     """构建流式路径的"人格当前状态"注入段 (v0.4.1).
 
-    含全局 mood (矩阵引导 + cause) 与对象化锚点 (对当前说话者的近期情绪).
+    复用共享 build_state_section (矩阵格 + cause + 锚点); 仅 store 获取方式
+    与流式上下文相关.
     """
-    from src.core.memory.mood_matrix import build_persona_state_section
-
-    section = ""
-    if mood_state is not None:
-        favor_tier = getattr(rel, "type", None) or "stranger"
-        mood_label = mood_state.get("tier") or "心情不错"
-        section = build_persona_state_section(favor_tier=favor_tier, mood_label=mood_label)
-        cause = mood_state.get("cause")
-        if cause:
-            section += "\n心情缘由：" + str(cause)
-
-    actor_id = initial_state.get("actor_id")
-    if actor_id:
-        try:
-            from src.api.deps import _state as _api_state
-            memory_store = getattr(_api_state(http_request), "memory_store", None)
-            if memory_store is not None:
-                anchors = await memory_store.list_ephemeral_by_subject(actor_id, limit=1)
-                if anchors:
-                    anchor_text = "\n对当前发言者的近期情绪：" + anchors[0].content
-                    section = section + anchor_text if section else anchor_text
-        except Exception as e:
-            logger.debug("  流式锚点加载失败 (忽略): %s", e)
-    return section
+    from src.api.deps import _state as _api_state
+    from src.core.memory.mood import load_subject_anchor
+    from src.core.memory.mood_matrix import build_state_section
+    memory_store = getattr(_api_state(http_request), "memory_store", None)
+    anchor_text = await load_subject_anchor(memory_store, initial_state.get("actor_id"))
+    return build_state_section(
+        favor_tier=getattr(rel, "type", None) or "stranger",
+        mood_state=mood_state,
+        anchor_text=anchor_text,
+    )
 
 
 async def _build_stream_messages(
@@ -747,25 +734,17 @@ async def _handle_stream(
 
     # 1.5 前置情绪通道 (v0.4.1, RFC §4): 本条消息情绪 → 全局 mood 冲击 + 注入
     # TTFT 代价 ~1-2s (评审确认可接受); 幂等: 同一 interaction_id 只冲击一次
-    emotion_analysis: dict[str, Any] = {}
-    mood_state: dict[str, Any] | None = None
-    try:
-        from src.core.graph.nodes import _compute_emotion
-        from src.core.memory.mood import update_persona_mood
-
-        emotion_analysis = await _compute_emotion(multi_forwarder, initial_state.get("extracted_new", []))
-        from src.api.deps import _state as _api_state
-        persona_store = getattr(_api_state(http_request), "persona_store", None)
-        if persona_store is not None:
-            mood_state = await update_persona_mood(
-                persona_store,
-                initial_state.get("persona_id") or "default",
-                interaction_id=initial_state.get("interaction_id"),
-                emotion_analysis=emotion_analysis,
-                cause=emotion_analysis.get("summary") or None,
-            )
-    except Exception as e:
-        logger.debug("  💭 流式情绪/mood 通道失败 (降级): %s", e)
+    # 非流式/流式共用 run_emotion_mood_channel (失败降级, 不阻塞)
+    from src.api.deps import _state as _api_state
+    from src.core.memory.mood import run_emotion_mood_channel
+    _app_state = _api_state(http_request)
+    emotion_analysis, mood_state = await run_emotion_mood_channel(
+        multi_forwarder,
+        getattr(_app_state, "persona_store", None),
+        initial_state.get("persona_id") or "default",
+        interaction_id=initial_state.get("interaction_id"),
+        extracted=initial_state.get("extracted_new", []),
+    )
 
     # 2. (可选) 代理推理.
     reasoning_text = await _run_proxy_thinking(

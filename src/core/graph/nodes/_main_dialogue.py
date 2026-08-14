@@ -27,33 +27,9 @@ from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
 from src.tools import MemoryRetriever
 
-from ._helpers import StoresDict, _compute_emotion, _retrieval_context
+from ._helpers import StoresDict, _retrieval_context
 
 logger = logging.getLogger(__name__)
-
-
-def _build_mood_section(
-    state: AgentState,
-    mood_state: dict[str, Any] | None,
-    rel: Any,
-) -> str:
-    """构建"人格当前状态"注入段 (v0.4.1, RFC §5.3).
-
-    - favor_tier 取当前发言者的好感度档 (rel.type)
-    - mood_label 取全局 mood 的心情段
-    - 矩阵引导文本 + cause (public 脱敏文本) 一并注入
-    """
-    if mood_state is None:
-        return ""
-    from src.core.memory.mood_matrix import build_persona_state_section
-
-    favor_tier = getattr(rel, "type", None) or "stranger"
-    mood_label = mood_state.get("tier") or "心情不错"
-    section = build_persona_state_section(favor_tier=favor_tier, mood_label=mood_label)
-    cause = mood_state.get("cause")
-    if cause:
-        section += "\n心情缘由：" + str(cause)
-    return section
 
 
 async def _prepare_context(
@@ -109,24 +85,19 @@ async def _prepare_context(
             if entry:
                 retrieved_entries.append(entry)
 
-    # Emotion analysis: pre-compute once, shared by memory_analysis + relationship_analysis
-    emotion_analysis = await _compute_emotion(forwarder, extracted)
-    logger.debug("  💭 情绪分析: %s (强度=%.2f)", emotion_analysis.get("emotion", "?"), emotion_analysis.get("intensity", 0))
+    # Emotion analysis + v0.4.1 前置 mood 通道 (非流式/流式共用, 失败降级)
+    # 本条消息的情绪立即冲击全局 mood; 幂等: 同一 interaction_id 只冲击一次
+    from src.core.memory.mood import run_emotion_mood_channel
 
-    # v0.4.1: 前置 mood 通道 — 本条消息的情绪立即冲击全局 mood (RFC §4.2)
-    # 幂等: 同一 interaction_id 只冲击一次 (工具续轮不重复扰动)
     persona_store = stores.get("persona_store")
-    mood_state: dict[str, Any] | None = None
-    if persona_store is not None:
-        from src.core.memory.mood import update_persona_mood
-
-        mood_state = await update_persona_mood(
-            persona_store,
-            state["persona_id"],
-            interaction_id=state.get("interaction_id"),
-            emotion_analysis=emotion_analysis,
-            cause=emotion_analysis.get("summary") or None,
-        )
+    emotion_analysis, mood_state = await run_emotion_mood_channel(
+        forwarder,
+        persona_store,
+        state["persona_id"],
+        interaction_id=state.get("interaction_id"),
+        extracted=extracted,
+    )
+    logger.debug("  💭 情绪分析: %s (强度=%.2f)", emotion_analysis.get("emotion", "?"), emotion_analysis.get("intensity", 0))
 
     conversation_history = state.get("messages", [])
     conversation_history = [m for m in conversation_history if m.get("role") != "system"]
@@ -160,21 +131,15 @@ async def _prepare_context(
             logger.warning("Lorebook match failed", exc_info=True)
 
     # v0.4.1: 对象化情绪锚点 (EPHEMERAL) — 当前说话者在场时确定性加载 (RFC §6.2)
-    anchor_section = ""
-    actor_id = state.get("actor_id")
-    if actor_id:
-        try:
-            anchors = await memory_store.list_ephemeral_by_subject(actor_id, limit=1)
-            if anchors:
-                anchor_section = "\n对当前发言者的近期情绪：" + anchors[0].content
-        except Exception as e:
-            logger.debug("  锚点加载失败 (忽略): %s", e)
+    from src.core.memory.mood import load_subject_anchor
+    from src.core.memory.mood_matrix import build_state_section
 
-    mood_section = _build_mood_section(state, mood_state, rel)
-    if mood_section and anchor_section:
-        mood_section = mood_section + anchor_section
-    elif anchor_section:
-        mood_section = anchor_section
+    anchor_text = await load_subject_anchor(memory_store, state.get("actor_id"))
+    mood_section = build_state_section(
+        favor_tier=getattr(rel, "type", None) or "stranger",
+        mood_state=mood_state,
+        anchor_text=anchor_text,
+    )
 
     messages = build_main_dialogue_messages(
         persona_prompt=state.get("persona") or settings.persona.prompt,
@@ -398,11 +363,12 @@ async def main_dialogue_node(
     """
     from src.core.graph.nodes import _get_stores
 
-    # In streaming mode _run_memory_graph has pre-filled response: return directly, don't call LLM again
-    if "response" in state and state["response"] is not None:
+    # 后台记忆图路径: _run_memory_graph 显式设置 skip_main_dialogue (response 已预填,
+    # 不再调用 LLM — 显式标志而非隐式"response 非空"约定, 见 T3)
+    if state.get("skip_main_dialogue"):
         logger.debug("=" * 60)
-        logger.debug("🤖 [main_dialogue] 检测到预填充 response: 跳过 LLM 调用")
-        result: dict[str, Any] = {"response": state["response"]}
+        logger.debug("🤖 [main_dialogue] skip_main_dialogue: 跳过 LLM 调用")
+        result: dict[str, Any] = {"response": state.get("response") or ""}
         if "upstream_usage" in state and state["upstream_usage"] is not None:
             result["upstream_usage"] = state["upstream_usage"]
         return result

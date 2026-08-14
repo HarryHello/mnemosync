@@ -294,8 +294,9 @@ class Relationship:
     由关系分析 Agent 维护，主对话 Agent 加载用于上下文.
 
     v0.4.1: 亲密度 + 信任度统一为单一**好感度** (favor, -1.0~1.0,
-    允许为负表达厌恶/敌对). 旧 intimacy_score/trust_level 字段由
-    DB 迁移回填后不再写入, 仅保留读取兼容 (升级瞬间的存量数据).
+    允许为负表达厌恶/敌对). 旧 intimacy_score/trust_level 字段由 DB 迁移
+    回填 (favor = MAX(intimacy, trust)) 后即废弃, 模型层不提供旧属性
+    (旧列保留在 DB 中供 v0.5 大版本清理, 见 relationship_store 迁移注释).
 
     Attributes:
         persona_id: 人格标识
@@ -318,15 +319,6 @@ class Relationship:
     persona_addressing: str | None = None
     user_addressing: str | None = None
     context: str | None = None
-
-    # 旧字段保留为只读兼容 (v0.4.1 迁移后不再写入, 避免破坏存量读取)
-    @property
-    def intimacy_score(self) -> float:  # 兼容: 旧值已在迁移时折算进 favor
-        return max(0.0, self.favor)
-
-    @property
-    def trust_level(self) -> float:  # 兼容: 旧值已在迁移时折算进 favor
-        return max(0.0, self.favor)
 
     @staticmethod
     def create(persona_id: str, user_id: str) -> "Relationship":

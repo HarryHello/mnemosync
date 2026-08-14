@@ -20,10 +20,11 @@ def reset_settings():
     _reset_settings()
 
 
-async def test_main_dialogue_node_returns_early_when_response_present():
-    """当 state 已有 response 时, main_dialogue_node 直接返回, 不调用 LLM."""
+async def test_main_dialogue_node_returns_early_when_skip_flag():
+    """当 state 带 skip_main_dialogue 标志 (后台记忆图) 时直接返回, 不调用 LLM."""
     state = {
         "source_user": "default",
+        "skip_main_dialogue": True,
         "response": "预填充的回复文本",
     }
 
@@ -38,10 +39,11 @@ async def test_main_dialogue_node_returns_early_when_response_present():
     mock_make_forwarder.assert_not_called()
 
 
-async def test_main_dialogue_node_preserves_upstream_usage_when_present():
-    """当 state 已有 upstream_usage 时, main_dialogue_node 也一并返回."""
+async def test_main_dialogue_node_preserves_upstream_usage_when_skip_flag():
+    """skip 标志下 upstream_usage 也一并返回."""
     state = {
         "source_user": "default",
+        "skip_main_dialogue": True,
         "response": "预填充的回复",
         "upstream_usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
     }
