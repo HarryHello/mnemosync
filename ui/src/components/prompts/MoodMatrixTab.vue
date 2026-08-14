@@ -160,35 +160,37 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-table :data="rows" v-loading="loading" stripe border empty-text="暂无情绪矩阵数据">
-      <el-table-column label="好感度档" min-width="110" fixed>
-        <template #default="{ row }: { row: MatrixRow }">
-          <b>{{ row.tierLabel }}</b>
-        </template>
-      </el-table-column>
-      <el-table-column v-for="m in moodLabels" :key="m" :label="m" min-width="180">
-        <template #default="{ row }: { row: MatrixRow }">
-          <el-tooltip
-            :content="cellOf(row, m)?.text || '(默认)'"
-            placement="top"
-            :disabled="!cellOf(row, m)?.text"
-          >
-            <button
-              class="cell-btn"
-              type="button"
-              :class="{ 'cell-overridden': cellOf(row, m)?.overridden }"
-              @click="openEdit(cellOf(row, m), cellId(row.tierId, m))"
+    <el-card>
+      <el-table :data="rows" v-loading="loading" stripe empty-text="暂无情绪矩阵数据">
+        <el-table-column label=" " min-width="60" fixed>
+          <template #default="{ row }: { row: MatrixRow }">
+            <b>{{ row.tierLabel }}</b>
+          </template>
+        </el-table-column>
+        <el-table-column v-for="m in moodLabels" :key="m" :label="m" min-width="180">
+          <template #default="{ row }: { row: MatrixRow }">
+            <el-tooltip
+              :content="cellOf(row, m)?.text || '(默认)'"
+              placement="top"
+              :disabled="!cellOf(row, m)?.text"
             >
-              <template v-if="cellOf(row, m)?.text">
-                <b v-if="cellOf(row, m)?.overridden">{{ summarize(cellOf(row, m)!.text) }}</b>
-                <template v-else>{{ summarize(cellOf(row, m)!.text) }}</template>
-              </template>
-              <span v-else class="cell-default">(默认)</span>
-            </button>
-          </el-tooltip>
-        </template>
-      </el-table-column>
-    </el-table>
+              <button
+                class="cell-btn"
+                type="button"
+                :class="{ 'cell-overridden': cellOf(row, m)?.overridden }"
+                @click="openEdit(cellOf(row, m), cellId(row.tierId, m))"
+              >
+                <template v-if="cellOf(row, m)?.text">
+                  <b v-if="cellOf(row, m)?.overridden">{{ summarize(cellOf(row, m)!.text) }}</b>
+                  <template v-else>{{ summarize(cellOf(row, m)!.text) }}</template>
+                </template>
+                <span v-else class="cell-default">(默认)</span>
+              </button>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
     <!-- 编辑对话框 -->
     <el-dialog v-model="editVisible" :title="`编辑格子: ${editCellId}`" width="640px">
