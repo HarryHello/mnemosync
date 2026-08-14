@@ -155,9 +155,22 @@ setup_code() {
         if [ ! -d ".git" ]; then
             warn "$INSTALL_DIR 存在但不是 git 仓库，重新克隆"
             cd ..
+            # 数据保护 (v0.4.1): 非 git 仓库重建前先移出 data/, 重建后恢复 —
+            # 绝不静默删除用户数据
+            _data_bak=""
+            if [ -d "$INSTALL_DIR/data" ] && [ -n "$(ls -A "$INSTALL_DIR/data" 2>/dev/null)" ]; then
+                _data_bak="${INSTALL_DIR}.data-$(date +%Y%m%d-%H%M%S)"
+                warn "检测到数据目录, 先备份到 $_data_bak (重建后自动恢复)"
+                mv "$INSTALL_DIR/data" "$_data_bak"
+            fi
             rm -rf "$INSTALL_DIR"
             git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
             cd "$INSTALL_DIR"
+            if [ -n "$_data_bak" ]; then
+                mkdir -p data
+                mv "$_data_bak" "$INSTALL_DIR/data"
+                info "数据目录已恢复到 $INSTALL_DIR/data"
+            fi
         fi
 
         # 拉取最新代码 (支持代理)

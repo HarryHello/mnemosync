@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from src.api.deps import _state
@@ -31,7 +31,7 @@ router = APIRouter(
 )
 
 
-def _store(request: Any) -> PromptCacheStore:
+def _store(request: Request) -> PromptCacheStore:
     st = _state(request)
     if st.prompt_cache_store is None:
         raise HTTPException(status_code=503, detail="prompt_cache_store 未初始化")
@@ -78,7 +78,7 @@ class PromptCleanSettingBody(BaseModel):
 
 @router.get("/prompt-cleaning/cache", response_model=PromptCacheListResponse)
 async def list_clean_cache(
-    request: Any,
+    request: Request,
     frontend: str | None = Query(None, description="按前台 (api_key.note) 过滤"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -97,7 +97,7 @@ async def list_clean_cache(
 
 @router.get("/prompt-cleaning/cache/{module_hash}", response_model=PromptCacheItem)
 async def get_clean_cache(
-    module_hash: str, request: Any,
+    module_hash: str, request: Request,
     frontend: str = Query(..., description="前台 (api_key.note)"),
 ) -> PromptCacheItem:
     store = _store(request)
@@ -109,7 +109,7 @@ async def get_clean_cache(
 
 @router.put("/prompt-cleaning/cache/{module_hash}")
 async def edit_clean_cache(
-    module_hash: str, body: PromptCacheEditBody, request: Any,
+    module_hash: str, body: PromptCacheEditBody, request: Request,
     frontend: str = Query(..., description="前台 (api_key.note)"),
 ) -> dict[str, bool]:
     """手动编辑某模块的清洗结果 (textarea 直接改)."""
@@ -122,7 +122,7 @@ async def edit_clean_cache(
 
 @router.delete("/prompt-cleaning/cache/{module_hash}")
 async def delete_clean_cache(
-    module_hash: str, request: Any,
+    module_hash: str, request: Request,
     frontend: str = Query(..., description="前台 (api_key.note)"),
 ) -> dict[str, bool]:
     """删除某条缓存 — 下次请求未命中时自动重新清洗."""
@@ -135,7 +135,7 @@ async def delete_clean_cache(
 
 @router.post("/prompt-cleaning/cache/{module_hash}/re-clean")
 async def re_clean_cache(
-    module_hash: str, request: Any,
+    module_hash: str, request: Request,
     frontend: str = Query(..., description="前台 (api_key.note)"),
 ) -> dict[str, Any]:
     """当场重新清洗: 调 ASSIST 模型重洗该模块并写回缓存."""
@@ -165,7 +165,7 @@ async def re_clean_cache(
 
 
 @router.delete("/prompt-cleaning/cache")
-async def clear_clean_cache(request: Any) -> dict[str, Any]:
+async def clear_clean_cache(request: Request) -> dict[str, Any]:
     store = _store(request)
     n = await store.clear()
     return {"success": True, "deleted": n}
@@ -175,7 +175,7 @@ async def clear_clean_cache(request: Any) -> dict[str, Any]:
 
 
 @router.get("/prompt-cleaning/settings")
-async def list_clean_settings(request: Any) -> dict[str, Any]:
+async def list_clean_settings(request: Request) -> dict[str, Any]:
     from typing import cast
 
     store = _store(request)
@@ -186,7 +186,7 @@ async def list_clean_settings(request: Any) -> dict[str, Any]:
 
 @router.put("/prompt-cleaning/settings")
 async def set_clean_setting(
-    body: PromptCleanSettingBody, request: Any,
+    body: PromptCleanSettingBody, request: Request,
 ) -> dict[str, bool]:
     """设置/取消「跳过不清洗」模块 (按前台; frontend=* 表示全局)."""
     store = _store(request)
