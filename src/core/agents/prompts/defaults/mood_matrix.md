@@ -1,7 +1,6 @@
 ---
-title: 好感度×情绪状态引导矩阵
-description: 6×6 格子, 每格一段引导文本. 标题格式 ## <好感度档>_<心情段>.
-              覆盖文件 (data/prompts/mood_matrix.md) 可只写要改的格子, defaults 打底合并.
+title: mood matrix
+description: 6x6 state guidance cells. Override file may contain only edited cells.
 ---
 
 # 人格状态引导矩阵

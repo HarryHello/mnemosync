@@ -24,6 +24,7 @@ from src.api.routes.admin_conversation import router as conversation_router
 from src.api.routes.admin_core import router as core_router
 from src.api.routes.admin_identity import router as identity_router
 from src.api.routes.admin_memories import router as memories_router
+from src.api.routes.admin_mood_matrix import router as mood_matrix_router
 from src.api.routes.admin_notifications import router as notifications_router
 from src.api.routes.admin_persona import router as persona_router
 from src.api.routes.admin_prompt_cleaning import router as prompt_cleaning_router
@@ -50,3 +51,4 @@ router.include_router(persona_router)
 router.include_router(agent_runs_router)
 router.include_router(restart_router)
 router.include_router(prompt_cleaning_router)
+router.include_router(mood_matrix_router)

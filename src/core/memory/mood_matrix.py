@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 from src.core.memory.models import RELATIONSHIP_TIERS
@@ -115,3 +116,131 @@ def build_state_section(
     if anchor_text:
         section = section + "\n" + anchor_text if section else anchor_text
     return section
+# ── 覆盖层编辑 (面板 6×6 grid, v0.4.1) ──────────────────────────
+
+#: 单格文本长度上限 (面板编辑校验)
+CELL_TEXT_MAX_LENGTH = 2000
+
+
+def _override_path() -> Path:
+    """覆盖文件路径 (与 PromptStore 同目录, data/prompts/mood_matrix.md)."""
+    from src.core.config import get_settings
+
+    return Path(get_settings().storage.prompts_override_dir_abs) / "mood_matrix.md"
+
+
+def load_override_cells() -> dict[str, str]:
+    """读取覆盖层格子 (无覆盖/文件缺失 → 空 dict)."""
+    path = _override_path()
+    if not path.is_file():
+        return {}
+    try:
+        body, _ = get_prompt_store()._strip_frontmatter(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        logger.warning("mood_matrix 覆盖文件读取失败: %s", e)
+        return {}
+    return _parse_cells(body)
+
+
+def _replace_cell_in_text(text: str, cell_id: str, new_content: str) -> str:
+    """替换/新增标题块, 保留其余内容 (含 frontmatter)."""
+    lines = text.splitlines()
+    out: list[str] = []
+    i = 0
+    replaced = False
+    while i < len(lines):
+        m = _HEADING_RE.match(lines[i])
+        if m and m.group(1) == cell_id:
+            i += 1
+            while i < len(lines) and not _HEADING_RE.match(lines[i]):
+                i += 1
+            out.append(f"## {cell_id}")
+            out.append("")
+            out.extend(new_content.splitlines())
+            out.append("")
+            replaced = True
+            continue
+        out.append(lines[i])
+        i += 1
+    if not replaced:
+        out.append(f"## {cell_id}")
+        out.append("")
+        out.extend(new_content.splitlines())
+        out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _remove_cell_from_text(text: str, cell_id: str) -> str:
+    """删除标题块; 未找到时返回原文本."""
+    lines = text.splitlines()
+    out: list[str] = []
+    i = 0
+    found = False
+    while i < len(lines):
+        m = _HEADING_RE.match(lines[i])
+        if m and m.group(1) == cell_id:
+            found = True
+            i += 1
+            while i < len(lines) and not _HEADING_RE.match(lines[i]):
+                i += 1
+            # 去掉块尾多余空行
+            while out and out[-1] == "":
+                out.pop()
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out).rstrip() + "\n" if found else text
+
+
+_OVERRIDE_HEADER = (
+    "---\n"
+    "title: mood matrix override\n"
+    "description: only edited cells, defaults merged on load.\n"
+    "---\n"
+)
+
+
+def save_cell(cell_id: str, text: str) -> None:
+    """保存单个格子到覆盖层 (面板 grid 编辑).
+
+    - cell_id 必须在白名单 (CELL_IDS), 防路径/标题注入
+    - 空文本 = 重置该格 (回默认)
+    - 其余格子原样保留 (覆盖合并)
+    """
+    if cell_id not in CELL_IDS:
+        raise ValueError(f"非法格子 id: {cell_id!r}")
+    text = (text or "").strip()
+    if not text:
+        reset_cell(cell_id)
+        return
+    if len(text) > CELL_TEXT_MAX_LENGTH:
+        raise ValueError(f"文本过长 (最多 {CELL_TEXT_MAX_LENGTH} 字符)")
+    path = _override_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        body = path.read_text(encoding="utf-8")
+    else:
+        body = _OVERRIDE_HEADER
+    new_body = _replace_cell_in_text(body, cell_id, text)
+    path.write_text(new_body, encoding="utf-8")
+
+
+def reset_cell(cell_id: str) -> bool:
+    """从覆盖层移除该格 (回默认); 无覆盖/格不在时返回 False."""
+    if cell_id not in CELL_IDS:
+        raise ValueError(f"非法格子 id: {cell_id!r}")
+    path = _override_path()
+    if not path.is_file():
+        return False
+    body = path.read_text(encoding="utf-8")
+    new_body = _remove_cell_from_text(body, cell_id)
+    if new_body == body:
+        return False
+    # 无任何格子 → 删除覆盖文件 (完全回默认)
+    stripped, _ = get_prompt_store()._strip_frontmatter(new_body)
+    if not _parse_cells(stripped):
+        path.unlink()
+    else:
+        path.write_text(new_body, encoding="utf-8")
+    return True
+
