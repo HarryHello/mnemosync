@@ -110,6 +110,15 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         ),
         description="Expressor 表达改写 (仅最终文本, 不改写工具调用)",
     ),
+    "mood_matrix": PromptSpec(
+        name="mood_matrix",
+        placeholders=(),
+        description=(
+            "好感度×情绪 6×6 状态引导矩阵 (v0.4.1): 每格一段文本, "
+            "标题格式 ## <好感度档>_<心情段>, 如 ## hostile_心情极差。"
+            "覆盖文件可只写要改的格子 (defaults 打底合并)"
+        ),
+    ),
 }
 
 

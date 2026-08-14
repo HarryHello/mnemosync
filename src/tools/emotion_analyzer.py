@@ -21,6 +21,7 @@ EMOTION_PROMPT = """你是情绪分析助手。分析以下文本的情绪内容
 预期字段：
 - emotion: happy|sad|angry|anxious|neutral|excited|grateful|stressed
 - intensity: 0.0-1.0
+- valence: -1.0~1.0 情绪效价 (负=消极, 正=积极, 0=中性; 只反映好坏程度, 不区分具体情绪)
 - category: casual_chat|health_disclosure|personal_sharing|preference_statement|emotional_expression|complaint|gratitude|other
 - keywords: 关键词列表
 - summary: 一句话概括情绪内容
@@ -28,6 +29,7 @@ EMOTION_PROMPT = """你是情绪分析助手。分析以下文本的情绪内容
 规则：
 - emotion: 主要情绪, 无法判断用 neutral
 - intensity: 情绪强度, 闲聊 0.1-0.3, 强烈情绪 0.7-1.0
+- valence: 按 emotion 与强度推算效价 (如 angry/sad/stressed 为负, happy/excited/grateful 为正, 幅度随 intensity)
 - category: 对话类型分类
 - 不要过度解读: 只分析明确表达的情绪
 
@@ -37,6 +39,20 @@ EMOTION_PROMPT = """你是情绪分析助手。分析以下文本的情绪内容
 只返回 JSON, 不要其他内容。"""
 
 
+#: emotion 标签 → valence 基准 (无显式 valence 时兜底, 幅度由 intensity 缩放)
+_EMOTION_VALENCE_BASE: dict[str, float] = {
+    "happy": 0.8, "excited": 0.9, "grateful": 0.7,
+    "neutral": 0.0,
+    "sad": -0.8, "angry": -0.9, "anxious": -0.6, "stressed": -0.7,
+}
+
+
+def _valence_fallback(emotion: str, intensity: float) -> float:
+    """emotion + intensity → valence 兜底映射 (LLM 未输出 valence 时)."""
+    base = _EMOTION_VALENCE_BASE.get(emotion, 0.0)
+    return max(-1.0, min(1.0, base * min(1.0, max(0.2, intensity) * 1.2)))
+
+
 @dataclass
 class EmotionResult:
     emotion: str
@@ -44,6 +60,7 @@ class EmotionResult:
     category: str
     keywords: list[str]
     summary: str
+    valence: float = 0.0  # v0.4.1: 情绪效价 (-1~1), mood 冲击输入
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -67,12 +84,20 @@ async def analyze_emotion(
     if "<think>" in content:
         content = content.split("</think>")[-1].strip()
     data = json.loads(content)
+    intensity = float(data.get("intensity", 0.3))
+    emotion = data.get("emotion", "neutral")
+    raw_valence = data.get("valence")
+    try:
+        valence = float(raw_valence) if raw_valence is not None else _valence_fallback(emotion, intensity)
+    except (TypeError, ValueError):
+        valence = _valence_fallback(emotion, intensity)
     return EmotionResult(
-        emotion=data.get("emotion", "neutral"),
-        intensity=float(data.get("intensity", 0.3)),
+        emotion=emotion,
+        intensity=intensity,
         category=data.get("category", "other"),
         keywords=data.get("keywords", []),
         summary=data.get("summary", ""),
+        valence=max(-1.0, min(1.0, valence)),
     )
 
 

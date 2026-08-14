@@ -32,6 +32,30 @@ from ._helpers import StoresDict, _compute_emotion, _retrieval_context
 logger = logging.getLogger(__name__)
 
 
+def _build_mood_section(
+    state: AgentState,
+    mood_state: dict[str, Any] | None,
+    rel: Any,
+) -> str:
+    """构建"人格当前状态"注入段 (v0.4.1, RFC §5.3).
+
+    - favor_tier 取当前发言者的好感度档 (rel.type)
+    - mood_label 取全局 mood 的心情段
+    - 矩阵引导文本 + cause (public 脱敏文本) 一并注入
+    """
+    if mood_state is None:
+        return ""
+    from src.core.memory.mood_matrix import build_persona_state_section
+
+    favor_tier = getattr(rel, "type", None) or "stranger"
+    mood_label = mood_state.get("tier") or "心情不错"
+    section = build_persona_state_section(favor_tier=favor_tier, mood_label=mood_label)
+    cause = mood_state.get("cause")
+    if cause:
+        section += "\n心情缘由：" + str(cause)
+    return section
+
+
 async def _prepare_context(
     state: AgentState,
     config: RunnableConfig | None,
@@ -89,6 +113,21 @@ async def _prepare_context(
     emotion_analysis = await _compute_emotion(forwarder, extracted)
     logger.debug("  💭 情绪分析: %s (强度=%.2f)", emotion_analysis.get("emotion", "?"), emotion_analysis.get("intensity", 0))
 
+    # v0.4.1: 前置 mood 通道 — 本条消息的情绪立即冲击全局 mood (RFC §4.2)
+    # 幂等: 同一 interaction_id 只冲击一次 (工具续轮不重复扰动)
+    persona_store = stores.get("persona_store")
+    mood_state: dict[str, Any] | None = None
+    if persona_store is not None:
+        from src.core.memory.mood import update_persona_mood
+
+        mood_state = await update_persona_mood(
+            persona_store,
+            state["persona_id"],
+            interaction_id=state.get("interaction_id"),
+            emotion_analysis=emotion_analysis,
+            cause=emotion_analysis.get("summary") or None,
+        )
+
     conversation_history = state.get("messages", [])
     conversation_history = [m for m in conversation_history if m.get("role") != "system"]
 
@@ -138,6 +177,7 @@ async def _prepare_context(
         persona_definition=state.get("persona_definition"),
         space_id=state.get("space_id"),
         lorebook_entries=lorebook_entries,
+        mood_state_section=_build_mood_section(state, mood_state, rel),
     )
 
     logger.debug("  📝 拼装消息数: %d", len(messages))
@@ -146,6 +186,7 @@ async def _prepare_context(
         "rel": rel,
         "messages": messages,
         "emotion_analysis": emotion_analysis,
+        "mood_state": mood_state,
     }
 
 

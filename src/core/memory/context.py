@@ -199,6 +199,7 @@ def render_main_dialogue_system(
     persona_definition: Any | None = None,
     space_id: str | None = None,
     lorebook_entries: list[Any] | None = None,
+    mood_state_section: str = "",
 ) -> str:
     """渲染主对话 system 段；user_name 仅保留为旧调用方的显示名兜底."""
     frame = get_prompt_store().load("main_dialogue_frame")
@@ -231,6 +232,7 @@ def render_main_dialogue_system(
             format_retrieved_memories(retrieved_memories, channel_type),
         )
         .replace("__LOREBOK_ENTRIES__", lorebook_section)
+        .replace("__MOOD_STATE__", mood_state_section or "（暂无特别的状态信息）")
         .replace("__PROXY_THINKING_SECTION__", _proxy_thinking_section(proxy_thinking_result))
     )
 
@@ -254,6 +256,7 @@ def build_main_dialogue_messages(
     persona_definition: Any | None = None,
     space_id: str | None = None,
     lorebook_entries: list[Any] | None = None,
+    mood_state_section: str = "",
 ) -> list[dict[str, Any]]:
     """拼装主对话 Agent 的完整 messages.
 
@@ -294,6 +297,7 @@ def build_main_dialogue_messages(
         persona_definition=persona_definition,
         space_id=space_id,
         lorebook_entries=lorebook_entries,
+        mood_state_section=mood_state_section,
     )
 
     messages: list[dict[str, Any]] = [

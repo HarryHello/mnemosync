@@ -28,6 +28,18 @@ from src.persistence.migrations import MigrationRunner, add_column_if_missing
 logger = logging.getLogger(__name__)
 
 
+async def _migrate_add_mood_columns(db: aiosqlite.Connection) -> None:
+    """v0.4.1: personas 表加 mood 四列 (RFC §4.3, mood 并入人格状态)."""
+    for name, col_type in (
+        ("mood_valence", "REAL NOT NULL DEFAULT 0.0"),
+        ("mood_cause", "TEXT"),
+        ("mood_updated_at", "TIMESTAMP"),
+        ("mood_last_interaction_id", "TEXT"),
+    ):
+        migrate = add_column_if_missing("personas", name, col_type)
+        await migrate(db)
+
+
 async def _migrate_create_personas_table(db: aiosqlite.Connection) -> None:
     """创建 personas 表并迁移已有数据."""
     await db.execute("""
@@ -37,7 +49,11 @@ async def _migrate_create_personas_table(db: aiosqlite.Connection) -> None:
             description TEXT DEFAULT '',
             is_active INTEGER NOT NULL DEFAULT 0,
             created_at TIMESTAMP NOT NULL,
-            updated_at TIMESTAMP NOT NULL
+            updated_at TIMESTAMP NOT NULL,
+            mood_valence REAL NOT NULL DEFAULT 0.0,
+            mood_cause TEXT,
+            mood_updated_at TIMESTAMP,
+            mood_last_interaction_id TEXT
         )
     """)
     # 检查是否已有数据需要迁移
@@ -76,6 +92,7 @@ class SqlitePersonaStore(SqliteStore):
             add_column_if_missing("persona_versions", "persona_id", "TEXT DEFAULT NULL"),
         ),
         ("002_create_personas_table", _migrate_create_personas_table),
+        ("003_add_mood_columns", _migrate_add_mood_columns),
     ]
 
     @staticmethod
@@ -239,6 +256,53 @@ class SqlitePersonaStore(SqliteStore):
             "created_at": row[4],
             "updated_at": row[5],
         }
+
+    # ============ 人格 mood 状态 (v0.4.1, RFC §4) ============
+
+    async def get_mood(self, persona_id: str) -> dict[str, Any]:
+        """读取人格当前 mood 状态.
+
+        Returns:
+            {valence, cause, updated_at, last_interaction_id} — 无记录时中性默认.
+        """
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT mood_valence, mood_cause, mood_updated_at, mood_last_interaction_id "
+                "FROM personas WHERE id = ?",
+                (persona_id,),
+            ) as cur:
+                row = await cur.fetchone()
+        if row is None or row[0] is None:
+            return {"valence": 0.0, "cause": None, "updated_at": None, "last_interaction_id": None}
+        return {
+            "valence": float(row[0]),
+            "cause": row[1],
+            "updated_at": row[2],
+            "last_interaction_id": row[3],
+        }
+
+    async def set_mood(
+        self,
+        persona_id: str,
+        *,
+        valence: float,
+        cause: str | None,
+        interaction_id: str | None,
+    ) -> bool:
+        """写入人格 mood (valence + cause 原子更新).
+
+        幂等守卫: 相同 interaction_id 重复调用不覆盖 updated_at 语义由调用方
+        (mood.update_persona_mood) 保证; 此处仅做行写入.
+        """
+        async with self._conn() as db:
+            cur = await db.execute(
+                "UPDATE personas SET mood_valence = ?, mood_cause = ?, "
+                "mood_updated_at = ?, mood_last_interaction_id = ? "
+                "WHERE id = ?",
+                (valence, cause, datetime.now(UTC).isoformat(), interaction_id, persona_id),
+            )
+            await db.commit()
+            return cur.rowcount > 0
 
     async def _ensure_default_persona(self) -> str:
         """确保至少有一个人格 profile. 没有时创建默认人格, 返回其 id."""
@@ -433,3 +497,6 @@ class SqlitePersonaStore(SqliteStore):
             async with db.execute("SELECT COUNT(*) FROM persona_versions") as cur:
                 row = await cur.fetchone()
                 return row[0] if row else 0
+
+
+

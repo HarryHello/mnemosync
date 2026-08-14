@@ -404,6 +404,25 @@ async def _run_proxy_thinking(
     return reasoning_text
 
 
+def _build_stream_mood_section(
+    initial_state: dict[str, Any],
+    mood_state: dict[str, Any] | None,
+    rel: Relationship | None,
+) -> str:
+    """构建流式路径的"人格当前状态"注入段 (v0.4.1)."""
+    if mood_state is None:
+        return ""
+    from src.core.memory.mood_matrix import build_persona_state_section
+
+    favor_tier = getattr(rel, "type", None) or "stranger"
+    mood_label = mood_state.get("tier") or "心情不错"
+    section = build_persona_state_section(favor_tier=favor_tier, mood_label=mood_label)
+    cause = mood_state.get("cause")
+    if cause:
+        section += "\n心情缘由：" + str(cause)
+    return section
+
+
 async def _build_stream_messages(
     initial_state: dict[str, Any],
     request: ChatCompletionRequest,
@@ -419,6 +438,7 @@ async def _build_stream_messages(
     new_user_content: str,
     space_id: str | None,
     source_user: str,
+    mood_state_section: str = "",
 ) -> list[dict[str, Any]]:
     """装填短期对话历史 + 拼装最终 messages (system + trimmed 历史 + 当前输入)."""
     persona = initial_state.get("persona") or settings.persona.prompt
@@ -437,6 +457,7 @@ async def _build_stream_messages(
         channel_type=initial_state.get("channel_type"),
         space_label=space_id,
         active_participants=[],
+        mood_state_section=mood_state_section,
     )
     budget_input_text = (
         tool_transaction.root_user_content if tool_transaction else new_user_content
@@ -707,6 +728,28 @@ async def _handle_stream(
             initial_state, new_user_content, multi_forwarder,
         )
 
+    # 1.5 前置情绪通道 (v0.4.1, RFC §4): 本条消息情绪 → 全局 mood 冲击 + 注入
+    # TTFT 代价 ~1-2s (评审确认可接受); 幂等: 同一 interaction_id 只冲击一次
+    emotion_analysis: dict[str, Any] = {}
+    mood_state: dict[str, Any] | None = None
+    try:
+        from src.core.graph.nodes import _compute_emotion
+        from src.core.memory.mood import update_persona_mood
+
+        emotion_analysis = await _compute_emotion(multi_forwarder, initial_state.get("extracted_new", []))
+        from src.api.deps import _state as _api_state
+        persona_store = getattr(_api_state(http_request), "persona_store", None)
+        if persona_store is not None:
+            mood_state = await update_persona_mood(
+                persona_store,
+                initial_state.get("persona_id") or "default",
+                interaction_id=initial_state.get("interaction_id"),
+                emotion_analysis=emotion_analysis,
+                cause=emotion_analysis.get("summary") or None,
+            )
+    except Exception as e:
+        logger.debug("  💭 流式情绪/mood 通道失败 (降级): %s", e)
+
     # 2. (可选) 代理推理.
     reasoning_text = await _run_proxy_thinking(
         http_request,
@@ -734,6 +777,7 @@ async def _handle_stream(
         new_user_content=new_user_content,
         space_id=space_id,
         source_user=source_user,
+        mood_state_section=_build_stream_mood_section(initial_state, mood_state, rel),
     )
 
     # 3.5 多模态图片处理: 模型支持图片则从原始消息恢复 image parts
