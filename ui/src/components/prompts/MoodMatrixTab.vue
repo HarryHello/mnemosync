@@ -8,48 +8,34 @@ import {
 } from '@/api/prompts'
 import type { MoodMatrixCell } from '@/api/prompts'
 
-interface TierRow {
-  id: string
-  label: string
-  cells: MoodMatrixCell[]
-}
-
 interface MatrixRow {
   tierId: string
   tierLabel: string
-  [moodCol: string]: string | MoodMatrixCell | undefined
+  cells: Record<string, MoodMatrixCell>
 }
 
 const loading = ref(false)
-const tiers = ref<TierRow[]>([])
+const tiers = ref<{ id: string; label: string; cells: MoodMatrixCell[] }[]>([])
 const moodLabels = ref<string[]>([])
 
-const rows = computed(() => {
-  // el-table 需要每格唯一 key, 按心情 idx 生成可读行
-  return tiers.value.map((t) => {
-    const row: MatrixRow = {
-      tierId: t.id,
-      tierLabel: t.label,
-    }
-    moodLabels.value.forEach((m, i) => {
-      row[`m${i}`] = t.cells.find((c) => c.id === `${t.id}_${m}`)
-    })
-    return row
-  })
-})
-
-function colKey(i: number): string {
-  return `m${i}`
-}
-
-function cellId(row: MatrixRow): string {
-  const label = moodLabels.value[0]
-  void label
-  return `${row.tierId}_x`
-}
+const rows = computed<MatrixRow[]>(() =>
+  tiers.value.map((t) => {
+    const cells: Record<string, MoodMatrixCell> = {}
+    for (const c of t.cells) cells[c.id] = c
+    return { tierId: t.id, tierLabel: t.label, cells }
+  }),
+)
 
 function summarize(text: string): string {
   return text.length > 30 ? text.slice(0, 30) + '…' : text
+}
+
+function cellId(tierId: string, mood: string): string {
+  return `${tierId}_${mood}`
+}
+
+function cellOf(row: MatrixRow, mood: string): MoodMatrixCell | undefined {
+  return row.cells[cellId(row.tierId, mood)]
 }
 
 async function refresh() {
@@ -77,16 +63,14 @@ const editCellId = ref('')
 const editText = ref('')
 const saving = ref(false)
 
-function openEdit(cell: MoodMatrixCell | undefined, cellId: string) {
-  const target = cell ?? { id: cellId, text: '', overridden: false }
-  editing.value = target
-  editCellId.value = target.id
-  editText.value = target.text
+function openEdit(cell: MoodMatrixCell | undefined, id: string) {
+  editCellId.value = id
+  editing.value = cell ?? { id, text: '', overridden: false }
+  editText.value = editing.value.text
   editVisible.value = true
 }
 
 async function onSave() {
-  if (!editing.value) return
   saving.value = true
   try {
     await putMoodMatrixCell(editCellId.value, editText.value)
@@ -167,7 +151,7 @@ onMounted(() => {
         <h3 class="tab-title">情绪矩阵</h3>
         <p class="tab-subtitle">
           按「好感度档 × 心情段」配置人格的情绪引导文本。点击任意格子可编辑, 支持重置为默认;
-          加粗浅色底纹表示已被自定义覆盖。
+          加粗 + 浅色底纹表示已被自定义覆盖, 文本留空表示使用默认。
         </p>
       </div>
       <div class="head-actions">
@@ -176,34 +160,28 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-table
-      :data="rows"
-      v-loading="loading"
-      stripe
-      border
-      empty-text="暂无情绪矩阵数据"
-    >
+    <el-table :data="rows" v-loading="loading" stripe border empty-text="暂无情绪矩阵数据">
       <el-table-column label="好感度档" min-width="110" fixed>
-        <template #default="{ row }: { row: Record<string, any> }">
+        <template #default="{ row }: { row: MatrixRow }">
           <b>{{ row.tierLabel }}</b>
         </template>
       </el-table-column>
-      <el-table-column v-for="(m, i) in moodLabels" :key="m" :label="m" min-width="180">
-        <template #default="{ row }: { row: Record<string, any> }">
+      <el-table-column v-for="m in moodLabels" :key="m" :label="m" min-width="180">
+        <template #default="{ row }: { row: MatrixRow }">
           <el-tooltip
-            :content="(row[`m${i}`] as MoodMatrixCell)?.text || '(默认)'"
+            :content="cellOf(row, m)?.text || '(默认)'"
             placement="top"
-            :disabled="!row[`m${i}`]?.text"
+            :disabled="!cellOf(row, m)?.text"
           >
             <button
               class="cell-btn"
-              :class="{ 'cell-overridden': (row[`m${i}`] as MoodMatrixCell)?.overridden }"
               type="button"
-              @click="openEdit(row[colKey(i)] as MoodMatrixCell | undefined, cellId(row))"
+              :class="{ 'cell-overridden': cellOf(row, m)?.overridden }"
+              @click="openEdit(cellOf(row, m), cellId(row.tierId, m))"
             >
-              <template v-if="row[`m${i}`]?.text">
-                <b v-if="(row[`m${i}`] as MoodMatrixCell)?.overridden">{{ summarize((row[`m${i}`] as MoodMatrixCell)!.text) }}</b>
-                <template v-else>{{ summarize((row[`m${i}`] as MoodMatrixCell).text) }}</template>
+              <template v-if="cellOf(row, m)?.text">
+                <b v-if="cellOf(row, m)?.overridden">{{ summarize(cellOf(row, m)!.text) }}</b>
+                <template v-else>{{ summarize(cellOf(row, m)!.text) }}</template>
               </template>
               <span v-else class="cell-default">(默认)</span>
             </button>
@@ -214,7 +192,7 @@ onMounted(() => {
 
     <!-- 编辑对话框 -->
     <el-dialog v-model="editVisible" :title="`编辑格子: ${editCellId}`" width="640px">
-      <p class="hint">输入引导文本, 留空保存 = 恢复为默认。</p>
+      <p class="hint">输入引导文本; 留空保存将恢复为默认。</p>
       <el-input
         v-model="editText"
         type="textarea"
