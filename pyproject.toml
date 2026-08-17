@@ -34,6 +34,9 @@ dependencies = [
     "langgraph~=1.2",
     "langchain-core~=1.5",
     # 向量存储
+    # NOTE (PYSEC-2026-311): chromadb<=1.5.9 存在已知漏洞, 上游尚未发布修复
+    # 版本 (最新仍为 1.5.9, 2026-08 复查). CI 的 pip-audit 已 ignore 并注释;
+    # 升级到 >=1.5.10 时务必移除该 ignore, 见 .github/workflows/ci.yml.
     "chromadb~=1.5",
     # 关系型存储
     "aiosqlite~=0.22",

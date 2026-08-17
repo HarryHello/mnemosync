@@ -257,12 +257,12 @@ onMounted(() => {
   padding: 8px;
   margin: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 12px;
   line-height: 1.4;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--el-text-color-regular);
+  text-align: left;
+  white-space: nowrap;
   cursor: pointer;
   background: transparent;
   border: 1px solid transparent;
