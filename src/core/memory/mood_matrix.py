@@ -24,9 +24,7 @@ FAVOR_TIERS: tuple[str, ...] = tuple(t[0] for t in RELATIONSHIP_TIERS)
 MOOD_LABELS: tuple[str, ...] = tuple(t[0] for t in MOOD_TIERS)
 
 #: 每格 id 形如 "hostile_dreadful"
-CELL_IDS: tuple[str, ...] = tuple(
-    f"{f}_{m}" for f in FAVOR_TIERS for m in MOOD_LABELS
-)
+CELL_IDS: tuple[str, ...] = tuple(f"{f}_{m}" for f in FAVOR_TIERS for m in MOOD_LABELS)
 
 #: 单格文本长度上限 (面板编辑校验)
 CELL_TEXT_MAX_LENGTH = 2000
@@ -36,18 +34,14 @@ def _default_cell_path(cell_id: str) -> Path:
     from src.core.agents import prompts as _prompts_pkg
 
     return (
-        Path(_prompts_pkg.__file__).resolve().parent
-        / "defaults" / "mood_matrix" / f"{cell_id}.md"
+        Path(_prompts_pkg.__file__).resolve().parent / "defaults" / "mood_matrix" / f"{cell_id}.md"
     )
 
 
 def _override_cell_path(cell_id: str) -> Path:
     from src.core.config import get_settings
 
-    return (
-        Path(get_settings().storage.prompts_override_dir_abs)
-        / "mood_matrix" / f"{cell_id}.md"
-    )
+    return Path(get_settings().storage.prompts_override_dir_abs) / "mood_matrix" / f"{cell_id}.md"
 
 
 def _read_text(path: Path) -> str:
@@ -166,3 +160,23 @@ def build_state_section(
     if anchor_text:
         section = section + "\n" + anchor_text if section else anchor_text
     return section
+
+
+async def build_mood_section(
+    memory_store: Any,
+    actor_id: str | None,
+    rel: Any,
+    mood_state: dict[str, Any] | None,
+) -> str:
+    """完整 state 段组装 (图内 _prepare_context / 流式路径共用, T4 去重).
+
+    = 锚点加载 + build_state_section. rel 仅读 type 字段投影为好感度档.
+    """
+    from src.core.memory.mood import load_subject_anchor
+
+    anchor_text = await load_subject_anchor(memory_store, actor_id)
+    return build_state_section(
+        favor_tier=getattr(rel, "type", None) or "stranger",
+        mood_state=mood_state,
+        anchor_text=anchor_text,
+    )

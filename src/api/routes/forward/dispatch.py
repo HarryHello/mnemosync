@@ -1,4 +1,5 @@
 """请求派发辅助: 模型验证、消息规范化、工具事务、提示词清洗、身份绑定、状态构建."""
+
 import asyncio
 import json as _json
 import logging
@@ -47,6 +48,7 @@ class BindContext:
 
     携带确定性的绑定结果数据和注入提示词, 由调用方构建精简 state 走 LLM 自然回复.
     """
+
     kind: Literal["initiate", "confirm"]
     success: bool
     code: str | None = None  # 发起绑定时的验证码
@@ -106,10 +108,7 @@ def _normalize_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
         content = m.get("content")
         if isinstance(content, list):
             # 检查是否包含图片
-            has_image = any(
-                isinstance(p, dict) and p.get("type") == "image_url"
-                for p in content
-            )
+            has_image = any(isinstance(p, dict) and p.get("type") == "image_url" for p in content)
             if has_image:
                 # 保留原始 content parts, 由后续步骤处理
                 pass
@@ -296,14 +295,16 @@ async def _clean_module_with_retry(
         try:
             async with semaphore:
                 out = await run_prompt_cleaning(
-                    forwarder=forwarder, system_message=module_text,
+                    forwarder=forwarder,
+                    system_message=module_text,
                 )
             return out.clean_prompt
         except UpstreamError as e:
             is_rate = e.status_code == 429 and e.category in ("rate", "unknown")
             if is_rate and attempt < len(_PROMPT_CLEAN_RETRY_DELAYS):
-                logger.warning("  🧹 429 限流, 退避重试 (%ds): %s",
-                               _PROMPT_CLEAN_RETRY_DELAYS[attempt], e)
+                logger.warning(
+                    "  🧹 429 限流, 退避重试 (%ds): %s", _PROMPT_CLEAN_RETRY_DELAYS[attempt], e
+                )
                 await asyncio.sleep(_PROMPT_CLEAN_RETRY_DELAYS[attempt])
                 continue
             raise
@@ -323,10 +324,15 @@ async def _save_clean_cache(
     from src.persistence.prompt_cache_store import PromptCacheEntry
 
     try:
-        await cache.save(PromptCacheEntry(
-            frontend=frontend, module_hash=module_hash, module_title=module_title,
-            module_text=module_text, clean_prompt=clean_prompt,
-        ))
+        await cache.save(
+            PromptCacheEntry(
+                frontend=frontend,
+                module_hash=module_hash,
+                module_title=module_title,
+                module_text=module_text,
+                clean_prompt=clean_prompt,
+            )
+        )
     except Exception as e:
         logger.warning("  🧹 写清洗缓存失败: %s", e)
 
@@ -373,9 +379,7 @@ async def _clean_one_module(
         except Exception:
             return "", {"failed": True}
 
-    task = asyncio.create_task(
-        _clean_module_with_retry(mod.text, forwarder, semaphore)
-    )
+    task = asyncio.create_task(_clean_module_with_retry(mod.text, forwarder, semaphore))
     _INFLIGHT_CLEAN[key] = task
 
     def _on_done(_t: "asyncio.Task[Any]", k: tuple[str, str] = key) -> None:
@@ -391,8 +395,12 @@ async def _clean_one_module(
         return clean, {}
     except TimeoutError:
         # 本次丢弃, 后台继续 (完成后写缓存)
-        logger.warning("  🧹 模块 [%s] 清洗超过 %.0fs, 本次丢弃, 后台继续",
-                       mod.title, PROMPT_CLEAN_FRONT_TIMEOUT)
+        logger.warning(
+            "  🧹 模块 [%s] 清洗超过 %.0fs, 本次丢弃, 后台继续",
+            mod.title,
+            PROMPT_CLEAN_FRONT_TIMEOUT,
+        )
+
         async def _bg_save(t: "asyncio.Task[Any]") -> None:
             try:
                 c = await asyncio.shield(t)
@@ -401,12 +409,12 @@ async def _clean_one_module(
                 logger.info("  🧹 后台清洗完成 [%s], 已写缓存", mod.title)
             except Exception as e:
                 logger.warning("  🧹 后台清洗失败 [%s]: %s", mod.title, e)
+
         asyncio.create_task(_bg_save(task))
         return "", {"deferred": True}
     except Exception as e:
         logger.warning("  🧹 清洗失败 [%s], 本次丢弃: %s", mod.title, e)
         return "", {"failed": True}
-
 
 
 async def _run_parallel_preprocess(
@@ -475,13 +483,16 @@ async def _run_parallel_preprocess(
         if model_supports_images:
             return ""
         return await _describe_images_if_needed(
-            {"_original_messages": messages_dict}, "", multi_forwarder,
+            {"_original_messages": messages_dict},
+            "",
+            multi_forwarder,
         )
 
-    persona2, cleaning_result, emotion_mood, vision_content = await asyncio.gather(
-        _clean(), _emotion(), _vision(),
-    )
-    emotion_analysis, mood_state = emotion_mood
+    (
+        (persona2, cleaning_result),
+        (emotion_analysis, mood_state),
+        vision_content,
+    ) = await asyncio.gather(_clean(), _emotion(), _vision())
     return persona2, cleaning_result, emotion_analysis, mood_state, vision_content, main_candidate
 
 
@@ -529,13 +540,21 @@ async def _prepare_prompt(
             logger.debug("  🧹 跳过配置加载失败: %s", e)
 
     try:
-        results = await asyncio.gather(*[
-            asyncio.create_task(_clean_one_module(
-                mod, frontend=frontend, skip_titles=skip_titles, cache=cache,
-                semaphore=semaphore, forwarder=multi_forwarder,
-            ))
-            for mod in modules
-        ])
+        results = await asyncio.gather(
+            *[
+                asyncio.create_task(
+                    _clean_one_module(
+                        mod,
+                        frontend=frontend,
+                        skip_titles=skip_titles,
+                        cache=cache,
+                        semaphore=semaphore,
+                        forwarder=multi_forwarder,
+                    )
+                )
+                for mod in modules
+            ]
+        )
     except Exception as e:
         logger.warning("提示词清洗整体失败, 降级为全部丢弃: %s", e)
         return persona, {"clean_prompt": "", "reasoning": str(e), "modules": []}
@@ -550,11 +569,13 @@ async def _prepare_prompt(
             continue
         if clean:
             parts.append(clean)
-        module_metas.append({
-            "title": mod.title,
-            "clean_prompt": clean,
-            **{k: v for k, v in meta.items() if k != "skipped"},
-        })
+        module_metas.append(
+            {
+                "title": mod.title,
+                "clean_prompt": clean,
+                **{k: v for k, v in meta.items() if k != "skipped"},
+            }
+        )
 
     joined = "\n\n".join(parts).strip()
     if joined:
@@ -566,8 +587,12 @@ async def _prepare_prompt(
         "modules": module_metas,
         "frontend": frontend,
     }
-    logger.debug("  🧹 清洗完成: %d/%d 模块注入 (总长 %d)",
-                 sum(1 for p in parts if p), len(modules), len(joined))
+    logger.debug(
+        "  🧹 清洗完成: %d/%d 模块注入 (总长 %d)",
+        sum(1 for p in parts if p),
+        len(modules),
+        len(joined),
+    )
     return persona, result
 
 
@@ -615,13 +640,19 @@ async def _handle_identity_binding(
 
     if last_user_msg == bind_cmd:
         return await _bind_initiate(
-            http_request, actor_id, space_id, current_speaker, bind_prefix,
+            http_request,
+            actor_id,
+            space_id,
+            current_speaker,
+            bind_prefix,
         )
 
     if last_user_msg.startswith(bind_prefix + " ") and len(last_user_msg.split()) == 2:
         input_code = last_user_msg.split(None, 1)[1].strip()
         return await _bind_confirm(
-            http_request, input_code, actor_id,
+            http_request,
+            input_code,
+            actor_id,
         )
 
     return None
@@ -639,7 +670,9 @@ async def _bind_initiate(
 
     code_store = get_binding_code_store()
     code = await code_store.generate(
-        actor_id=actor_id, space_id=space_id, display_name=current_speaker,
+        actor_id=actor_id,
+        space_id=space_id,
+        display_name=current_speaker,
     )
     return BindContext(
         kind="initiate",
@@ -705,7 +738,12 @@ async def _bind_confirm(
         await identity_store.bind_actor_to_group(actor_id, group_id)
         migrated = await _migrate_relationships(http_request, actor_id, group_id)
         if migrated:
-            logger.info("relationship migration: actor=%s -> group=%s, %d rows", actor_id, group_id, migrated)
+            logger.info(
+                "relationship migration: actor=%s -> group=%s, %d rows",
+                actor_id,
+                group_id,
+                migrated,
+            )
         return BindContext(
             kind="confirm",
             success=True,
@@ -719,7 +757,9 @@ async def _bind_confirm(
         for aid in (target_actor_id, actor_id):
             migrated = await _migrate_relationships(http_request, aid, group.id)
             if migrated:
-                logger.info("relationship migration: actor=%s -> group=%s, %d rows", aid, group.id, migrated)
+                logger.info(
+                    "relationship migration: actor=%s -> group=%s, %d rows", aid, group.id, migrated
+                )
         return BindContext(
             kind="confirm",
             success=True,
@@ -738,7 +778,9 @@ async def _migrate_relationships(http_request: Request, actor_id: str, group_id:
     if not relationship_store:
         return 0
     return await relationship_store.migrate_relationships_to_group(
-        DEFAULT_PERSONA_ID, actor_id, group_id,
+        DEFAULT_PERSONA_ID,
+        actor_id,
+        group_id,
     )
 
 
@@ -746,17 +788,21 @@ def _build_bind_response(content: str, *, model: str = VIRTUAL_MODEL_ANY) -> JSO
     """构建身份绑定 JSONResponse."""
     from fastapi.responses import JSONResponse
 
-    return JSONResponse(content={
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion",
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
-        }],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    })
+    return JSONResponse(
+        content={
+            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+            "object": "chat.completion",
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+    )
 
 
 # ── 初始状态构建 ──────────────────────────────────────────────
@@ -818,7 +864,8 @@ def _build_initial_state(
         "api_key_id": api_key_id,
         "normalized_events": (
             [event for event in preprocess_result.events if event.origin == "current"]
-            if preprocess_result else []
+            if preprocess_result
+            else []
         ),
     }
     if prompt_cleaning_result:

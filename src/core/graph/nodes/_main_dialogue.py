@@ -50,9 +50,14 @@ async def _prepare_context(
 
     source_user = state["source_user"]
 
-    rel = await stores["relationship_store"].get_relationship(
-        state["persona_id"], source_user,
-    ) if source_user else None
+    rel = (
+        await stores["relationship_store"].get_relationship(
+            state["persona_id"],
+            source_user,
+        )
+        if source_user
+        else None
+    )
     logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
     retrieval_ctx = _retrieval_context(state, rel)
 
@@ -75,7 +80,8 @@ async def _prepare_context(
     if query:
         retriever = MemoryRetriever(forwarder, vector_store, memory_store)
         results = await retriever.search(
-            query, top_k=settings.memory.retrieval_top_k,
+            query,
+            top_k=settings.memory.retrieval_top_k,
             retrieval_ctx=retrieval_ctx,
         )
         logger.debug("  🔍 检索结果: %d 条", len(results))
@@ -101,7 +107,11 @@ async def _prepare_context(
             interaction_id=state.get("interaction_id"),
             extracted=extracted,
         )
-    logger.debug("  💭 情绪分析: %s (强度=%.2f)", emotion_analysis.get("emotion", "?"), emotion_analysis.get("intensity", 0))
+    logger.debug(
+        "  💭 情绪分析: %s (强度=%.2f)",
+        emotion_analysis.get("emotion", "?"),
+        emotion_analysis.get("intensity", 0),
+    )
 
     conversation_history = state.get("messages", [])
     conversation_history = [m for m in conversation_history if m.get("role") != "system"]
@@ -116,6 +126,7 @@ async def _prepare_context(
 
     # Debug event: trigger reason
     from src.infra.debug_context import emit_pipeline
+
     emit_pipeline(
         (config or {}).get("configurable", {}).get("debug_bus") if config else None,
         event_kind="trigger_reason",
@@ -129,21 +140,18 @@ async def _prepare_context(
     if lorebook_store is not None and query:
         try:
             lorebook_entries = await lorebook_store.match_for_space(
-                query, space_id=state.get("space_id"), limit=5,
+                query,
+                space_id=state.get("space_id"),
+                limit=5,
             )
         except aiosqlite.Error:
             logger.warning("Lorebook match failed", exc_info=True)
 
     # v0.4.1: 对象化情绪锚点 (EPHEMERAL) — 当前说话者在场时确定性加载 (RFC §6.2)
-    from src.core.memory.mood import load_subject_anchor
-    from src.core.memory.mood_matrix import build_state_section
+    # T4 去重: 锚点 + 矩阵格 + cause 组装收敛到共享 build_mood_section
+    from src.core.memory.mood_matrix import build_mood_section
 
-    anchor_text = await load_subject_anchor(memory_store, state.get("actor_id"))
-    mood_section = build_state_section(
-        favor_tier=getattr(rel, "type", None) or "stranger",
-        mood_state=mood_state,
-        anchor_text=anchor_text,
-    )
+    mood_section = await build_mood_section(memory_store, state.get("actor_id"), rel, mood_state)
 
     messages = build_main_dialogue_messages(
         persona_prompt=state.get("persona") or settings.persona.prompt,
@@ -202,12 +210,10 @@ async def _invoke_llm(
         registry = get_internal_tool_registry()
         tool_calls = dialogue.message.get("tool_calls") or []
         internal_calls = [
-            tc for tc in tool_calls
-            if tc.get("function", {}).get("name") in internal_names
+            tc for tc in tool_calls if tc.get("function", {}).get("name") in internal_names
         ]
         client_calls = [
-            tc for tc in tool_calls
-            if tc.get("function", {}).get("name") not in internal_names
+            tc for tc in tool_calls if tc.get("function", {}).get("name") not in internal_names
         ]
 
         if internal_calls:
@@ -239,11 +245,13 @@ async def _invoke_llm(
                 # tool_result, 不能中断对话. 保留裸捕获兜底.
                 except Exception as e:
                     result = {"success": False, "error": str(e)}
-                messages_with_tools.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", ""),
-                    "content": _json.dumps(result, ensure_ascii=False),
-                })
+                messages_with_tools.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": _json.dumps(result, ensure_ascii=False),
+                    }
+                )
                 logger.debug("  🔧 内部 tool %s 结果: %s", tool_name, result)
 
             # Second LLM call for natural reply based on tool_result
@@ -278,11 +286,7 @@ async def _process_response(
     response = content if isinstance(content, str) else ""
 
     # Expressor rewrite (group-chat final text only, not tool calls)
-    if (
-        dialogue.finish_reason == "stop"
-        and response
-        and state.get("channel_type") == "group"
-    ):
+    if dialogue.finish_reason == "stop" and response and state.get("channel_type") == "group":
         from src.core.agents import ExpressorConfig, run_expressor
 
         # Load space social policy from space_policy_store
@@ -296,7 +300,9 @@ async def _process_response(
                 logger.warning("Failed to load space policy for expressor", exc_info=True)
 
         expressor_cfg = ExpressorConfig(
-            enabled=space_policy.expressor_enabled if (space_policy and space_policy.expressor_enabled is not None) else True,
+            enabled=space_policy.expressor_enabled
+            if (space_policy and space_policy.expressor_enabled is not None)
+            else True,
             temperature=space_policy.expressor_temperature if space_policy is not None else 0.4,
         )
         relationship_summary = format_relationship(rel)
@@ -313,10 +319,12 @@ async def _process_response(
         if rewritten != response:
             logger.debug(
                 "  ✨ Expressor 改写: %d → %d",
-                len(response), len(rewritten),
+                len(response),
+                len(rewritten),
             )
             # Debug event: Expressor rewrite comparison
             from src.infra.debug_context import emit_pipeline
+
             emit_pipeline(
                 (config or {}).get("configurable", {}).get("debug_bus") if config else None,
                 event_kind="expressor_rewrite",
@@ -355,7 +363,8 @@ def _extract_metadata(
 
 
 async def main_dialogue_node(
-    state: AgentState, config: RunnableConfig | None = None,
+    state: AgentState,
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """Main dialogue agent: load memory + assemble context + generate reply.
 
@@ -390,11 +399,22 @@ async def main_dialogue_node(
 
     try:
         ctx = await _prepare_context(
-            state, config, settings, forwarder, memory_store, vector_store, stores,
+            state,
+            config,
+            settings,
+            forwarder,
+            memory_store,
+            vector_store,
+            stores,
         )
         dialogue = await _invoke_llm(forwarder, ctx["messages"], state, stores)
         response = await _process_response(
-            dialogue, state, forwarder, config, stores, ctx["rel"],
+            dialogue,
+            state,
+            forwarder,
+            config,
+            stores,
+            ctx["rel"],
         )
         return _extract_metadata(response, dialogue, ctx["emotion_analysis"])
     finally:

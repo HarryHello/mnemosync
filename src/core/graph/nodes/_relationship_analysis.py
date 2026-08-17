@@ -1,4 +1,7 @@
-"""Relationship analysis node: CoT agent that computes intimacy delta."""
+"""Relationship analysis node: CoT agent computing favor_delta (v0.4.1).
+
+好感度 (favor) 增量可正可负, 慢热快冷 (alpha 预设); 显著负向时写
+EPHEMERAL 情绪锚点 + 更新全局 mood. 旧 intimacy_delta 兼容读取 (T8)."""
 
 import logging
 from typing import Any
@@ -22,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 async def relationship_analysis_node(
-    state: AgentState, config: RunnableConfig | None = None,
+    state: AgentState,
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
-    """Relationship analysis agent: CoT, computes intimacy delta."""
+    """Relationship analysis agent: CoT, computes favor_delta (+ mood_anchor)."""
     from src.core.graph.nodes import _get_stores
 
     if state.get("finish_reason") == "tool_calls":
@@ -75,7 +79,9 @@ async def relationship_analysis_node(
                 conversation=conversation,
                 tools=[
                     make_update_addressing_tool(
-                        relationship_store, state["persona_id"], source_user,
+                        relationship_store,
+                        state["persona_id"],
+                        source_user,
                         actor_id=state.get("actor_id"),
                     ),
                 ],
@@ -97,13 +103,18 @@ async def relationship_analysis_node(
 
         # v0.4.1: 应用人格的演进预设 (α_up/α_down), 慢热快冷
         from src.core.config import get_relationship_alpha
+
         persona_def = state.get("persona_definition")
-        alpha_preset_id = getattr(persona_def, "relationship_alpha", None) if persona_def is not None else None
+        alpha_preset_id = (
+            getattr(persona_def, "relationship_alpha", None) if persona_def is not None else None
+        )
         alpha = get_relationship_alpha(alpha_preset_id, presets=settings.relationship_alpha)
         raw_delta = out.favor_delta
         eff_delta = raw_delta * (alpha.alpha_up if raw_delta >= 0 else alpha.alpha_down)
 
-        lifecycle = MemoryLifecycle(memory_store, None, forwarder, relationship_store=relationship_store)
+        lifecycle = MemoryLifecycle(
+            memory_store, None, forwarder, relationship_store=relationship_store
+        )
         await lifecycle.apply_relationship_update(
             persona_id=state["persona_id"],
             user_id=source_user,

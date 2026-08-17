@@ -1,4 +1,5 @@
 """流式处理: 加载记忆 → 代理推理 → 转发上游 → 后台记忆图."""
+
 import asyncio
 import logging
 import uuid
@@ -115,7 +116,9 @@ async def _assemble_deltas(
     """
     if reasoning_text:
         for frame in build_reasoning_stream_frames(
-            reasoning_text, chatcmpl_id=chatcmpl_id, model=main_model,
+            reasoning_text,
+            chatcmpl_id=chatcmpl_id,
+            model=main_model,
         ):
             yield frame
 
@@ -134,8 +137,12 @@ async def _assemble_deltas(
                     result.saw_native = True
                 yield chunk
         logger.debug("✅ 流式转发完成, chunks: %d", len(result.collected_chunks))
-    except (UpstreamTimeout, UpstreamError, UpstreamAllCandidatesFailed,
-            NoCandidateForRoleError) as exc:
+    except (
+        UpstreamTimeout,
+        UpstreamError,
+        UpstreamAllCandidatesFailed,
+        NoCandidateForRoleError,
+    ) as exc:
         result.errored = True
         yield _handle_stream_errors(exc)
         return
@@ -188,9 +195,9 @@ async def _dispatch_callbacks(
             removed.extend(pol_removed)
         if removed:
             logger.debug("  🔧 流式出站过滤 (持久化层): 移除 %s", removed)
-        kept_names = [
-            c.get("function", {}).get("name", "") for c in valid_calls
-        ] if valid_calls else []
+        kept_names = (
+            [c.get("function", {}).get("name", "") for c in valid_calls] if valid_calls else []
+        )
         emit_pipeline(
             getattr(http_request.app.state, "debug_bus", None),
             event_kind="tool_call_decision",
@@ -239,7 +246,11 @@ async def _dispatch_callbacks(
 
     # Record idempotency cache for first successful response.
     await _record_idempotency(
-        http_request, api_key_id, external_event_id, chatcmpl_id, assistant_text,
+        http_request,
+        api_key_id,
+        external_event_id,
+        chatcmpl_id,
+        assistant_text,
         response_message=response_message,
         finish_reason=assistant_finish_reason,
     )
@@ -279,9 +290,14 @@ async def _load_memory_context(
 
     from src.core.memory.audience import AudienceFilter, RetrievalContext
 
-    rel = await relationship_store.get_relationship(
-        initial_state["persona_id"], source_user,
-    ) if source_user else None
+    rel = (
+        await relationship_store.get_relationship(
+            initial_state["persona_id"],
+            source_user,
+        )
+        if source_user
+        else None
+    )
     logger.debug("  💝 关系状态: %s", format_relationship(rel) if rel else "(无)")
     retrieval_ctx = RetrievalContext(
         effective_user_id=source_user or None,
@@ -305,14 +321,13 @@ async def _load_memory_context(
     if not tool_transaction:
         new_user_content = last_user_message(client_messages)
 
-    retrieval_query = (
-        tool_transaction.root_user_content if tool_transaction else new_user_content
-    )
+    retrieval_query = tool_transaction.root_user_content if tool_transaction else new_user_content
     retrieved_entries: list[MemoryEntry] = []
     if retrieval_query:
         retriever = MemoryRetriever(multi_forwarder, vector_store, memory_store)
         results = await retriever.search(
-            retrieval_query, top_k=settings.memory.retrieval_top_k,
+            retrieval_query,
+            top_k=settings.memory.retrieval_top_k,
             retrieval_ctx=retrieval_ctx,
         )
         for r in results:
@@ -397,7 +412,9 @@ async def _run_proxy_thinking(
                 debug_bus=getattr(_st, "debug_bus", None) if _st else None,
                 parent_request_id=initial_state.get("interaction_id"),
             )
-            logger.debug("  ✅ 代理推理完成, 长度: %d", len(reasoning_text) if reasoning_text else 0)
+            logger.debug(
+                "  ✅ 代理推理完成, 长度: %d", len(reasoning_text) if reasoning_text else 0
+            )
         except Exception as e:
             logger.warning("代理推理失败, 退化为普通转发: %s", e)
             reasoning_text = None
@@ -412,19 +429,14 @@ async def _build_stream_mood_section(
 ) -> str:
     """构建流式路径的"人格当前状态"注入段 (v0.4.1).
 
-    复用共享 build_state_section (矩阵格 + cause + 锚点); 仅 store 获取方式
-    与流式上下文相关.
+    复用共享 build_mood_section (锚点 + 矩阵格 + cause); 仅 store 获取方式
+    与流式上下文相关 (T4 去重).
     """
     from src.api.deps import _state as _api_state
-    from src.core.memory.mood import load_subject_anchor
-    from src.core.memory.mood_matrix import build_state_section
+    from src.core.memory.mood_matrix import build_mood_section
+
     memory_store = getattr(_api_state(http_request), "memory_store", None)
-    anchor_text = await load_subject_anchor(memory_store, initial_state.get("actor_id"))
-    return build_state_section(
-        favor_tier=getattr(rel, "type", None) or "stranger",
-        mood_state=mood_state,
-        anchor_text=anchor_text,
-    )
+    return await build_mood_section(memory_store, initial_state.get("actor_id"), rel, mood_state)
 
 
 async def _build_stream_messages(
@@ -463,9 +475,7 @@ async def _build_stream_messages(
         active_participants=[],
         mood_state_section=mood_state_section,
     )
-    budget_input_text = (
-        tool_transaction.root_user_content if tool_transaction else new_user_content
-    )
+    budget_input_text = tool_transaction.root_user_content if tool_transaction else new_user_content
     built = await build_short_term_history(
         store=conversation_store,
         now=datetime.now(UTC),
@@ -479,7 +489,11 @@ async def _build_stream_messages(
     )
     logger.debug(
         "  🧵 短期对话装填: %d/%d 条 (预算 %d tok, 已用 %d, 因预算丢弃 %d)",
-        built.kept, built.total_candidates, built.budget, built.used, built.dropped_by_budget,
+        built.kept,
+        built.total_candidates,
+        built.budget,
+        built.used,
+        built.dropped_by_budget,
     )
 
     # 拼装最终 messages: system + trimmed 跨前端历史 + 当前输入
@@ -543,10 +557,23 @@ def _make_streaming_response(
 
     passthrough: dict[str, Any] = {}
     _optional_fields = (
-        "tools", "tool_choice", "response_format",
-        "stream_options", "top_p", "stop", "seed", "frequency_penalty",
-        "presence_penalty", "logit_bias", "logprobs", "top_logprobs",
-        "n", "user", "reasoning_effort", "reasoning", "thinking",
+        "tools",
+        "tool_choice",
+        "response_format",
+        "stream_options",
+        "top_p",
+        "stop",
+        "seed",
+        "frequency_penalty",
+        "presence_penalty",
+        "logit_bias",
+        "logprobs",
+        "top_logprobs",
+        "n",
+        "user",
+        "reasoning_effort",
+        "reasoning",
+        "thinking",
     )
     for _f in _optional_fields:
         _v = getattr(request, _f, None)
@@ -629,7 +656,9 @@ def _make_streaming_response(
             _run_memory_graph(initial_state, collected_chunks, graph_config),
             name=task_key,
         )
-        bg_tasks: dict[str, asyncio.Task[Any]] = getattr(http_request.app.state, "active_bg_tasks", {})
+        bg_tasks: dict[str, asyncio.Task[Any]] = getattr(
+            http_request.app.state, "active_bg_tasks", {}
+        )
         if bg_tasks is not None:
             bg_tasks[task_key] = task
 
@@ -712,9 +741,7 @@ async def _handle_stream(
     )
     main_model = main_candidate.model if main_candidate else VIRTUAL_MODEL_ANY
     main_ctx_length = main_candidate.context_length if main_candidate else None
-    model_supports_images = (
-        "image" in main_candidate.input_modalities if main_candidate else False
-    )
+    model_supports_images = "image" in main_candidate.input_modalities if main_candidate else False
     multi_forwarder = _get_multi_forwarder(http_request)
     conversation_store = _get_conversation_store(http_request)
 
@@ -747,7 +774,9 @@ async def _handle_stream(
     vision_content = initial_state.get("_vision_user_content") or ""
     if not vision_content and not model_supports_images:
         new_user_content = await _describe_images_if_needed(
-            initial_state, new_user_content, multi_forwarder,
+            initial_state,
+            new_user_content,
+            multi_forwarder,
         )
     elif vision_content:
         new_user_content = (new_user_content + " " + vision_content).strip()
@@ -780,13 +809,17 @@ async def _handle_stream(
         space_id=space_id,
         source_user=source_user,
         mood_state_section=await _build_stream_mood_section(
-            http_request, initial_state, mood_state, rel,
+            http_request,
+            initial_state,
+            mood_state,
+            rel,
         ),
     )
 
     # 3.5 多模态图片处理: 模型支持图片则从原始消息恢复 image parts
     if model_supports_images:
         from src.api.routes.forward.dispatch import process_images_in_messages
+
         original_messages = initial_state.get("_original_messages", [])
         if original_messages:
             messages_with_memory = await process_images_in_messages(
