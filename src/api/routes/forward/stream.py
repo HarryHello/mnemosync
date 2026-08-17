@@ -726,25 +726,31 @@ async def _handle_stream(
         multi_forwarder=multi_forwarder,
     )
 
-    # 1.5 多模态: 模型不支持图片时, 用 Vision Agent 把图片转述为文字并并入 user 输入.
-    if not model_supports_images:
+    # 1.5 并行预处理结果复用 (v0.4.1): API 层已并行完成 清洗∥情绪∥Vision,
+    # 此处读 state 预注入值, 不再重复计算. 绑定指令等未走并行路径时兜底计算.
+    emotion_analysis = initial_state.get("emotion_analysis") or {}
+    mood_state = initial_state.get("mood_state")
+    if not emotion_analysis:
+        from src.api.deps import _state as _api_state
+        from src.core.memory.mood import run_emotion_mood_channel
+
+        _app_state = _api_state(http_request)
+        emotion_analysis, mood_state = await run_emotion_mood_channel(
+            multi_forwarder,
+            getattr(_app_state, "persona_store", None),
+            initial_state.get("persona_id") or "default",
+            interaction_id=initial_state.get("interaction_id"),
+            extracted=initial_state.get("extracted_new", []),
+        )
+
+    # 1.5 图片转写结果 (API 层并行已算好); 未走并行路径时此处兜底.
+    vision_content = initial_state.get("_vision_user_content") or ""
+    if not vision_content and not model_supports_images:
         new_user_content = await _describe_images_if_needed(
             initial_state, new_user_content, multi_forwarder,
         )
-
-    # 1.5 前置情绪通道 (v0.4.1, RFC §4): 本条消息情绪 → 全局 mood 冲击 + 注入
-    # TTFT 代价 ~1-2s (评审确认可接受); 幂等: 同一 interaction_id 只冲击一次
-    # 非流式/流式共用 run_emotion_mood_channel (失败降级, 不阻塞)
-    from src.api.deps import _state as _api_state
-    from src.core.memory.mood import run_emotion_mood_channel
-    _app_state = _api_state(http_request)
-    emotion_analysis, mood_state = await run_emotion_mood_channel(
-        multi_forwarder,
-        getattr(_app_state, "persona_store", None),
-        initial_state.get("persona_id") or "default",
-        interaction_id=initial_state.get("interaction_id"),
-        extracted=initial_state.get("extracted_new", []),
-    )
+    elif vision_content:
+        new_user_content = (new_user_content + " " + vision_content).strip()
 
     # 2. (可选) 代理推理.
     reasoning_text = await _run_proxy_thinking(

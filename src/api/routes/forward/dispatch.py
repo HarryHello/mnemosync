@@ -409,6 +409,82 @@ async def _clean_one_module(
 
 
 
+async def _run_parallel_preprocess(
+    *,
+    request_messages: list[ChatMessage],
+    persona: str,
+    http_request: Request,
+    source_frontend: str | None,
+    messages_dict: list[dict[str, Any]],
+    interaction_id: str | None,
+) -> tuple[
+    str,
+    dict[str, Any] | None,
+    dict[str, Any],
+    dict[str, Any] | None,
+    str,
+    Any | None,
+]:
+    """并行预处理 (v0.4.1): 提示词清洗 ∥ 情绪分析+mood ∥ 图片转写.
+
+    三者输入在请求早期就绪、互不依赖, 用 gather 并发发出 (省 ~2/3 的
+    LLM 往返时间, 融入首 token 延迟的只有最慢那一个).
+    代理推理 (proxy_thinking) 不入此并行 — 它是主模型的"思考", 必须串行于主对话之前.
+
+    Returns:
+        (persona, prompt_cleaning_result, emotion_analysis, mood_state,
+         vision_content, main_candidate)
+    """
+    from src.api.routes.forward.identity import _resolve_main_candidate
+    from src.core.constants import DEFAULT_PERSONA_ID
+    from src.core.memory.mood import run_emotion_mood_channel
+
+    from ._accessors import _get_multi_forwarder
+
+    multi_forwarder = _get_multi_forwarder(http_request)
+    # 主候选一次解析: 供 Vision 图片支持判断 + 复用为第 13 步 main_model
+    main_candidate = await _resolve_main_candidate(http_request, streaming=False)
+    model_supports_images = bool(
+        main_candidate is not None and "image" in (main_candidate.input_modalities or [])
+    )
+    # 情绪输入: 本轮用户消息 (extracted_new 的等价物)
+    extracted: list[dict[str, Any]] = []
+    user_msg = last_user_message(messages_dict)
+    if user_msg:
+        extracted = [{"role": "user", "content": user_msg}]
+
+    async def _clean() -> tuple[str, dict[str, Any] | None]:
+        return await _prepare_prompt(request_messages, persona, http_request, source_frontend)
+
+    async def _emotion() -> tuple[dict[str, Any], dict[str, Any] | None]:
+        from src.api.deps import _state as _api_state
+
+        persona_store = getattr(_api_state(http_request), "persona_store", None)
+        return await run_emotion_mood_channel(
+            multi_forwarder,
+            persona_store,
+            DEFAULT_PERSONA_ID,
+            interaction_id=interaction_id,
+            extracted=extracted,
+        )
+
+    async def _vision() -> str:
+        # 模型支持图片时不转写 (图片直接透传); 无图片快速返回
+        from src.api.routes.forward.stream import _describe_images_if_needed
+
+        if model_supports_images:
+            return ""
+        return await _describe_images_if_needed(
+            {"_original_messages": messages_dict}, "", multi_forwarder,
+        )
+
+    persona2, cleaning_result, emotion_mood, vision_content = await asyncio.gather(
+        _clean(), _emotion(), _vision(),
+    )
+    emotion_analysis, mood_state = emotion_mood
+    return persona2, cleaning_result, emotion_analysis, mood_state, vision_content, main_candidate
+
+
 async def _prepare_prompt(
     request_messages: list[ChatMessage],
     persona: str,

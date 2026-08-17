@@ -120,6 +120,40 @@ async def test_prepare_context_injects_mood_section():
     assert ctx["mood_state"]["valence"] < 0  # 负面冲击生效
 
 
+async def test_prepare_context_uses_preinjected_emotion_mood():
+    """API 层并行预处理已预注入 emotion_analysis/mood_state → 图内不重算 (不调情绪 LLM)."""
+    from src.core.graph.nodes._main_dialogue import _prepare_context
+
+    stores = _mock_stores()
+    state = {
+        "source_user": "u1",
+        "persona_id": "p1",
+        "actor_id": "a1",
+        "extracted_new": [],
+        "messages": [{"role": "user", "content": "hi"}],
+        "current_speaker": "u1",
+        "channel_type": "direct",
+        "persona": "你是一个人格",
+        "persona_name": "人格",
+        "space_id": None,
+        "tools": None,
+        "emotion_analysis": {"emotion": "happy", "valence": 0.8, "summary": "收到礼物"},
+        "mood_state": {"tier": "good", "cause": "收到礼物", "valence": 0.5},
+    }
+    with patch("src.core.graph.nodes._compute_emotion", new=AsyncMock()) as mock_emotion:
+        ctx = await _prepare_context(
+            state, None, get_settings(),
+            forwarder=MagicMock(),
+            memory_store=stores["memory_store"],
+            vector_store=stores["vector_store"],
+            stores=stores,
+        )
+    mock_emotion.assert_not_called()  # 不重复跑情绪 LLM
+    system_text = ctx["messages"][0]["content"]
+    assert "心情好" in system_text  # 预注入 mood tier → 中文注入
+    assert "收到礼物" in system_text
+
+
 async def test_prepare_context_mood_channel_failure_degrades():
     """情绪分析失败 → 降级: 不阻塞, 无状态段注入 (锚点段仍可注入)."""
     from src.core.graph.nodes._main_dialogue import _prepare_context

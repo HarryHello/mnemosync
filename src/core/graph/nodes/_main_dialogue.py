@@ -86,17 +86,21 @@ async def _prepare_context(
                 retrieved_entries.append(entry)
 
     # Emotion analysis + v0.4.1 前置 mood 通道 (非流式/流式共用, 失败降级)
+    # API 层并行预处理已算好 (state 预注入) 则直接复用; 否则此处兜底计算
     # 本条消息的情绪立即冲击全局 mood; 幂等: 同一 interaction_id 只冲击一次
-    from src.core.memory.mood import run_emotion_mood_channel
+    emotion_analysis = state.get("emotion_analysis") or {}
+    mood_state = state.get("mood_state")
+    if not emotion_analysis:
+        from src.core.memory.mood import run_emotion_mood_channel
 
-    persona_store = stores.get("persona_store")
-    emotion_analysis, mood_state = await run_emotion_mood_channel(
-        forwarder,
-        persona_store,
-        state["persona_id"],
-        interaction_id=state.get("interaction_id"),
-        extracted=extracted,
-    )
+        persona_store = stores.get("persona_store")
+        emotion_analysis, mood_state = await run_emotion_mood_channel(
+            forwarder,
+            persona_store,
+            state["persona_id"],
+            interaction_id=state.get("interaction_id"),
+            extracted=extracted,
+        )
     logger.debug("  💭 情绪分析: %s (强度=%.2f)", emotion_analysis.get("emotion", "?"), emotion_analysis.get("intensity", 0))
 
     conversation_history = state.get("messages", [])

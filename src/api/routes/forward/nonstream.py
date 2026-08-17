@@ -84,12 +84,17 @@ async def _handle_non_stream(
     # 多模态: 模型不支持图片时, 用 Vision Agent 把图片转述为文字并并入 user 输入.
     # 仅当原始消息确实含图片时才获取 forwarder (避免无图片时的初始化开销/报错).
     if not model_supports_images and not tool_transaction and _has_images(initial_state):
-        from src.api.routes.forward.stream import _describe_images_if_needed
+        # v0.4.1: API 层并行预处理已算好 Vision 转写, 复用; 否则兜底
+        vision_content = initial_state.get("_vision_user_content") or ""
+        if vision_content:
+            new_user_content = (new_user_content + " " + vision_content).strip()
+        else:
+            from src.api.routes.forward.stream import _describe_images_if_needed
 
-        from ._accessors import _get_multi_forwarder
-        new_user_content = await _describe_images_if_needed(
-            initial_state, new_user_content, _get_multi_forwarder(http_request),
-        )
+            from ._accessors import _get_multi_forwarder
+            new_user_content = await _describe_images_if_needed(
+                initial_state, new_user_content, _get_multi_forwarder(http_request),
+            )
 
     # 简化: 非流式的 system 内容无法在装填前精确算 (需要 perms + retrieved),
     # 这些又是 graph 内节点做的. 保守估算: 用 persona + 一个"典型 system 长度"
