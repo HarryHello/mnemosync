@@ -91,7 +91,7 @@ CREATE INDEX idx_conv_space_seq ON conversation_turns(space_id, committed_sequen
 
 **空间事件流 (v0.3.0)**: 群聊/多用户场景按 `space_id` 分区 — 每个空间内轮次在提交时分配 `committed_sequence` (空间内 MAX+1, 同事务分配), 事件时间早于空间内最新已提交时间时标记 `late_arrival`。无 `space_id` 的私聊/非归属轮次不分配序号, 仍按 `ts` 定序。装填上下文时 `space_id` 非空只读本空间流水 (`list_for_space`), 避免其他空间对话泄入。
 
-### 写入 (forward.py)
+### 写入 (forward 包)
 
 流式与非流式路径都在主对话完成后写两条:
 
@@ -410,7 +410,7 @@ reranker 精排后:
 
 ### 5.1 合并策略
 
-发送给上游模型的上下文由 `forward.py` 装填, 不再由主对话 Agent 内部拼装:
+发送给上游模型的上下文由 forward 包装填, 不再由主对话 Agent 内部拼装:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -617,14 +617,15 @@ CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
 CREATE INDEX idx_mem_space ON memory_entries(space_id);  -- v0.3.0
 ```
 
-**关系表 (v0.2.10 起 3 个 nullable 列; NULL = 沿用 TOML 基线; v0.3.0 user_id 列存 effective_user_id)**
+**关系表 (v0.4.1: 单一好感度 favor; v0.2.10 起 3 个 nullable 列; NULL = 沿用 TOML 基线; v0.3.0 user_id 列存 effective_user_id)**
 
 ```sql
 CREATE TABLE relationships (
     persona_id           TEXT NOT NULL,
     user_id              TEXT NOT NULL,                  -- v0.3.0: effective_user_id (记忆与关系隔离边界)
-    intimacy             REAL NOT NULL DEFAULT 0.0,   -- 0.0 ~ 1.0
-    trust                REAL NOT NULL DEFAULT 0.0,
+    favor                REAL NOT NULL DEFAULT 0.0,   -- v0.4.1: 单一好感度 -1.0~1.0 (允许为负表达厌恶)
+    intimacy             REAL NOT NULL DEFAULT 0.0,   -- ★ 旧列 (≤ v0.4.0), 保留不再写入, 计划 v0.5 移除
+    trust                REAL NOT NULL DEFAULT 0.0,   -- ★ 旧列, 同上
     stage                TEXT NOT NULL DEFAULT 'stranger',
     memory_count         INTEGER NOT NULL DEFAULT 0,
     last_interaction     TIMESTAMP,

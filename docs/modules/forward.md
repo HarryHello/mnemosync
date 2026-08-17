@@ -35,7 +35,7 @@ v0.2.3 起, 顶层入口是 `MultiForwarder` — 它按角色 (`main`/`assist`/`
 | 调用者 | 方法 | 用途 | 角色 |
 |-------|------|------|------|
 | 主对话 Agent (非流式) | `MultiForwarder.chat()` | 生成回复 | main |
-| 主对话 (流式路径 forward.py) | `MultiForwarder.chat_stream()` | SSE 透传给客户端 | main |
+| 主对话 (流式路径 forward/stream.py) | `MultiForwarder.chat_stream()` | SSE 透传给客户端 | main |
 | 记忆分析 / 关系分析 / 代理思考 | `MultiForwarder.chat()` (含 tools) | ReAct 循环 | assist |
 | MemoryRetriever / MemoryLifecycle | `MultiForwarder.embed()` | 文本 → 向量 | embedding |
 | MemoryRetriever | `MultiForwarder.rerank()` | 检索精排 | rerank |
@@ -96,7 +96,7 @@ async with Forwarder(config) as fwd:
 | `timeout` | float | 30.0 | 请求超时 (秒) |
 | `connect_timeout` | float | 10.0 | 连接超时 (秒) |
 
-生产使用建议根据调用类型给不同超时: 主对话流式 `90s`, 记忆图内部 `30s` (见 [forward.py](../../src/api/routes/forward.py))。
+生产使用建议根据调用类型给不同超时: 主对话流式 `90s`, 记忆图内部 `30s` (见 [forward/__init__.py](../../src/api/routes/forward/__init__.py))。
 
 ### 3.2 Forwarder.chat
 
@@ -187,13 +187,13 @@ Debug: 设 `MNEMOSYNC_DEBUG=1` 后, `chat` / `chat_stream` 会打印上游请求
 
 ## 6. 与 API 层的关系
 
-- **鉴权与身份解析 (v0.3.0)**: [src/api/routes/forward.py](../../src/api/routes/forward.py) 完成 API Key 验证 (`_verify_api_key`) 后, 立即通过 `_resolve_identity_context` 解析身份 (详见 [identity.md](identity.md))。身份策略绑定在 API Key 的 `strategy_id` 上, 解析结果 (`IdentityContext`) 提供 `actor_id` / `effective_user_id` / `space_id` / `channel_type` / `external_event_id`。解析失败或无策略时退化为**非归属模式**: 不创建 Actor, 不读写私有记忆, 回复仍正常工作。
+- **鉴权与身份解析 (v0.3.0)**: [forward 包](../../src/api/routes/forward/__init__.py) 完成 API Key 验证 (`_verify_api_key`) 后, 立即通过 `_resolve_identity_context` 解析身份 (详见 [identity.md](identity.md))。身份策略绑定在 API Key 的 `strategy_id` 上, 解析结果 (`IdentityContext`) 提供 `actor_id` / `effective_user_id` / `space_id` / `channel_type` / `external_event_id`。解析失败或无策略时退化为**非归属模式**: 不创建 Actor, 不读写私有记忆, 回复仍正常工作。
 - **幂等预检与重放 (v0.3.0)**: 在提示词清洗和上游调用之前, `_lookup_idempotency` 按 `(api_key.id, external_event_id)` 查幂等缓存。命中则直接重放首次响应 (`_replay_json_response` / `_replay_stream_response`), 零 LLM 开销、零记忆副作用。首次成功响应后通过 `_record_idempotency` 落库。
 - **initial_state 注入 (v0.3.0)**: `create_chat_completion` 构建 initial_state 时注入 `actor_id` / `space_id` / `channel_type` / `persona_id` / `external_event_id` / `api_key_id`, 供下游节点和短期记忆装填使用。
 - **source_frontend 派生**: 从 `api_key.note` 服务器派生 (`_resolve_source_frontend`), 不依赖客户端
 - **模型白名单**: `/v1/chat/completions` 只接受 `model="mnemosync-any"` 或空, 其他直接 400
 - **下游多格式 (v0.4)**: 除 `/v1/chat/completions` (OpenAI) 外, Mnemosync 还接受 `/v1/messages` (Anthropic) 与 `/v1/responses` (Responses API)。两者由 [anthropic_adapter.py](../../src/api/routes/forward/anthropic_adapter.py) / [responses_adapter.py](../../src/api/routes/forward/responses_adapter.py) 转成内部 OpenAI 格式后走同一管线, 响应再转回调用方格式 (含 SSE 事件转换)
-- **短期记忆装填 (v0.2.6)**: 主 Forwarder 调用前, forward.py 用 `main_candidate.context_length` 从 `conversation_turns` 双窗裁剪历史, 传入 `space_id` 做空间分区; 主对话结束后同步写 user + assistant 两条 turn, 传入 `actor_id` / `space_id` / `external_event_id`
+- **短期记忆装填 (v0.2.6)**: 主 Forwarder 调用前, forward 包用 `main_candidate.context_length` 从 `conversation_turns` 双窗裁剪历史, 传入 `space_id` 做空间分区; 主对话结束后同步写 user + assistant 两条 turn, 传入 `actor_id` / `space_id` / `external_event_id`
 - **受众过滤 (v0.3.0)**: 流式与非流式路径均构建 `RetrievalContext` (含 `effective_user_id` / `actor_id` / `space_id` / `channel_type` / `relationship`), 传给 `MemoryRetriever.search` 和 `AudienceFilter.filter` 做 ChromaDB `$or` 粗筛 + `is_visible` 精筛
 - **代理推理**: 由 [src/api/reasoning_control.py](../../src/api/reasoning_control.py) 的决策函数控制。见 [agents.md](agents.md) §4
 - **流式字段透传**: `_handle_stream` 会把 `request` 里的 OpenAI 兼容可选字段 (tools / tool_choice / response_format / top_p / seed / stream_options / reasoning_effort 等) 打包为 `passthrough` 传给 `MultiForwarder.chat_stream(**passthrough)`
@@ -271,3 +271,4 @@ ForwarderConfig(
 | v0.2.6 | 2026-07-18 | forward.py 装填改由 `render_main_dialogue_system` + `build_short_term_history` 组合; 主对话完成后写 `conversation_turns` 两条 |
 | v0.3.0 | 2026-07-26 | forward.py 新增身份解析、幂等预检/重放、initial_state 注入 actor_id/space_id/channel_type/persona_id/external_event_id/api_key_id; 记忆检索与短期记忆装填接入 space_id 分区与受众过滤 |
 | v0.4.0 | 2026-08-08 | 上游改用官方 SDK (openai/anthropic); 新增 `AnthropicForwarder` / `ResponsesForwarder`; `MultiForwarder` 按 `api_format` 路由; 提取 `debug_utils`; embed/rerank 仅支持 openai 格式 |
+| v0.4.1 | 2026-08-14 | API 层三路并行预处理 (提示词清洗 ∥ 情绪+mood ∥ Vision 转写, `dispatch._run_parallel_preprocess`); 主候选在并行块内一次解析复用 (Vision 图片支持判断 + 第 13 步 main_model) |

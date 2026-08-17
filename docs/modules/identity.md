@@ -42,7 +42,7 @@ v0.3.0 起 Mnemosync 从"单人格单用户"演进为**单人格多用户**: 同
 - 策略解析器: [src/core/identity/resolver.py](../../src/core/identity/resolver.py)
 - 持久化: [src/persistence/identity_store.py](../../src/persistence/identity_store.py) (`data/identity.db`)
 - 幂等存储: [src/persistence/idempotency_store.py](../../src/persistence/idempotency_store.py) (`data/idempotency.db`)
-- 请求贯通: [src/api/routes/forward.py](../../src/api/routes/forward.py) `_resolve_identity_context`
+- 请求贯通: [forward 包](../../src/api/routes/forward/__init__.py) `_resolve_identity_context`
 - 管理端点: [src/api/routes/admin.py](../../src/api/routes/admin.py) `/panel/admin/identity/*`
 - CLI: [src/cli/identity_cmd.py](../../src/cli/identity_cmd.py)
 - 面板: `ui/src/views/IdentityPage.vue` (身份管理页)

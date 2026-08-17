@@ -210,7 +210,7 @@ class LLMServiceStore:
 
 `resolve(role: ModelType) -> list[ResolvedCandidate]`: 从 `role_bindings` 拉出该角色的候选按 priority 排序, join `services` 拿到 `base_url` 与解密后的 `api_key`, 组装成 `ResolvedCandidate` 列表返回。
 
-被 `MultiForwarder` 用来构造内部 `Forwarder` 实例; 也被 forward.py 用来读取 `context_length` (给短期记忆装填算预算)。
+被 `MultiForwarder` 用来构造内部 `Forwarder` 实例; 也被 forward 包用来读取 `context_length` (给短期记忆装填算预算)。
 
 ---
 

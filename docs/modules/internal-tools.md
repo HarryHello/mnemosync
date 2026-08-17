@@ -63,7 +63,7 @@ class InternalToolRegistry:
 请求到达 (带 tools)
   │
   ▼
-forward.py: 合并内部 tools + 客户端 tools
+forward 包: 合并内部 tools + 客户端 tools
   │  tools = client_tools + registry.to_openai_tools()
   │
   ▼

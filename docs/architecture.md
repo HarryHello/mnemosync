@@ -147,9 +147,9 @@ class AgentState(TypedDict, total=False):
     stream_mode: bool
 ```
 
-**请求级附加键** (v0.3.0): forward.py 另注入 `source_frontend` / `external_event_id` / `api_key_id` 等不在 TypedDict 中的键 (LangGraph 容忍额外输入键), 供流水回写与幂等记录使用。
+**请求级附加键**: forward 包另注入 `source_frontend` / `external_event_id` / `api_key_id` / `_vision_user_content` (v0.4.1) 等不在 TypedDict 中的键 (LangGraph 容忍额外输入键), 供流水回写与幂等记录使用。
 
-检索到的记忆 (`retrieved_memories` / `permanent_memories`) **不入 state** — 由 forward.py 或 `main_dialogue_node` 内部处理, 减少 checkpoint 体积。短期记忆的 `conversation_turns` 也不入 state, 装填时直接从 SqliteConversationStore 读, 装填完的 messages 才进 state。
+检索到的记忆 (`retrieved_memories` / `permanent_memories`) **不入 state** — 由 forward 包或 `main_dialogue_node` 内部处理, 减少 checkpoint 体积。短期记忆的 `conversation_turns` 也不入 state, 装填时直接从 SqliteConversationStore 读, 装填完的 messages 才进 state。
 
 ---
 
@@ -161,7 +161,7 @@ class AgentState(TypedDict, total=False):
 Client ──► /v1/chat/completions (stream=true)
              │
              ▼
-    [forward.py._handle_stream]
+    [forward/stream.py _handle_stream]
       0. _verify_api_key + 身份解析 _resolve_identity_context (v0.3.0)
          + 幂等预检 _lookup_idempotency (命中则重放首次响应, 零 LLM 开销)
          + _resolve_source_frontend + RoleResolver
@@ -344,4 +344,4 @@ v0.1 的 `src/modules/` / `src/accounts/` / `src/models/` / `src/storage/` 已�
 | v0.3.3 | 2026-07-28 | **工具协议完整闭环**: Expressor 表达改写层; 工具事务桥接 + 幂等重放; API Key 工具策略 (白名单/黑名单/冷却/全局频率); 工具参数隐私检查; 模型候选工具能力声明; 平台能力提示 + 选择性参与指南; 表达习惯学习; **调试与可观测性**: 管线事件 (6 类) + 前端渲染; 交互事务聚合; 评估维度统计; **并发与身份**: 空间级串行锁; 跨平台身份绑定 (指令 + 内部 tool); 内部 tool 注册表; **人格系统**: 结构化人格定义 (PersonaDefinition + SQLite 存储 + 版本化); 按空间覆盖表达倾向; 角色卡导入 (SillyTavern V1/V2); Lorebook 关键词匹配 + 注入; 记忆纠正 (supersede 软替代); SocialPolicy 空间社交策略 |
 | v0.3.5 | 2026-08 | 前后端分离 (panel 16125 + backend 16126, 面板内启停); Agent 运行契约 (AgentSpec/AgentRunStore); 版本更新检测; 群聊上下文混杂修复; install.sh 镜像自动切换 |
 | v0.4.0 | 2026-08 | 多模态视觉 (Vision Description Agent + input/output_modalities); Anthropic / Responses API 双向兼容 (上游 SDK 转发 + 下游 /v1/messages /v1/responses 适配器); 上游改用官方 SDK (openai/anthropic); MultiForwarder 按 api_format 路由; 绑定流程改 BindContext → LLM 自然回复; 内部工具加 mnemosync_ 前缀 |
-| v0.4.1 | 2026-08 | 逐版本升级 (versions / upgrade --version / MNEMOSYNC_VERSION); 版本列表 + 发布描述 (GET /panel/admin/versions); release 描述从 CHANGELOG 提取; beta 预发布分支 + preview pre-release |
+| v0.4.1 | 2026-08 | 逐版本升级 (versions / upgrade --version / MNEMOSYNC_VERSION); 版本列表 + 发布描述 (GET /panel/admin/versions); release 描述从 CHANGELOG 提取; beta 预发布分支 + preview pre-release; **好感度系统** (亲密度+信任度统一为 favor, 允许为负, 慢热快冷 α 预设); **全局 mood 状态机** (personas 表, 前置情绪通道, interaction 幂等); **6×6 状态引导矩阵** (mood_matrix, 每格一个文件, 面板 grid 编辑); **EPHEMERAL 情绪锚点**; **称呼注入主对话**; **API 层三路并行预处理** (清洗 ∥ 情绪+mood ∥ Vision) |

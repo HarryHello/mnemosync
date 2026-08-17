@@ -423,4 +423,4 @@ gh release view v{VERSION} --json tagName,publishedAt,assets
 | v0.3.4 | 2026-07-30 | 人格系统重构: 多人格 profile 支持 (`personas` 表 + 切换 API); `PersonaIdentity` 移除 per-user 字段 (`user_addressing`/`context`, 由 `Relationship` 维护); 人格改名支持; 默认提示词结构化; 前端人格编辑器重构 |
 | v0.3.5 | 2026-08 | 前后端分离 (panel 16125 + backend 16126, 面板内启停); Agent 运行契约; 版本更新检测; install.sh 镜像自动切换; 群聊上下文混杂修复 |
 | v0.4.0 | 2026-08 | 多模态视觉 (Vision Agent 转述); Anthropic / Responses API 双向兼容; 上游改用官方 SDK; 绑定流程 LLM 自然回复; beta 预发布分支 + preview pre-release |
-| v0.4.1 | 2026-08 | 逐版本升级 (`mnemosync versions` / `upgrade --version` / `MNEMOSYNC_VERSION`); 发布描述从 CHANGELOG 提取; `mnemosync upgrade` 委托远程 install.sh |
+| v0.4.1 | 2026-08 | 逐版本升级 (`mnemosync versions` / `upgrade --version` / `MNEMOSYNC_VERSION`); 发布描述从 CHANGELOG 提取; `mnemosync upgrade` 委托远程 install.sh; **好感度系统** (favor 统一 + 慢热快冷 α 预设); **全局 mood 状态机** (personas 表 + 前置情绪通道 + 幂等); **6×6 情绪矩阵** (每格一文件 + 面板 grid 编辑); **情绪锚点** (EPHEMERAL); **称呼注入**; **API 层三路并行预处理** |

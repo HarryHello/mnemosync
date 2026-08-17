@@ -3,14 +3,14 @@
 > **系统版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-11
-> **最后更新**: 2026-08-01
+> **最后更新**: 2026-08-14
 > **作者**: HarryHelloo
 
 ---
 
 ## 1. 概述
 
-Mnemosync 一次请求由 LangGraph + API 层编排 **6 个 Agent** 完成。其中代理推理是**原生推理的补齐** (详见 §4), 提示词清洗是**服务器人格权威的守门员** (详见 §6), Expressor 是**拟人化表达的最后防线** (详见 §3)。
+Mnemosync 一次请求由 LangGraph + API 层编排 **6 个 Agent + 1 个前置情绪/mood 通道** 完成。其中代理推理是**原生推理的补齐** (详见 §4), 提示词清洗是**服务器人格权威的守门员** (详见 §6), Expressor 是**拟人化表达的最后防线** (详见 §3)。
 
 ### 1.1 Agent 全景
 
@@ -22,13 +22,14 @@ Mnemosync 一次请求由 LangGraph + API 层编排 **6 个 Agent** 完成。其
 | 4 | 记忆分析 | ReAct | 辅助模型 | 主对话后, 与关系分析并行 | 新记忆候选 + 衰减评估 JSON |
 | 5 | 关系分析 | ReAct | 辅助模型 | 主对话后, 与记忆分析并行 | 好感度增量 JSON (v0.4.1: 单 `favor_delta`, 可负) |
 | 6 | 提示词清洗 | ReAct | 辅助模型 | API 层预处理, 客户端 system 消息非空时 | 保留的功能性指令 + 丢弃的人格描述 JSON |
+| 7 | 情绪 + mood 通道 | 单次 completion | 辅助模型 | v0.4.1: API 层三路并行预处理 (gather), 每次请求必跑 (失败降级) | (emotion_analysis, mood_state) |
 
 **代码位置**: 所有 Agent 的执行函数集中在 [src/core/agents/factory.py](../../src/core/agents/factory.py); ReAct 循环由 [src/core/agents/base.py](../../src/core/agents/base.py) 的 `run_react_loop` 驱动。
 
 ### 1.2 LangGraph 拓扑
 
 ```
-[API 层预处理: 服务器人格加载 + 提示词清洗 Agent (可选)]
+[API 层三路并行预处理 (v0.4.1): 提示词清洗 ∥ 情绪+mood ∥ Vision 转写]
       │
       ▼
 parse_request
@@ -48,10 +49,10 @@ parse_request
 
 **要点**:
 - `parse_request` 不是 Agent, 是纯 Python 预处理节点 (提取新消息 + 用户标识)
-- **提示词清洗 Agent 不在图中**: 在 [forward.py](../../src/api/routes/forward.py) API 层同步运行, 输出的最终 persona 通过 `initial_state["persona"]` 注入图, 清洗结果落到 `state["prompt_cleaning_result"]` 便于观察 (详见 §6)
+- **提示词清洗 Agent 不在图中**: 在 [forward 包](../../src/api/routes/forward/__init__.py) API 层运行, v0.4.1 起经 [dispatch._run_parallel_preprocess](../../src/api/routes/forward/dispatch.py) 与情绪+mood、Vision 转写**三路 gather 并行** (代理推理不入并行 — 它是主模型的思考, 串行于主对话之前); 输出的最终 persona 通过 `initial_state["persona"]` 注入图, 清洗结果落到 `state["prompt_cleaning_result"]` 便于观察 (详见 §6)
 - `relationship_analysis` 和 `memory_analysis` 是**并行边**, 主对话完成后同时触发
 - 向量索引 (嵌入写入 Chroma) 在 `memory_analysis` 节点内部由 `MemoryLifecycle.store_candidate()` 顺手完成, **不是独立节点**
-- **流式路径不经过图**: [forward.py `_handle_stream`](../../src/api/routes/forward.py) 在 API 层直接编织 "加载记忆 → 代理推理 (可选, 同步) → 合成 reasoning SSE 帧 → 上游 chat_stream 透传 → 后台记忆图", 图仅用于后台跑记忆/关系两个分析节点, 主对话与代理推理在 API 层就完成。见 [forward.md](forward.md) §6
+- **流式路径不经过图**: [forward/stream.py `_handle_stream`](../../src/api/routes/forward/stream.py) 在 API 层直接编织 "加载记忆 → 三路并行预处理 → 代理推理 (可选, 同步) → 合成 reasoning SSE 帧 → 上游 chat_stream 透传 → 后台记忆图", 图仅用于后台跑记忆/关系两个分析节点, 主对话与代理推理在 API 层就完成。见 [forward.md](forward.md) §6
 
 ### 1.3 与嵌入/重排模型的关系
 
@@ -367,32 +368,36 @@ Mnemosync 采用**服务器优先人格**设计: 人格 prompt 由服务器端 `
 
 ### 6.2 触发时机
 
-在 [forward.py `create_chat_completion`](../../src/api/routes/forward.py) 中, 收到请求后:
+在 [forward/__init__.py `create_chat_completion`](../../src/api/routes/forward/__init__.py) 中, 收到请求后 (v0.4.1: 以下清洗步骤与情绪+mood、Vision 转写经 `dispatch._run_parallel_preprocess` **三路并行**, 见 §1.2):
 
 1. 从 `settings.persona` 加载服务器人格 (`prompt` + `name`)
 2. 提取客户端 `system` 消息第一条 (若为空则跳过清洗, 直接用服务器人格)
-3. 若非空 → 调 `run_prompt_cleaning` → 得 `PromptCleaningOutput(clean_prompt, reasoning, raw_output, steps=[])`
-4. 最终 persona = `settings.persona.prompt + "\n\n" + clean_prompt` (若 `clean_prompt` 非空)
-5. `initial_state["persona"]` 存合并后的 persona; `initial_state["prompt_cleaning_result"]` 存清洗结果 (仅日志/观察用)
+3. 若非空 → [dispatch._prepare_prompt](../../src/api/routes/forward/dispatch.py) 按 markdown 标题拆分为模块 (`split_prompt_modules`), 按前台跳过配置/缓存/in-flight 去重后并发清洗; 每模块输出 `(clean_prompt, reasoning)` 契约
+4. 按原顺序拼接: 成功(clean 非空) / 跳过(原文) 注入; 失败/超时模块丢弃 (后台继续写缓存)
+5. 最终 persona = `settings.persona.prompt + "\n\n" + clean_prompt` (若 `clean_prompt` 非空)
+6. `initial_state["persona"]` 存合并后的 persona; `initial_state["prompt_cleaning_result"]` 存清洗结果 (仅日志/观察用)
 
 **关键**: 客户端 `system` 消息在进入图之前就被处理并从 `messages_dict` 移除, 图内不再见到原始 system 消息。
 
-### 6.3 执行方式 (单次 completion)
+### 6.3 执行方式 (模块化并发清洗, v0.4.1)
 
-v0.2.12 起从逐句 ReAct 改为单次 LLM completion:
+v0.2.12 起从逐句 ReAct 改为 LLM completion; v0.4.1 起按 markdown 标题拆模块并发清洗:
 
 ```text
-完整客户端 system 消息
-    ↓
-单次 ASSIST 模型调用 (temperature=0.2)
-    ↓
-输出 JSON: {clean_prompt: "...", reasoning: "..."}
+客户端 system 消息
+    ↓ split_prompt_modules (≤3 级标题 + --- 边界)
+模块 A / 模块 B / ...
+    ↓ asyncio.gather 并发 (受全局并发信号量约束)
+每模块: ASSIST 单次调用 (temperature=0.2) → {clean_prompt, reasoning}
+    ↓ 按原顺序拼接
+persona + 保留的指令
 ```
 
+- 模块级 429 限流退避 (1s/2s/4s), 配额类触发模型候选 fallback
+- 前台哈希缓存 (上限 10000 LRU), 缓存命中零 LLM; in-flight 去重
+- 单模块超时 (30s) 本次丢弃 + 后台继续写缓存 (下次命中)
 - 不需要 `classify_sentence_type` 工具 (已移除)
-- 不需要 ReAct 循环 (`steps=[]`)
 - 使用辅助模型 (`RoleResolver.resolve(ModelType.ASSIST)` 的首位候选)
-- 目标延迟 < 2s
 
 ### 6.4 输出 JSON schema
 
@@ -414,7 +419,7 @@ v0.2.12 起从逐句 ReAct 改为单次 LLM completion:
 
 ### 6.6 失败降级
 
-清洗 Agent 抛异常 → 返回 `PromptCleaningOutput(clean_prompt="", reasoning=str(e), raw_output="", steps=[])`。
+单模块清洗抛异常/超时 → 该模块丢弃 (clean_prompt=""), 其余模块照常; 整体并发失败 → 全部丢弃, 清洗结果为 `{"clean_prompt": "", "reasoning": str(e), "modules": []}`。
 
 **语义**: "宁丢指令, 不污染人格" — 服务器人格是权威, 无法确认的客户端指令一律不合并。
 
@@ -544,8 +549,11 @@ class AgentState(TypedDict, total=False):
     # 提示词清洗 (API 层写入, 来自 run_prompt_cleaning)
     prompt_cleaning_result: dict  # {clean_prompt, reasoning}
 
-    # 情绪分析 (main_dialogue 预计算, memory_analysis + relationship_analysis 共享)
+    # 情绪分析 (v0.4.1: API 层并行预处理预注入; 图内兜底计算, 两分析节点共享)
     emotion_analysis: dict        # v0.3.0: emotion/intensity/category/keywords/summary
+
+    # 全局 mood (v0.4.1: 并行预处理预注入; 主对话 state 段 + 锚点段共用)
+    mood_state: dict | None       # {valence, tier, cause, ...}
 
     # 主对话输出 (main_dialogue 写入)
     main_model: str               # v0.2.3: RoleResolver 解析出的首位主候选 model
@@ -568,9 +576,9 @@ class AgentState(TypedDict, total=False):
     stream_mode: bool
 ```
 
-**请求级附加键** (v0.3.0): forward.py 构建 initial_state 时还会注入 `source_frontend` / `external_event_id` / `api_key_id` 等不在 TypedDict 中的键 (LangGraph 容忍额外输入键, 节点与回写路径按需读取)。
+**请求级附加键**: forward 包构建 initial_state 时还会注入 `source_frontend` / `external_event_id` / `api_key_id` / `_vision_user_content` (v0.4.1 Vision 转写结果) 等不在 TypedDict 中的键 (LangGraph 容忍额外输入键, 节点与回写路径按需读取)。
 
-**注意**: 检索出的记忆 (`retrieved_memories` / `permanent_memories`) **不放入 state**, 由 forward.py 或 `main_dialogue_node` 内部处理; 短期记忆 `conversation_turns` 也不入 state, 装填后的 messages 才进 state。状态尽量瘦身以减少 checkpoint 开销 (checkpoint 在 v0.2.6 起仅作单请求内节点间共享 state, 见 [langgraph.md §6](langgraph.md))。
+**注意**: 检索出的记忆 (`retrieved_memories` / `permanent_memories`) **不放入 state**, 由 forward 包或 `main_dialogue_node` 内部处理; 短期记忆 `conversation_turns` 也不入 state, 装填后的 messages 才进 state。状态尽量瘦身以减少 checkpoint 开销 (checkpoint 在 v0.2.6 起仅作单请求内节点间共享 state, 见 [langgraph.md §6](langgraph.md))。
 
 ---
 
@@ -602,4 +610,4 @@ class AgentState(TypedDict, total=False):
 | v0.2.11 | 2026-07-19 | 文档补齐 v0.2.7–v0.2.11 (persona_override.toml, /conversation-turns/sources, /panel/admin/persona) |
 | v0.3.1 | 2026-07-28 | 新增第 3 个 Agent: Expressor (群聊最终文本表达改写, 不改写工具调用); 触发原因识别 (`__TRIGGER_REASON__`); 平台能力提示 (`__TOOL_CAPABILITY_HINT__`); 工具参数隐私检查; 工具事务桥接; 逻辑交互 ID; 模型候选工具能力声明; Agent 总数从 5 更新为 6; 触发原因识别从 §2.5 升为独立小节; 所有章节重编号 |
 | v0.4.0 | 2026-08-08 | 新增 Vision Description Agent (图片转文字描述, ASSIST 角色); Vision Agent 内部工具名加 `mnemosync_` 前缀 |
-| v0.4.1 | 2026-08-14 | 好感度系统: 亲密度+信任度统一为单一 `favor` (允许为负), 关系分析 prompt v5 (三段式信号 + 负向示例 + 单 `favor_delta` + `mood_anchor`); 演进预设 `[relationship_alpha]`; 全局 mood 状态机 (personas 表, 前置情绪通道, interaction 幂等); 6×6 状态引导矩阵 (`mood_matrix`, 覆盖合并); EPHEMERAL 对象化情绪锚点记忆 (按 subject 加载, supersedes 去重) |
+| v0.4.1 | 2026-08-14 | 好感度系统: 亲密度+信任度统一为单一 `favor` (允许为负), 关系分析 prompt v5 (三段式信号 + 负向示例 + 单 `favor_delta` + `mood_anchor`); 演进预设 `[relationship_alpha]`; 全局 mood 状态机 (personas 表, 前置情绪通道, interaction 幂等); 6×6 状态引导矩阵 (`mood_matrix`, 每格一个文件, 覆盖合并); EPHEMERAL 对象化情绪锚点记忆 (按 subject 加载, supersedes 去重); 称呼注入主对话 (format_relationship addressing); API 层三路并行预处理 (清洗 ∥ 情绪+mood ∥ Vision, dispatch._run_parallel_preprocess); AgentState 新增 `mood_state` |

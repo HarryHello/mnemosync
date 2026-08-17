@@ -120,7 +120,12 @@ CREATE TABLE personas (
     description TEXT DEFAULT '',
     is_active INTEGER NOT NULL DEFAULT 0,  -- 当前激活的人格
     created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL
+    updated_at TIMESTAMP NOT NULL,
+    -- v0.4.1: 全局人格情绪状态 (RFC §4, 跨空间共享)
+    mood_valence REAL NOT NULL DEFAULT 0.0,      -- 连续 valence ∈ [-1, 1]
+    mood_cause TEXT,                              -- 触发缘由 (脱敏, public 注入)
+    mood_updated_at TIMESTAMP,
+    mood_last_interaction_id TEXT                 -- 幂等: 同一交互只冲击一次
 );
 ```
 

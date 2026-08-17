@@ -160,7 +160,7 @@ key_prefix = raw_key[:12]
 Authorization: Bearer sk-xK9mN2pL5qR8sT1vW4yZ7aB0cD3eF6gH
 ```
 
-验证在 [forward.py `_verify_api_key`](../../src/api/routes/forward.py) 完成, 在 `create_chat_completion` 顶部**已启用**:
+验证在 [forward 包 `_verify_api_key`](../../src/api/routes/forward/__init__.py) 完成, 在 `create_chat_completion` 顶部**已启用**:
 
 ```
 1. 从 Authorization 提取 raw_key

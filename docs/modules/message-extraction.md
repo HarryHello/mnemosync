@@ -22,7 +22,7 @@
 
 **v0.3.0 现状**: `extract_new_messages()` 已**没有任何主路径调用方**:
 
-- forward.py 构建 `initial_state` 时直接把本轮新用户消息写入 `extracted_new`
+- forward 包构建 `initial_state` 时直接把本轮新用户消息写入 `extracted_new`
 - `parse_request_node` 仅在 `extracted_new` 缺省时兜底: `extracted = [m for m in messages if m.get("role") == "user"]` — 内联过滤, 不调用本模块
 
 函数仍从 `src/infra/__init__.py` 导出 (历史兼容), 但图内不再引用。如后续确认无外部使用者, 可整体移除。
@@ -71,7 +71,7 @@ def extract_new_messages(
                                      ↑↑↑ 主路径完全不经消息提取 ↑↑↑
 
 后台图 (记忆分析, 不阻塞客户端):
-    initial_state.extracted_new (forward.py 直接写入本轮 user 消息)
+    initial_state.extracted_new (forward 包直接写入本轮 user 消息)
                               │
                               ▼
                         parse_request_node
