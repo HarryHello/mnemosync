@@ -25,6 +25,24 @@ from src.infra.llm_service.store import LLMServiceStore
 from src.infra.vector_store import VectorStore
 from src.persistence.memory_store import SqliteMemoryStore
 
+
+async def _bind(store, role, sid, model, *, priority=None, context_length=None,
+                embedding_dim=None, send_dimensions=None,
+                input_modalities=None, output_modalities=None):
+    """测试 helper: 先注册模型到注册表, 再按 model_id 绑定 (v0.4.1 语义)."""
+    from src.infra.llm_service.models import ModelRegistryEntry
+    entry = ModelRegistryEntry.create(
+        sid, model,
+        context_length=context_length,
+        embedding_dim=embedding_dim,
+        send_dimensions=bool(send_dimensions),
+        input_modalities=input_modalities,
+        output_modalities=output_modalities,
+    )
+    await store.save_model_registry(entry)
+    return await store.add_role_binding(role, entry.id, priority=priority)
+
+
 NOW = datetime(2026, 7, 17, 12, 0, 0, tzinfo=UTC)
 
 
@@ -120,9 +138,8 @@ async def resolver_with_embedding(tmp_path):
     await llm_store.save_service(
         LLMServiceProvider.create("svc-a", "https://a", "sk-a")
     )
-    await llm_store.add_role_binding(
-        ModelType.EMBEDDING, "svc-a", "embed-v3", embedding_dim=3
-    )
+    await _bind(llm_store, ModelType.EMBEDDING, "svc-a", "embed-v3",
+                 embedding_dim=3)
     return RoleResolver(llm_store)
 
 
