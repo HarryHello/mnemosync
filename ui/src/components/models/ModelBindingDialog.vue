@@ -1,3 +1,8 @@
+<!-- 角色绑定对话框 (v0.4.1: 从模型注册表选模型).
+
+能力字段 (模态/上下文/嵌入维) 随注册表, 此处只读展示, 不再逐条填写.
+支持: 添加 / 替换 (嵌入单绑定, 带 Reindex 引导) / 换模型 (PATCH model_id).
+-->
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -5,16 +10,15 @@ import type { FormInstance, FormRules } from 'element-plus'
 import {
   addModelBinding,
   deleteModelBinding,
-  listUpstreamAvailableModels,
   probeEmbeddingDimension,
   startMemoryReindex,
   updateModelBinding,
+  updateRegistryModel,
 } from '@/api/client'
 import type {
+  ModelRegistryItem,
   RoleBindingItem,
-  RoleBindingUpdateBody,
   UpstreamModelType,
-  UpstreamService,
 } from '@/types/api'
 
 const ROLE_TITLES: Record<UpstreamModelType, string> = {
@@ -27,7 +31,7 @@ const ROLE_TITLES: Record<UpstreamModelType, string> = {
 type Mode = 'add' | 'replace' | 'edit'
 
 const props = defineProps<{
-  services: UpstreamService[]
+  models: ModelRegistryItem[]
   bindings: Record<UpstreamModelType, RoleBindingItem[]>
 }>()
 
@@ -39,43 +43,33 @@ const visible = ref(false)
 const formRef = ref<FormInstance | null>(null)
 const form = reactive({
   role: 'main' as UpstreamModelType,
-  service_id: '',
-  model: '',
+  model_id: '',
   priority: null as number | null,
-  context_length: 128000 as number | null,
-  embedding_dim: null as number | null,
-  send_dimensions: false,
-  input_modalities: ['text'] as string[],
-  output_modalities: ['text'] as string[],
 })
 
-const MODALITY_OPTIONS = [
-  { label: '文本 (text)', value: 'text' },
-  { label: '图片 (image)', value: 'image' },
-  { label: '音频 (audio)', value: 'audio' },
-]
 const submitting = ref(false)
 const dimProbing = ref(false)
-const availableModels = ref<string[]>([])
-const availableLoading = ref(false)
-
 const mode = ref<Mode>('add')
 const editingTarget = ref<RoleBindingItem | null>(null)
 
 const rules: FormRules = {
-  service_id: [{ required: true, message: '请选择服务商', trigger: 'change' }],
-  model: [{ required: true, message: '请填写模型名', trigger: 'blur' }],
+  model_id: [{ required: true, message: '请选择模型', trigger: 'change' }],
 }
 
 const priorityCap = computed(() => props.bindings[form.role]?.length ?? 0)
 const isEmbeddingForm = computed(() => form.role === 'embedding')
 const showPriorityField = computed(() => mode.value === 'add' && !isEmbeddingForm.value)
 
+// 当前选中模型 (只读能力展示)
+const selectedModel = computed<ModelRegistryItem | null>(() => {
+  return props.models.find((m) => m.id === form.model_id) ?? null
+})
+
 const dialogTitle = computed(() => {
   const roleName = ROLE_TITLES[form.role]
   if (mode.value === 'replace') return `替换: ${roleName}`
   if (mode.value === 'edit' && editingTarget.value) {
-    return `编辑: ${roleName} · #${editingTarget.value.priority}`
+    return `换模型: ${roleName} · #${editingTarget.value.priority}`
   }
   return `添加候选: ${roleName}`
 })
@@ -86,24 +80,10 @@ const submitLabel = computed(() => {
   return '添加'
 })
 
-const DEFAULT_CONTEXT_LENGTH: Record<UpstreamModelType, number> = {
-  main: 128000,
-  assist: 128000,
-  rerank: 128000,
-  embedding: 8192,
-}
-
 function resetForm(role: UpstreamModelType) {
   form.role = role
-  form.service_id = props.services[0]?.id ?? ''
-  form.model = ''
+  form.model_id = ''
   form.priority = null
-  form.context_length = DEFAULT_CONTEXT_LENGTH[role]
-  form.embedding_dim = null
-  form.send_dimensions = false
-  form.input_modalities = ['text']
-  form.output_modalities = ['text']
-  availableModels.value = []
 }
 
 function openAdd(role: UpstreamModelType) {
@@ -111,74 +91,40 @@ function openAdd(role: UpstreamModelType) {
   editingTarget.value = null
   resetForm(role)
   visible.value = true
-  if (form.service_id) fetchAvailable(form.service_id)
 }
 
 function openReplace(existing: RoleBindingItem) {
   mode.value = 'replace'
   editingTarget.value = existing
   resetForm(existing.role)
+  form.model_id = existing.model_id || `${existing.service_id}:${existing.model}`
   visible.value = true
-  if (form.service_id) fetchAvailable(form.service_id)
 }
 
 function openEdit(existing: RoleBindingItem) {
   mode.value = 'edit'
   editingTarget.value = existing
-  form.role = existing.role
-  form.service_id = existing.service_id
-  form.model = existing.model
+  resetForm(existing.role)
+  form.model_id = existing.model_id || `${existing.service_id}:${existing.model}`
   form.priority = existing.priority
-  form.context_length = existing.context_length
-  form.embedding_dim = existing.embedding_dim
-  form.send_dimensions = existing.send_dimensions
-  form.input_modalities = existing.input_modalities?.length ? [...existing.input_modalities] : ['text']
-  form.output_modalities = existing.output_modalities?.length ? [...existing.output_modalities] : ['text']
-  availableModels.value = []
   visible.value = true
-  if (form.service_id) fetchAvailable(form.service_id)
 }
 
 defineExpose({ openAdd, openReplace, openEdit })
 
-async function fetchAvailable(id: string) {
-  availableLoading.value = true
-  try {
-    const res = await listUpstreamAvailableModels(id)
-    availableModels.value = res.models
-  } catch (err) {
-    availableModels.value = []
-    ElMessage.warning(
-      '拉取模型列表失败, 可手动输入: ' +
-        (err instanceof Error ? err.message : String(err)),
-    )
-  } finally {
-    availableLoading.value = false
-  }
-}
-
-function onServiceChange(id: string) {
-  if (mode.value !== 'edit') {
-    form.model = ''
-  }
-  availableModels.value = []
-  if (id) fetchAvailable(id)
-}
-
 async function onProbeDim() {
-  if (!form.service_id || !form.model.trim()) {
-    ElMessage.warning('请先选择服务与模型')
-    return
-  }
+  const m = selectedModel.value
+  if (!m) return
   dimProbing.value = true
   try {
     const res = await probeEmbeddingDimension({
-      service_id: form.service_id,
-      model: form.model.trim(),
-      dimensions: form.embedding_dim,
+      service_id: m.service_id,
+      model: m.model,
+      dimensions: m.embedding_dim ?? undefined,
     })
-    form.embedding_dim = res.dimensions
-    ElMessage.success(`探测成功: ${res.dimensions} 维`)
+    await updateRegistryModel(m.id, { embedding_dim: res.dimensions })
+    ElMessage.success(`探测成功: ${res.dimensions} 维 (已写入注册表)`)
+    emit('saved')  // 父组件 refresh 会重拉注册表
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   } finally {
@@ -186,33 +132,9 @@ async function onProbeDim() {
   }
 }
 
-function diffForEdit(target: RoleBindingItem): RoleBindingUpdateBody {
-  const patch: RoleBindingUpdateBody = {}
-  const trimmedService = form.service_id.trim()
-  const trimmedModel = form.model.trim()
-  if (trimmedService !== target.service_id) patch.service_id = trimmedService
-  if (trimmedModel !== target.model) patch.model = trimmedModel
-  if (form.context_length !== target.context_length) {
-    patch.context_length = form.context_length
-  }
-  if (isEmbeddingForm.value) {
-    if (form.embedding_dim !== target.embedding_dim) {
-      patch.embedding_dim = form.embedding_dim
-    }
-    if (form.send_dimensions !== target.send_dimensions) {
-      patch.send_dimensions = form.send_dimensions
-    }
-  }
-  // 模态变更
-  const targetInput = target.input_modalities || ['text']
-  const targetOutput = target.output_modalities || ['text']
-  if (JSON.stringify(form.input_modalities) !== JSON.stringify(targetInput)) {
-    patch.input_modalities = form.input_modalities
-  }
-  if (JSON.stringify(form.output_modalities) !== JSON.stringify(targetOutput)) {
-    patch.output_modalities = form.output_modalities
-  }
-  return patch
+function modelLabel(m: ModelRegistryItem): string {
+  const name = m.display_name || m.model
+  return `${name} (${m.service_id})`
 }
 
 async function submitAddOrReplace() {
@@ -221,27 +143,22 @@ async function submitAddOrReplace() {
   }
   await addModelBinding({
     role: form.role,
-    service_id: form.service_id,
-    model: form.model.trim(),
+    model_id: form.model_id,
     priority: form.priority,
-    context_length: form.context_length,
-    embedding_dim: form.embedding_dim,
-    send_dimensions: form.send_dimensions,
-    input_modalities: form.input_modalities,
-    output_modalities: form.output_modalities,
   })
   ElMessage.success(mode.value === 'replace' ? '已替换' : '已添加')
 }
 
 async function submitEdit() {
   if (!editingTarget.value) return
-  const patch = diffForEdit(editingTarget.value)
-  if (Object.keys(patch).length === 0) {
-    ElMessage.info('没有变更')
+  if (!form.model_id || form.model_id === editingTarget.value.model_id) {
+    ElMessage.info('模型未变更')
     visible.value = false
     return
   }
-  await updateModelBinding(editingTarget.value.role, editingTarget.value.priority, patch)
+  await updateModelBinding(editingTarget.value.role, editingTarget.value.priority, {
+    model_id: form.model_id,
+  })
   ElMessage.success('已保存')
 }
 
@@ -286,45 +203,44 @@ async function onSubmit() {
 
 <template>
   <el-dialog v-model="visible" :title="dialogTitle" width="560px">
-    <el-form
-      ref="formRef"
-      :model="form"
-      :rules="rules"
-      label-width="100px"
-    >
-      <el-form-item label="服务商" prop="service_id">
+    <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+      <el-form-item label="模型" prop="model_id">
         <el-select
-          v-model="form.service_id"
-          placeholder="选择上游服务"
-          style="width: 100%"
-          @change="onServiceChange"
-        >
-          <el-option
-            v-for="s in services"
-            :key="s.id"
-            :label="s.id"
-            :value="s.id"
-          />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="模型名" prop="model">
-        <el-select
-          v-model="form.model"
+          v-model="form.model_id"
           filterable
-          allow-create
-          default-first-option
-          placeholder="从可用列表选择或直接输入"
+          placeholder="从模型注册表选择"
           style="width: 100%"
-          :loading="availableLoading"
         >
           <el-option
-            v-for="m in availableModels"
-            :key="m"
-            :label="m"
-            :value="m"
+            v-for="m in models"
+            :key="m.id"
+            :label="modelLabel(m)"
+            :value="m.id"
           />
         </el-select>
+        <div class="hint">
+          从『上游 API → 模型配置 / 模型注册表』添加模型。能力字段 (模态/上下文) 随注册表。
+        </div>
       </el-form-item>
+
+      <el-form-item v-if="selectedModel" label="能力">
+        <div class="caps">
+          <el-tag size="small" type="info">
+            {{ selectedModel.input_modalities?.join('/') || 'text' }}
+          </el-tag>
+          <span v-if="selectedModel.context_length" class="muted">
+            · {{ Math.round(selectedModel.context_length / 1000) }}k 上下文
+          </span>
+          <span v-if="selectedModel.embedding_dim" class="muted">
+            · {{ selectedModel.embedding_dim }} 维
+          </span>
+          <span class="muted">
+            · 并发 {{ selectedModel.concurrency }}{{ selectedModel.concurrency === 0 ? ' (不限)' : '' }}
+          </span>
+          <el-tag v-if="!selectedModel.enabled" size="small" type="danger">已禁用</el-tag>
+        </div>
+      </el-form-item>
+
       <el-form-item v-if="showPriorityField" label="优先级">
         <el-input-number
           v-model="form.priority"
@@ -338,69 +254,24 @@ async function onSubmit() {
           0 为最高优先级; 留空则追加到末尾。指定已被占用的位置时, 现有候选会向后顺移。
         </div>
       </el-form-item>
-      <el-form-item v-if="mode === 'edit'" label="优先级">
+      <el-form-item v-else-if="mode === 'edit'" label="优先级">
         <div class="readonly-priority">
           <span class="mono">#{{ form.priority }}</span>
           <span class="hint hint-inline">编辑不改优先级; 请用列表上下箭头调整</span>
         </div>
       </el-form-item>
-      <el-form-item label="输入模态">
-        <el-checkbox-group v-model="form.input_modalities">
-          <el-checkbox v-for="opt in MODALITY_OPTIONS" :key="opt.value" :label="opt.value">
-            {{ opt.label }}
-          </el-checkbox>
-        </el-checkbox-group>
-        <div class="hint">
-          该模型支持的输入类型。支持图片的模型请选择 image, 否则仅选 text。
-        </div>
-      </el-form-item>
-      <el-form-item label="输出模态">
-        <el-checkbox-group v-model="form.output_modalities">
-          <el-checkbox v-for="opt in MODALITY_OPTIONS" :key="opt.value" :label="opt.value">
-            {{ opt.label }}
-          </el-checkbox>
-        </el-checkbox-group>
-      </el-form-item>
-      <el-form-item label="上下文长度">
-        <el-input-number
-          v-model="form.context_length"
-          :min="1"
-          placeholder="用于预估截取上下文 (token)"
-          style="width: 100%"
-          controls-position="right"
-        />
-      </el-form-item>
-      <el-form-item v-if="isEmbeddingForm" label="嵌入维度">
+
+      <el-form-item v-if="isEmbeddingForm && selectedModel" label="嵌入维度">
         <div class="dim-row">
-          <el-input-number
-            v-model="form.embedding_dim"
-            :min="1"
-            placeholder="可变维模型请手填或点探测"
-            style="flex: 1"
-            controls-position="right"
-          />
-          <el-button
-            :loading="dimProbing"
-            :disabled="!form.service_id || !form.model"
-            @click="onProbeDim"
-          >
-            探测维度
+          <span class="muted">
+            {{ selectedModel.embedding_dim ?? '未设置' }} 维 (注册表)
+          </span>
+          <el-button :loading="dimProbing" @click="onProbeDim">
+            探测并写入
           </el-button>
         </div>
         <div class="hint">
-          用作向量库维度锁 (VectorStore 会据此校验后续写入). 点「探测」会向上游发送一次 "hi" 请求读取真实输出维度。
-        </div>
-      </el-form-item>
-      <el-form-item v-if="isEmbeddingForm" label="透传 dimensions">
-        <el-checkbox v-model="form.send_dimensions" :disabled="!form.embedding_dim">
-          把维度作为 <code>dimensions</code> 参数发给上游
-        </el-checkbox>
-        <div class="hint">
-          <strong>默认不开</strong>. 仅可变维模型需要开启:
-          <code>text-embedding-3-*</code> / <code>text-embedding-v3/v4</code> /
-          <code>qwen3-embedding-*</code>.
-          固定维模型 (<code>bge-*</code> / <code>bce-*</code> / <code>jina-*</code> /
-          Mistral / Gemini) 开启会被上游拒绝 (400 "parameter is invalid").
+          探测结果会写入模型注册表; 嵌入模型换绑已存向量会失效, 需重跑 Reindex。
         </div>
       </el-form-item>
     </el-form>
@@ -426,6 +297,14 @@ async function onSubmit() {
   margin-left: $space-2;
 }
 
+.muted {
+  color: var(--el-text-color-secondary);
+}
+
+.mono {
+  font-family: var(--el-font-family-mono, monospace);
+}
+
 .dim-row {
   display: flex;
   gap: $space-2;
@@ -437,5 +316,12 @@ async function onSubmit() {
   display: flex;
   align-items: center;
   color: var(--el-text-color-regular);
+}
+
+.caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-2;
+  align-items: center;
 }
 </style>

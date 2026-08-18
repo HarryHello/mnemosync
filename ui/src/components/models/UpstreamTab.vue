@@ -8,9 +8,11 @@ import {
   updateUpstreamService,
   deleteUpstreamService,
   listUpstreamAvailableModels,
+  createRegistryModel,
 } from '@/api/client'
 import { formatDate } from '@/utils/format'
 import type { UpstreamService } from '@/types/api'
+import ModelRegistrySection from './ModelRegistrySection.vue'
 
 const services = ref<UpstreamService[]>([])
 const loading = ref(false)
@@ -20,6 +22,9 @@ const createDialog = ref(false)
 const createRef = ref<FormInstance | null>(null)
 const createForm = reactive({ id: '', base_url: '', api_key: '', api_format: 'openai' })
 const createSubmitting = ref(false)
+// 创建模式暂存的模型行 (创建成功后随服务一并注册)
+interface PendingModelLoose { model: string; display_name?: string; concurrency?: number }
+const createRegistryModels = ref<PendingModelLoose[]>([])
 
 const createRules: FormRules = {
   id: [{ required: true, message: '请填写服务 ID', trigger: 'blur' }],
@@ -53,6 +58,7 @@ function openCreate() {
   createForm.id = ''
   createForm.base_url = ''
   createForm.api_key = ''
+  createRegistryModels.value = []
   createDialog.value = true
 }
 
@@ -62,13 +68,30 @@ async function onCreate() {
   if (!ok) return
   createSubmitting.value = true
   try {
+    const createdId = createForm.id.trim()
     await createUpstreamService({
-      id: createForm.id.trim(),
+      id: createdId,
       base_url: createForm.base_url.trim(),
       api_key: createForm.api_key.trim(),
       api_format: createForm.api_format,
     })
-    ElMessage.success('已创建')
+    // 提交暂存的模型行 (注册表)
+    const pending = createRegistryModels.value.filter(
+      (m) => m.model && m.model.trim(),
+    )
+    for (const m of pending) {
+      await createRegistryModel({
+        service_id: createdId,
+        model: m.model.trim(),
+        display_name: m.display_name?.trim() || null,
+        concurrency: m.concurrency,
+      })
+    }
+    ElMessage.success(
+      pending.length
+        ? `已创建服务与 ${pending.length} 个模型`
+        : '已创建',
+    )
     createDialog.value = false
     await refresh()
   } catch (err) {
@@ -276,6 +299,8 @@ defineExpose({ refresh })
           </div>
         </el-form-item>
       </el-form>
+
+      <ModelRegistrySection v-model="createRegistryModels" />
       <template #footer>
         <el-button @click="createDialog = false">取消</el-button>
         <el-button type="primary" :loading="createSubmitting" @click="onCreate">
@@ -310,6 +335,12 @@ defineExpose({ refresh })
           </el-select>
         </el-form-item>
       </el-form>
+
+      <ModelRegistrySection
+        v-if="editing"
+        :key="editing.id"
+        :service-id="editing.id"
+      />
       <template #footer>
         <el-button @click="editDialog = false">取消</el-button>
         <el-button type="primary" :loading="editSubmitting" @click="onEdit">

@@ -7,8 +7,10 @@ import {
   deleteModelBinding,
   reorderModelBindings,
   listUpstreamServices,
+  listRegistryModels,
 } from '@/api/client'
 import type {
+  ModelRegistryItem,
   RoleBindingItem,
   UpstreamModelType,
   UpstreamService,
@@ -30,6 +32,7 @@ const bindings = ref<Record<UpstreamModelType, RoleBindingItem[]>>({
   rerank: [],
 })
 const services = ref<UpstreamService[]>([])
+const models = ref<ModelRegistryItem[]>([])
 const loading = ref(false)
 const servicesEmpty = computed(() => services.value.length === 0)
 
@@ -38,9 +41,10 @@ const dialogRef = ref<InstanceType<typeof ModelBindingDialog> | null>(null)
 async function refresh() {
   loading.value = true
   try {
-    const [all, svcs] = await Promise.all([
+    const [all, svcs, regModels] = await Promise.all([
       listModelBindings(),
       listUpstreamServices(),
+      listRegistryModels(),
     ])
     const grouped: Record<UpstreamModelType, RoleBindingItem[]> = {
       main: [], assist: [], embedding: [], rerank: [],
@@ -53,6 +57,7 @@ async function refresh() {
     }
     bindings.value = grouped
     services.value = svcs
+    models.value = regModels
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
   } finally {
@@ -171,7 +176,7 @@ defineExpose({ refresh })
 
     <ModelBindingDialog
       ref="dialogRef"
-      :services="services"
+      :models="models"
       :bindings="bindings"
       @saved="refresh"
     />

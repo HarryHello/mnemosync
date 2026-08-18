@@ -343,6 +343,8 @@ export interface RoleBindingItem {
   priority: number
   service_id: string
   model: string
+  model_id?: string | null
+  display_name?: string | null
   created_at: string
   context_length: number | null
   embedding_dim: number | null
@@ -356,34 +358,79 @@ export interface RoleBindingListResponse {
 }
 
 export interface RoleBindingAddBody {
+  /** v0.4.1: 从模型注册表引用 (id = "{service_id}:{model}"), 能力随注册表 */
   role: UpstreamModelType
-  service_id: string
-  model: string
+  model_id: string
   priority?: number | null
-  context_length?: number | null
-  embedding_dim?: number | null
-  send_dimensions?: boolean
-  input_modalities?: string[]
-  output_modalities?: string[]
 }
 
 /**
- * v0.2.13: PATCH /model-bindings/{role}/{priority}.
- * 语义: 键缺失 = 不改; 值为 null (仅 context_length / embedding_dim) = 清空;
- * service_id / model 若下发则必须非空。
+ * v0.4.1: PATCH /model-bindings/{role}/{priority}.
+ * 语义: model_id 省略 = 不改; 换模型时 service_id/model/model_id 联动更新.
  */
 export interface RoleBindingUpdateBody {
-  service_id?: string
-  model?: string
-  context_length?: number | null
-  embedding_dim?: number | null
-  send_dimensions?: boolean
-  input_modalities?: string[]
-  output_modalities?: string[]
+  model_id?: string
 }
 
 export interface RoleBindingReorderBody {
   order: [string, string][]
+}
+
+// ============================================================================
+// Model registry (v0.4.1: 模型一等实体, RFC model-registry)
+// ============================================================================
+
+export interface ModelRegistryItem {
+  id: string
+  service_id: string
+  model: string
+  display_name: string | null
+  input_modalities: string[]
+  output_modalities: string[]
+  context_length: number | null
+  embedding_dim: number | null
+  send_dimensions: boolean
+  concurrency: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ModelRegistryCreateBody {
+  service_id: string
+  model: string
+  display_name?: string | null
+  input_modalities?: string[]
+  output_modalities?: string[]
+  context_length?: number | null
+  embedding_dim?: number | null
+  send_dimensions?: boolean
+  concurrency?: number
+  enabled?: boolean
+}
+
+export interface ModelRegistryUpdateBody {
+  display_name?: string | null
+  clear_display_name?: boolean
+  input_modalities?: string[]
+  output_modalities?: string[]
+  context_length?: number | null
+  clear_context_length?: boolean
+  embedding_dim?: number | null
+  clear_embedding_dim?: boolean
+  send_dimensions?: boolean
+  concurrency?: number
+  enabled?: boolean
+}
+
+export interface ModelImportBody {
+  service_id: string
+  models: string[]
+}
+
+export interface ModelImportResponse {
+  added: number
+  skipped: number
 }
 
 // v0.2.4: 探测 / 重建 / 清理
