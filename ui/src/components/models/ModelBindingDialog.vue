@@ -137,6 +137,13 @@ function modelLabel(m: ModelRegistryItem): string {
   return `${name} (${m.service_id})`
 }
 
+function fmtLimit(n: number | null | undefined): string {
+  if (!n) return ''
+  if (n >= 1024 * 1024 && n % (1024 * 1024) === 0) return String(n / (1024 * 1024)) + 'M'
+  if (n >= 1024 && n % 1024 === 0) return String(n / 1024) + 'K'
+  return String(n)
+}
+
 async function submitAddOrReplace() {
   if (mode.value === 'replace' && editingTarget.value) {
     await deleteModelBinding(editingTarget.value.role, editingTarget.value.priority)
@@ -229,7 +236,10 @@ async function onSubmit() {
             {{ selectedModel.input_modalities?.join('/') || 'text' }}
           </el-tag>
           <span v-if="selectedModel.context_length" class="muted">
-            · {{ Math.round(selectedModel.context_length / 1000) }}k 上下文
+            · 入 {{ fmtLimit(selectedModel.context_length) }}
+          </span>
+          <span v-if="selectedModel.output_limit" class="muted">
+            · 出 {{ fmtLimit(selectedModel.output_limit) }}
           </span>
           <span v-if="selectedModel.embedding_dim" class="muted">
             · {{ selectedModel.embedding_dim }} 维

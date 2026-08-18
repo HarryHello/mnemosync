@@ -388,6 +388,7 @@ export interface ModelRegistryItem {
   input_modalities: string[]
   output_modalities: string[]
   context_length: number | null
+  output_limit: number | null
   embedding_dim: number | null
   send_dimensions: boolean
   concurrency: number
@@ -403,6 +404,7 @@ export interface ModelRegistryCreateBody {
   input_modalities?: string[]
   output_modalities?: string[]
   context_length?: number | null
+  output_limit?: number | null
   embedding_dim?: number | null
   send_dimensions?: boolean
   concurrency?: number
@@ -416,6 +418,8 @@ export interface ModelRegistryUpdateBody {
   output_modalities?: string[]
   context_length?: number | null
   clear_context_length?: boolean
+  output_limit?: number | null
+  clear_output_limit?: boolean
   embedding_dim?: number | null
   clear_embedding_dim?: boolean
   send_dimensions?: boolean

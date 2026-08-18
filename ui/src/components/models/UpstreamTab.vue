@@ -23,8 +23,28 @@ const createRef = ref<FormInstance | null>(null)
 const createForm = reactive({ id: '', base_url: '', api_key: '', api_format: 'openai' })
 const createSubmitting = ref(false)
 // 创建模式暂存的模型行 (创建成功后随服务一并注册)
-interface PendingModelLoose { model: string; display_name?: string; concurrency?: number }
+interface PendingModelLoose {
+  model: string
+  display_name?: string
+  concurrency?: number
+  input_limit?: string
+  output_limit?: string
+  capabilities?: string[]
+}
 const createRegistryModels = ref<PendingModelLoose[]>([])
+
+// K / M 单位解析 (与 ModelRegistrySection 一致)
+function parseTokenLimit(v: string | undefined | null): number | null {
+  const sv = (v || '').trim()
+  if (!sv) return null
+  const mm = /^(\d+(?:\.\d+)?)\s*([KM]?)$/.exec(sv.toUpperCase())
+  if (!mm) return null
+  const n = parseFloat(mm[1] ?? '')
+  if (Number.isNaN(n)) return null
+  if (mm[2] === 'K') return Math.max(1, Math.round(n * 1024))
+  if (mm[2] === 'M') return Math.max(1, Math.round(n * 1024 * 1024))
+  return Math.max(1, Math.round(n))
+}
 
 const createRules: FormRules = {
   id: [{ required: true, message: '请填写服务 ID', trigger: 'blur' }],
@@ -80,11 +100,18 @@ async function onCreate() {
       (m) => m.model && m.model.trim(),
     )
     for (const m of pending) {
+      const model = m.model.trim()
+      const conv = Number(m.concurrency)
       await createRegistryModel({
         service_id: createdId,
-        model: m.model.trim(),
-        display_name: m.display_name?.trim() || null,
-        concurrency: m.concurrency,
+        model,
+        // 显示名默认 = 服务商id/model_name
+        display_name: m.display_name?.trim() || createdId + '/' + model,
+        context_length: parseTokenLimit(m.input_limit),
+        output_limit: parseTokenLimit(m.output_limit),
+        concurrency: Number.isFinite(conv) && conv >= 0 ? conv : 20,
+        input_modalities:
+          m.capabilities && m.capabilities.length ? m.capabilities : ['text'],
       })
     }
     ElMessage.success(

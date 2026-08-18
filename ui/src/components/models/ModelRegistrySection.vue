@@ -1,14 +1,15 @@
 <!-- 模型注册表区 (v0.4.1, RFC model-registry).
 
 两种模式:
-- 创建模式 (serviceId 为空): 本地暂存待添加模型 (model/display_name/concurrency),
-  父组件创建服务后取 modelValue 提交 (importRegistryModels / createRegistryModel)。
-- 编辑模式 (serviceId 非空): 实时 CRUD 该服务商的注册表模型 + 「从上游导入」。
+- 创建模式 (serviceId 为空): 本地暂存待添加模型 (两行: 模型选择+显示名+删除 /
+  输入上限+输出上限+并发+能力多选), 父组件创建服务后取 modelValue 提交。
+- 编辑模式 (serviceId 非空): 实时 CRUD + 从上游 /models 拉取 selector + 批量导入。
+显示名默认 = {serviceId}/{model} (可改); 输入/输出上限支持 K/M 单位。
 -->
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Download, Plus } from '@element-plus/icons-vue'
+import { Close, Download, Plus } from '@element-plus/icons-vue'
 import {
   createRegistryModel,
   deleteRegistryModel,
@@ -23,6 +24,9 @@ export interface PendingModel {
   model: string
   display_name?: string
   concurrency?: number
+  input_limit?: string           // 输入上限 (K/M 文本, 提交时解析)
+  output_limit?: string          // 输出上限 (K/M 文本)
+  capabilities?: string[]        // 输入模态多选
 }
 
 const props = defineProps<{
@@ -38,19 +42,49 @@ const saving = ref(false)
 const importing = ref(false)
 const models = ref<ModelRegistryItem[]>([])
 
-// ── 创建模式: 暂存行 ──────────────────────────────────────────────────────
+// 并发默认 20 (0 = 不限)
+const DEFAULT_CONCURRENCY = 20
+
+// ── K / M 单位解析 ─────────────────────────────────────────────────────────
+function parseTokenLimit(v: string | undefined | null): number | null {
+  const sv = (v || '').trim()
+  if (!sv) return null
+  const s = sv.toUpperCase()
+  const m = /^(\d+(?:\.\d+)?)\s*([KM]?)$/.exec(s)
+  if (!m) return null
+  const n = parseFloat(m[1] ?? '')
+  if (Number.isNaN(n)) return null
+  if (m[2] === 'K') return Math.max(1, Math.round(n * 1024))
+  if (m[2] === 'M') return Math.max(1, Math.round(n * 1024 * 1024))
+  return Math.max(1, Math.round(n))
+}
+
+function formatTokenLimit(n: number | null | undefined): string {
+  if (!n) return ''
+  if (n >= 1024 * 1024 && n % (1024 * 1024) === 0) return String(n / (1024 * 1024)) + 'M'
+  if (n >= 1024 && n % 1024 === 0) return String(n / 1024) + 'K'
+  return String(n)
+}
+
+// ── 创建模式: 暂存行 (两行) ─────────────────────────────────────────────────
 const pending = ref<PendingModel[]>([])
 
 watch(
   () => props.modelValue,
   (v) => {
-    pending.value = v ? v.map((m) => ({ ...m })) : []
+    pending.value = v
+      ? v.map((m) => ({ ...m, capabilities: m.capabilities ? [...m.capabilities] : [] }))
+      : []
   },
   { immediate: true, deep: true },
 )
 
 function addRow() {
-  pending.value.push({ model: '', concurrency: 20 })
+  pending.value.push({
+    model: '',
+    concurrency: DEFAULT_CONCURRENCY,
+    capabilities: ['text'],
+  })
   flush()
 }
 
@@ -59,22 +93,95 @@ function removeRow(i: number) {
   flush()
 }
 
+function rowModelChanged(i: number) {
+  const row = pending.value[i]
+  if (!row) return
+  if (row.model && row.model.trim() && !row.display_name) {
+    row.display_name = defaultDisplay(row.model.trim())
+  }
+  flush()
+}
+
 function flush() {
   emit('update:modelValue', pending.value.map((m) => ({ ...m })))
 }
 
 // ── 编辑模式: 实时 CRUD ────────────────────────────────────────────────────
-const newModel = ref({ model: '', display_name: '' })
+const availableModels = ref<string[]>([])
+const upstreamLoading = ref(false)
+
+const addForm = reactive({
+  model: '',
+  display_name: '',
+  input_limit: '',
+  output_limit: '',
+  concurrency: DEFAULT_CONCURRENCY,
+  capabilities: ['text'] as string[],
+})
+
+function defaultDisplay(model: string): string {
+  if (props.serviceId) return props.serviceId + '/' + model
+  return model
+}
+
+function clearAddForm() {
+  addForm.model = ''
+  addForm.display_name = ''
+  addForm.input_limit = ''
+  addForm.output_limit = ''
+  addForm.concurrency = DEFAULT_CONCURRENCY
+  addForm.capabilities = ['text']
+}
 
 async function reload() {
   if (!props.serviceId) return
   models.value = await listRegistryModels(props.serviceId)
 }
 
-async function addModel() {
-  const name = newModel.value.model.trim()
+async function fetchUpstream() {
+  // 添加模型时读取服务商的 /models 端点获取模型
+  if (!props.serviceId) return
+  upstreamLoading.value = true
+  try {
+    const { models: list } = await listUpstreamAvailableModels(props.serviceId)
+    availableModels.value = list
+  } catch (err) {
+    availableModels.value = []
+    ElMessage.warning(
+      '拉取上游 /models 失败, 可手动输入: ' +
+        (err instanceof Error ? err.message : String(err)),
+    )
+  } finally {
+    upstreamLoading.value = false
+  }
+}
+
+function onModelPick() {
+  const chosen = addForm.model.trim()
+  if (chosen && !addForm.display_name) {
+    addForm.display_name = defaultDisplay(chosen)
+  }
+}
+
+async function submitAdd() {
+  const name = addForm.model.trim()
   if (!name) {
-    ElMessage.warning('请填写模型名')
+    ElMessage.warning('请填写/选择模型 id')
+    return
+  }
+  const cl = parseTokenLimit(addForm.input_limit)
+  const ol = parseTokenLimit(addForm.output_limit)
+  if (addForm.input_limit.trim() && cl === null) {
+    ElMessage.warning('输入上限格式无效 (如 128K / 8M / 131072)')
+    return
+  }
+  if (addForm.output_limit.trim() && ol === null) {
+    ElMessage.warning('输出上限格式无效 (如 8K / 0.5M)')
+    return
+  }
+  const conv = Number(addForm.concurrency)
+  if (Number.isNaN(conv) || conv < 0) {
+    ElMessage.warning('并发数必须 >= 0 (0 = 不限)')
     return
   }
   saving.value = true
@@ -82,10 +189,14 @@ async function addModel() {
     await createRegistryModel({
       service_id: props.serviceId!,
       model: name,
-      display_name: newModel.value.display_name.trim() || null,
+      display_name: addForm.display_name.trim() || defaultDisplay(name),
+      context_length: cl,
+      output_limit: ol,
+      concurrency: conv,
+      input_modalities: addForm.capabilities,
     })
-    newModel.value = { model: '', display_name: '' }
     ElMessage.success('已注册')
+    clearAddForm()
     await reload()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
@@ -115,10 +226,34 @@ async function setConcurrency(item: ModelRegistryItem, value: number) {
   }
 }
 
+async function editLimits(item: ModelRegistryItem) {
+  // 简单行内能力编辑: 输入/输出上限
+  try {
+    const { value: res } = await ElMessageBox.prompt(
+      '输入上限与输出上限 (K/M, 逗号分隔; 空保留原值)\n当前: '
+        + formatTokenLimit(item.context_length) + ' / ' + formatTokenLimit(item.output_limit),
+      '编辑 \u201c' + (item.display_name || item.model) + '\u201d 上限',
+      {
+        inputValue: formatTokenLimit(item.context_length) + ',' + formatTokenLimit(item.output_limit),
+        inputPlaceholder: '如 128K,8K',
+      },
+    )
+    const [il, ol] = res.split(/[,，]/).map((s) => s.trim())
+    await updateRegistryModel(item.id, {
+      context_length: il ? parseTokenLimit(il) : null,
+      output_limit: ol ? parseTokenLimit(ol) : null,
+    })
+    ElMessage.success('已更新')
+    await reload()
+  } catch {
+    /* 取消 */
+  }
+}
+
 async function removeModel(item: ModelRegistryItem) {
   try {
     await ElMessageBox.confirm(
-      `删除模型 ` + '\'' + item.model + '\'' + `? 若已被角色绑定引用将被拒绝。`,
+      '删除模型 \u201c' + item.model + '\u201d? 若已被角色绑定引用将被拒绝。',
       '删除模型',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
@@ -144,7 +279,7 @@ async function importFromUpstream() {
       return
     }
     const res = await importRegistryModels({ service_id: props.serviceId, models: names })
-    ElMessage.success(`导入完成: 新增 ${res.added} 个, 跳过 ${res.skipped} 个`)
+    ElMessage.success('导入完成: 新增 ' + res.added + ' 个, 跳过 ' + res.skipped + ' 个 (显示名默认 服务商/模型)')
     await reload()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
@@ -162,7 +297,11 @@ onMounted(() => {
 watch(
   () => props.serviceId,
   (id) => {
-    if (id) reload()
+    if (id) {
+      reload()
+    } else {
+      availableModels.value = []
+    }
   },
 )
 </script>
@@ -182,69 +321,141 @@ watch(
             <el-icon><Download /></el-icon>
             <span>从上游导入</span>
           </el-button>
+          <el-button size="small" :loading="upstreamLoading" @click="fetchUpstream">
+            <el-icon><Refresh /></el-icon>
+            <span>拉取模型</span>
+          </el-button>
         </template>
-        <el-button size="small" type="primary" @click="isCreateMode() ? addRow() : addModel()">
+        <el-button v-if="isCreateMode()" size="small" type="primary" @click="addRow">
           <el-icon><Plus /></el-icon>
           <span>添加模型</span>
         </el-button>
       </div>
     </div>
 
-    <!-- 创建模式: 暂存行 -->
+    <!-- 创建模式: 暂存行 (两行) -->
     <template v-if="isCreateMode()">
       <div class="tip">
-        创建服务后, 以下模型将随服务一并注册。模型名必填, 显示名/并发数可选。
+        创建服务后随服务一并注册。第一行模型选择(可输入) + 显示名 + 删除;
+        第二行输入/输出上限 (K/M) + 并发数 + 能力多选。
       </div>
-      <div v-for="(row, i) in pending" :key="i" class="pending-row">
-        <el-input
-          v-model="row.model"
-          placeholder="模型名 (如 deepseek-chat)"
-          size="small"
-        />
-        <el-input
-          v-model="row.display_name"
-          placeholder="显示名 (可选)"
-          size="small"
-        />
-        <el-input-number
-          v-model="row.concurrency"
-          :min="0"
-          size="small"
-          placeholder="并发"
-        />
-        <el-button size="small" :icon="Delete" @click="removeRow(i)" />
+      <div v-for="(row, i) in pending" :key="i" class="pending-block">
+        <div class="row-line">
+          <el-select
+            v-model="row.model"
+            filterable
+            allow-create
+            placeholder="模型 id (输入或从上游 /models 拉取后选择)"
+            size="small"
+            style="flex: 2"
+            @change="rowModelChanged(i)"
+          />
+          <el-input
+            v-model="row.display_name"
+            placeholder="显示名 (默认 服务商/模型)"
+            size="small"
+            style="flex: 2"
+          />
+          <el-button size="small" :icon="Close" @click="removeRow(i)" />
+        </div>
+        <div class="row-line second-row">
+          <el-input v-model="row.input_limit" placeholder="输入上限 128K" size="small" />
+          <el-input v-model="row.output_limit" placeholder="输出上限 8K" size="small" />
+          <el-input
+            v-model="row.concurrency"
+            placeholder="并发 0 不限"
+            size="small"
+            style="width: 110px"
+          />
+          <el-select
+            v-model="row.capabilities"
+            multiple
+            placeholder="能力"
+            size="small"
+            style="flex: 2"
+          >
+            <el-option label="文本" value="text" />
+            <el-option label="图片" value="image" />
+            <el-option label="音频" value="audio" />
+          </el-select>
+        </div>
       </div>
-      <div v-if="!pending.length" @click="addRow" class="empty-add">
+      <div v-if="!pending.length" class="empty-add" @click="addRow">
         + 添加一个模型
       </div>
     </template>
 
-    <!-- 编辑模式: 实时表格 -->
+    <!-- 编辑模式: 实时表格 + 两行添加表单 -->
     <template v-else>
       <div class="tip">
-        能力 (模态/上下文/维度) 与并发数归属模型; 绑定到角色时随注册表, 无需逐条填写。
+        从上游 /models 拉取后选择/输入模型 id; 显示名默认 = 服务商/模型 (可改);
+        输入/输出上限支持 K/M; 能力多选决定 input_modalities。
+      </div>
+      <!-- 两行添加表单 -->
+      <div class="add-block">
+        <div class="row-line">
+          <el-select
+            v-model="addForm.model"
+            filterable
+            allow-create
+            :loading="upstreamLoading"
+            placeholder="模型 id (拉取后选择, 或直接输入)"
+            style="flex: 2"
+            @focus="fetchUpstream"
+            @change="onModelPick"
+          >
+            <el-option v-for="m in availableModels" :key="m" :value="m" :label="m" />
+          </el-select>
+          <el-input
+            v-model="addForm.display_name"
+            placeholder="显示名 (默认 服务商/模型)"
+            style="flex: 2"
+          />
+          <el-tooltip content="清空表单" placement="top">
+            <el-button :icon="Close" @click="clearAddForm" />
+          </el-tooltip>
+        </div>
+        <div class="row-line second-row">
+          <el-input v-model="addForm.input_limit" placeholder="输入上限 128K" />
+          <el-input v-model="addForm.output_limit" placeholder="输出上限 8K" />
+          <el-input
+            v-model="addForm.concurrency"
+            placeholder="并发 0 不限"
+            style="width: 110px"
+          />
+          <el-select
+            v-model="addForm.capabilities"
+            multiple
+            placeholder="能力 (输入模态)"
+            style="flex: 2"
+          >
+            <el-option label="文本" value="text" />
+            <el-option label="图片" value="image" />
+            <el-option label="音频" value="audio" />
+          </el-select>
+          <el-button type="primary" :loading="saving" @click="submitAdd">注册</el-button>
+        </div>
       </div>
       <el-table :data="models" size="small" border>
-        <el-table-column prop="model" label="模型名" min-width="150">
+        <el-table-column prop="model" label="模型名" min-width="140">
           <template #default="{ row }: { row: ModelRegistryItem }">
             <span class="mono">{{ row.model }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="display_name" label="显示名" min-width="110">
+        <el-table-column prop="display_name" label="显示名" min-width="150">
           <template #default="{ row }: { row: ModelRegistryItem }">
             {{ row.display_name || '—' }}
           </template>
         </el-table-column>
-        <el-table-column label="能力" min-width="130">
+        <el-table-column label="能力" min-width="180">
           <template #default="{ row }: { row: ModelRegistryItem }">
             <span class="caps">{{ row.input_modalities?.join('/') || 'text' }}</span>
-            <span v-if="row.context_length" class="caps muted">
-              · {{ Math.round(row.context_length / 1000) }}k
-            </span>
+            <span v-if="row.context_length" class="caps muted">· 入 {{ formatTokenLimit(row.context_length) }}</span>
+            <span v-if="row.output_limit" class="caps muted">· 出 {{ formatTokenLimit(row.output_limit) }}</span>
             <span v-if="row.embedding_dim" class="caps muted">· {{ row.embedding_dim }}d</span>
           </template>
         </el-table-column>
-        <el-table-column label="并发" width="130">
+        <el-table-column label="并发" width="120">
           <template #default="{ row }: { row: ModelRegistryItem }">
             <el-input-number
               :model-value="row.concurrency"
@@ -255,32 +466,22 @@ watch(
             />
           </template>
         </el-table-column>
-        <el-table-column label="启用" width="90">
+        <el-table-column label="启用" width="80">
           <template #default="{ row }: { row: ModelRegistryItem }">
-            <el-switch :model-value="row.enabled" @change="(v: string | number | boolean) => setEnabled(row, v === true)" />
+            <el-switch
+              :model-value="row.enabled"
+              @change="(v: string | number | boolean) => setEnabled(row, v === true)"
+            />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="120">
           <template #default="{ row }: { row: ModelRegistryItem }">
-            <el-button link type="danger" size="small" @click="removeModel(row)">
-              删除
-            </el-button>
+            <el-button link type="primary" size="small" @click="editLimits(row)">上限</el-button>
+            <el-button link type="danger" size="small" @click="removeModel(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
       <el-empty v-if="!models.length" description="该服务尚未注册模型" :image-size="60" />
-      <div class="add-row">
-        <el-input v-model="newModel.model" placeholder="模型名" size="small" style="flex:1" />
-        <el-input
-          v-model="newModel.display_name"
-          placeholder="显示名 (可选)"
-          size="small"
-          style="flex:1"
-        />
-        <el-button size="small" type="primary" :loading="saving" @click="addModel">
-          注册
-        </el-button>
-      </div>
     </template>
   </div>
 </template>
@@ -318,15 +519,32 @@ watch(
     color: var(--el-text-color-secondary);
   }
 
-  .pending-row {
+  .row-line {
     display: flex;
     gap: $space-2;
     align-items: center;
-    margin-bottom: $space-2;
+  }
 
-    :deep(.el-input-number) {
-      width: 110px;
+  .second-row {
+    margin-top: $space-2;
+
+    :deep(.el-input) {
+      flex: 1;
     }
+  }
+
+  .pending-block {
+    padding: $space-2;
+    margin-bottom: $space-2;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 4px;
+  }
+
+  .add-block {
+    padding: $space-3;
+    margin-bottom: $space-3;
+    border: 1px dashed var(--el-color-primary);
+    border-radius: 4px;
   }
 
   .empty-add {
@@ -346,12 +564,6 @@ watch(
 
   .caps {
     font-size: 12px;
-  }
-
-  .add-row {
-    display: flex;
-    gap: $space-2;
-    margin-top: $space-2;
   }
 }
 </style>
