@@ -27,8 +27,9 @@ _KNOWN_EXACT: dict[str, KnownCapability] = {
     "deepseek-chat": KnownCapability(context_length=65536, output_limit=8192, supports_tools=True),
     "deepseek-reasoner": KnownCapability(context_length=65536, output_limit=8192, supports_tools=True),
     "deepseek-coder": KnownCapability(context_length=65536, output_limit=8192, supports_tools=True),
-    "deepseek-v4-flash": KnownCapability(context_length=131072, output_limit=8192, supports_tools=True),
-    "deepseek-v4-pro": KnownCapability(context_length=131072, output_limit=8192, supports_tools=True),
+    # DeepSeek V4 (用户确认: 1M 上下文, 最大 384K 输出)
+    "deepseek-v4-flash": KnownCapability(context_length=1048576, output_limit=393216, supports_tools=True),
+    "deepseek-v4-pro": KnownCapability(context_length=1048576, output_limit=393216, supports_tools=True),
     # OpenAI GPT-4o 系 (128K 上下文 / 16K 输出)
     "gpt-4o": KnownCapability(context_length=131072, output_limit=16384, supports_tools=True),
     "gpt-4o-mini": KnownCapability(context_length=131072, output_limit=16384, supports_tools=True),

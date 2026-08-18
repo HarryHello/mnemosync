@@ -48,7 +48,10 @@ class ModelDetail:
 
 
 def _parse_tool_support(raw: dict[str, Any]) -> bool:
-    """尽力解析上游是否声明支持工具调用."""
+    """尽力解析上游是否声明支持工具调用.
+
+    支持 bool/int/str, 或 list (如 OpenRouter supported_parameters 含 "tools").
+    """
     for key in ("supports_tools", "tool_calling", "server_side_tool_use", "tool_call"):
         v = raw.get(key)
         if v is None:
@@ -59,7 +62,13 @@ def _parse_tool_support(raw: dict[str, Any]) -> bool:
             return bool(v)
         if isinstance(v, str):
             return v.strip().lower() in ("true", "1", "yes")
+        if isinstance(v, list):
+            return any(str(x).strip().lower() in ("tools", "tool_call") for x in v)
         return False
+    # OpenRouter: supported_parameters 是 list, 含 "tools" 即支持
+    params = raw.get("supported_parameters")
+    if isinstance(params, list):
+        return any(str(x).strip().lower() in ("tools", "tool_call") for x in params)
     return False
 
 
@@ -67,9 +76,21 @@ def _extract_model_capability(
     raw: dict[str, Any],
     *names: str,
 ) -> Any | None:
-    """从模型条目 dict 里按候选键名尽力取值 (int 或 list)."""
+    """从模型条目 dict 里按候选键名尽力取值 (int 或 list).
+
+    支持点路径 (如 architecture.input_modalities, 兼容 OpenRouter).
+    """
     for name in names:
-        v = raw.get(name)
+        # 点路径逐段下钻
+        node: Any = raw
+        ok = True
+        for part in name.split("."):
+            if isinstance(node, dict) and part in node:
+                node = node[part]
+            else:
+                ok = False
+                break
+        v = node if ok else None
         if v is None:
             continue
         if isinstance(v, bool):
@@ -569,8 +590,8 @@ class Forwarder:
                 "max_tokens",
             )
             st = _parse_tool_support(raw)
-            im = _extract_model_capability(raw, "input_modalities", "modalities")
-            om = _extract_model_capability(raw, "output_modalities")
+            im = _extract_model_capability(raw, "input_modalities", "modalities", "architecture.input_modalities")
+            om = _extract_model_capability(raw, "output_modalities", "architecture.output_modalities")
             input_mods = [str(x) for x in im] if isinstance(im, list) else ["text"]
             output_mods = [str(x) for x in om] if isinstance(om, list) else ["text"]
             # 上游未声明能力时, 用内置知名模型表兜底 (如 DeepSeek 的 /v1/models 只有 id)

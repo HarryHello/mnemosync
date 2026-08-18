@@ -137,10 +137,15 @@ def test_known_capability_fallback_for_deepseek() -> None:
     assert d.supports_tools is True
 
 
-def test_known_capability_prefix_match() -> None:
+def test_known_capability_prefix_and_exact() -> None:
+    # v4 精确命中: 1M 上下文 / 384K 输出 (用户确认)
     d = _detail(_model(id="deepseek-v4-flash"))
-    assert d.context_length == 131072
+    assert d.context_length == 1048576
+    assert d.output_limit == 393216
     assert d.supports_tools is True
+    # 未知 deepseek- 前缀兜底 64K
+    d2 = _detail(_model(id="deepseek-unknown-x"))
+    assert d2.context_length == 65536
 
 
 def test_upstream_declaration_wins_over_known_table() -> None:
@@ -148,6 +153,30 @@ def test_upstream_declaration_wins_over_known_table() -> None:
     d = _detail(_model(model_extra={"context_length": 32000}))
     assert d.context_length == 32000
 
+
+
+
+def test_openrouter_shape_parsed() -> None:
+    """OpenRouter /v1/models 形状: 顶层 context_length + architecture 嵌套模态 + supported_parameters 工具."""
+    d = _detail(_model(model_extra={
+        "context_length": 262144,
+        "architecture": {
+            "modality": "text+image+video->text",
+            "input_modalities": ["text", "image", "video"],
+            "output_modalities": ["text"],
+        },
+        "supported_parameters": ["tools", "temperature", "max_tokens"],
+    }))
+    assert d.context_length == 262144
+    assert d.input_modalities == ["text", "image", "video"]
+    assert d.output_modalities == ["text"]
+    assert d.supports_tools is True
+
+
+def test_known_table_does_not_override_openrouter_context() -> None:
+    """OpenRouter qwen 模型: 上游 context_length 优先于内置表."""
+    d = _detail(_model(id="qwen/qwen3.8-27b", model_extra={"context_length": 262144}))
+    assert d.context_length == 262144
 
 def test_unknown_model_falls_back_to_defaults() -> None:
     d = _detail(_model(id="custom-model-123"))
