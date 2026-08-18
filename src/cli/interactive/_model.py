@@ -24,9 +24,11 @@ class ModelCommandsMixin:
         """model 子命令派发."""
         if not argv:
             print(
-                "❌ Usage: model {ls|add|rm|reorder|test} ...\n"
+                "❌ Usage: model {ls|register|add|rm|reorder|test} ...\n"
                 "  model ls [role]\n"
-                "  model add <role> <service_id> <model> [--priority N]\n"
+                "  model register <service_id> <model> [--display NAME] "
+                "[--context N] [--dim N] [--send-dim] [--concurrency N]\n"
+                "  model add <role> <model_id> [--priority N]\n"
                 "  model rm <role> <priority>\n"
                 "  model reorder <role> <srv:model,srv:model,...>\n"
                 "  model test <role>\n"
@@ -36,6 +38,8 @@ class ModelCommandsMixin:
         rest = argv[1:]
         if sub == "ls":
             await self.cmd_model_ls(rest[0] if rest else None)
+        elif sub == "register":
+            await self.cmd_model_register(rest)
         elif sub == "add":
             await self.cmd_model_add(rest)
         elif sub == "rm":
@@ -78,46 +82,70 @@ class ModelCommandsMixin:
             )
         print()
 
-    async def cmd_model_add(self, argv: list[str]) -> None:
-        """model add <role> <service_id> <model> [--priority N] [--context N] [--dim N] [--send-dim]."""
-        parser = _argparse.ArgumentParser(prog="model add", add_help=False)
-        parser.add_argument("role")
+    async def cmd_model_register(self, argv: list[str]) -> None:
+        """model register <service_id> <model> [--display NAME] [--context N] [--dim N] [--send-dim] [--concurrency N]."""
+        parser = _argparse.ArgumentParser(prog="model register", add_help=False)
         parser.add_argument("service_id")
         parser.add_argument("model")
-        parser.add_argument("--priority", type=int, default=None)
+        parser.add_argument("--display", default=None, help="显示名")
         parser.add_argument("--context", type=int, default=None,
-                            help="上下文窗口 (token) - 仅面板展示")
+                            help="上下文窗口 (token)")
         parser.add_argument("--dim", type=int, default=None,
                             help="嵌入维度 - 用作向量库维度锁 (是否透传上游由 --send-dim 控制)")
         parser.add_argument("--send-dim", dest="send_dim", action="store_true",
-                            help="把 --dim 作为 dimensions 参数透传给上游 (仅 text-embedding-3-*, "
-                                 "text-embedding-v3/v4, qwen3-embedding-* 等可变维模型需要; "
-                                 "bge/bce/jina/mistral/gemini 等固定维模型开启会 400)")
+                            help="把 --dim 作为 dimensions 参数透传给上游")
+        parser.add_argument("--concurrency", type=int, default=None,
+                            help="并发上限, 0 = 不限 (默认 20)")
         try:
             a = parser.parse_args(argv)
         except SystemExit:
             print(
-                "❌ Usage: model add <role> <service_id> <model> "
-                "[--priority N] [--context N] [--dim N] [--send-dim]\n"
+                "❌ Usage: model register <service_id> <model> "
+                "[--display NAME] [--context N] [--dim N] [--send-dim] [--concurrency N]\n"
+            )
+            return
+
+        from src.infra.llm_service.models import ModelRegistryEntry
+
+        entry = ModelRegistryEntry.create(
+            a.service_id,
+            a.model,
+            display_name=a.display,
+            context_length=a.context,
+            embedding_dim=a.dim,
+            send_dimensions=a.send_dim,
+            concurrency=a.concurrency if a.concurrency is not None else 20,
+        )
+        try:
+            await self.llm_service_store.save_model_registry(entry)
+            print(
+                f"✅ Registered [{entry.id}] concurrency={entry.concurrency} "
+                f"enabled={entry.enabled}\n"
+            )
+        except ValueError as e:
+            print(f"❌ {e}\n")
+
+    async def cmd_model_add(self, argv: list[str]) -> None:
+        """model add <role> <model_id> [--priority N] (v0.4.1 注册表引用)."""
+        parser = _argparse.ArgumentParser(prog="model add", add_help=False)
+        parser.add_argument("role")
+        parser.add_argument("model_id")
+        parser.add_argument("--priority", type=int, default=None)
+        try:
+            a = parser.parse_args(argv)
+        except SystemExit:
+            print(
+                "❌ Usage: model add <role> <model_id> [--priority N]\n"
             )
             return
 
         role_enum = self._parse_role(a.role)
         if role_enum is None:
             return
-        if await self.llm_service_store.get_service(a.service_id) is None:
-            print(f"❌ Service '{a.service_id}' not found.\n")
-            return
-        if a.send_dim and a.dim is None:
-            print("❌ --send-dim 需要配合 --dim N 使用\n")
-            return
         try:
             binding = await self.llm_service_store.add_role_binding(
-                role_enum, a.service_id, a.model,
+                role_enum, a.model_id,
                 priority=a.priority,
-                context_length=a.context,
-                embedding_dim=a.dim,
-                send_dimensions=a.send_dim,
             )
             ctx = f" ctx={binding.context_length}" if binding.context_length else ""
             dim = f" dim={binding.embedding_dim}" if binding.embedding_dim else ""

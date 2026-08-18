@@ -66,6 +66,12 @@ class RoleBindingItem(BaseModel):
     priority: int = Field(..., ge=0, description="0 为最高优先级")
     service_id: str
     model: str
+    model_id: str | None = Field(
+        default=None, description="v0.4.1: 引用的模型注册表 id ({service_id}:{model})"
+    )
+    display_name: str | None = Field(
+        default=None, description="v0.4.1: 模型注册表展示名 (join 自 models)"
+    )
     created_at: str
     context_length: int | None = Field(
         default=None, description="最大上下文 (token). 可选, 仅用于面板展示"
@@ -97,38 +103,14 @@ class RoleBindingListResponse(BaseModel):
 
 
 class RoleBindingAddBody(BaseModel):
+    """追加绑定 (v0.4.1: 从模型注册表引用, 能力字段随注册表)."""
+
     role: str
-    service_id: str
-    model: str
+    model_id: str = Field(..., description="models.id ({service_id}:{model})")
     priority: int | None = Field(
         default=None,
         ge=0,
         description="省略时排到末尾; 指定时后续条目自动让位",
-    )
-    context_length: int | None = Field(
-        default=None,
-        ge=1,
-        description="可选; 最大上下文 (token), 仅面板展示",
-    )
-    embedding_dim: int | None = Field(
-        default=None,
-        ge=1,
-        description="可选; 嵌入维度. 用作向量库维度锁, 独立于是否透传上游",
-    )
-    send_dimensions: bool = Field(
-        default=False,
-        description=(
-            "是否透传 dimensions 给上游. 默认 False (兼容 bge/bce/jina/mistral/gemini); "
-            "仅在可变维模型且希望指定输出维度时置 True"
-        ),
-    )
-    input_modalities: list[str] = Field(
-        default=["text"],
-        description="输入模态: text, image, audio 等",
-    )
-    output_modalities: list[str] = Field(
-        default=["text"],
-        description="输出模态: text, image, audio 等",
     )
 
 
@@ -139,21 +121,14 @@ class RoleBindingReorderBody(BaseModel):
 
 
 class RoleBindingUpdateBody(BaseModel):
-    """就地更新一条绑定的可编辑字段. role / priority 由 URL 定位, 不在此改.
+    """就地更新一条绑定 (v0.4.1: 仅支持更换模型). role / priority 由 URL 定位.
 
-    整型字段的三态语义:
-    - 键缺失 (不下发): 保持原值
-    - 键为 null: 清空为 NULL
-    - 键为整数: 覆盖
+    model_id 省略时保持原模型; 能力字段随模型注册表, 不再逐绑定编辑.
     """
 
-    service_id: str | None = None
-    model: str | None = None
-    context_length: int | None = Field(default=None, ge=1)
-    embedding_dim: int | None = Field(default=None, ge=1)
-    send_dimensions: bool | None = None
-    input_modalities: list[str] | None = None
-    output_modalities: list[str] | None = None
+    model_id: str | None = Field(
+        default=None, description="models.id ({service_id}:{model})"
+    )
 
     model_config = {"protected_namespaces": ()}
 

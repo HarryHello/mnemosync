@@ -17,11 +17,83 @@ from .models import (
     ApiFormat,
     LLMServiceProvider,
     ModelConfiguration,
+    ModelRegistryEntry,
     ModelType,
     ResolvedCandidate,
     RoleBinding,
 )
 
+# ============================================================================
+# 迁移函数 (v0.4.1 模型注册表)
+# ============================================================================
+
+
+async def _backfill_models_from_bindings(db: aiosqlite.Connection) -> None:
+    """迁移 007: 从 role_bindings 去重回填 models 注册表 (能力字段收拢).
+
+    同 service+model 多绑定取 MAX 能力值; COALESCE 防旧库 NULL 违反 NOT NULL.
+    INSERT OR IGNORE 保证幂等 (MigrationRunner 只跑一次, 双保险).
+    """
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO models
+            (id, service_id, model, display_name,
+             input_modalities, output_modalities,
+             context_length, embedding_dim, send_dimensions,
+             concurrency, enabled, created_at, updated_at)
+        SELECT
+            rb.service_id || ':' || rb.model,
+            rb.service_id,
+            rb.model,
+            NULL,
+            (SELECT COALESCE(rb2.input_modalities, '["text"]') FROM role_bindings rb2
+             WHERE rb2.service_id = rb.service_id AND rb2.model = rb.model
+             ORDER BY LENGTH(rb2.input_modalities) DESC LIMIT 1),
+            (SELECT COALESCE(rb2.output_modalities, '["text"]') FROM role_bindings rb2
+             WHERE rb2.service_id = rb.service_id AND rb2.model = rb.model
+             ORDER BY LENGTH(rb2.output_modalities) DESC LIMIT 1),
+            MAX(rb.context_length),
+            MAX(rb.embedding_dim),
+            COALESCE(MAX(rb.send_dimensions), 0),
+            20,
+            1,
+            datetime('now'),
+            datetime('now')
+        FROM role_bindings rb
+        GROUP BY rb.service_id, rb.model
+        """
+    )
+
+
+async def _backfill_models_from_model_configs(db: aiosqlite.Connection) -> None:
+    """迁移 008: 旧 model_configs (弱注册) 并入 models (无能力字段, 走默认值)."""
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO models
+            (id, service_id, model, display_name,
+             input_modalities, output_modalities,
+             context_length, embedding_dim, send_dimensions,
+             concurrency, enabled, created_at, updated_at)
+        SELECT
+            service_id || ':' || model,
+            service_id,
+            model,
+            NULL,
+            '["text"]', '["text"]',
+            NULL, NULL, 0,
+            20, 1,
+            datetime('now'), datetime('now')
+        FROM model_configs
+        GROUP BY service_id, model
+        """
+    )
+
+
+async def _backfill_binding_model_id(db: aiosqlite.Connection) -> None:
+    """迁移 010: 按复合 id 回填 role_bindings.model_id (009 加列之后执行)."""
+    await db.execute(
+        "UPDATE role_bindings SET model_id = service_id || ':' || model WHERE model_id IS NULL"
+    )
 
 class LLMServiceStore:
     """LLM 服务商 + 模型配置存储.
@@ -106,7 +178,30 @@ class LLMServiceStore:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_role_priority ON role_bindings(role, priority)"
             )
-            # 命名迁移: 幂等补列 (旧库升级用; 新库 CREATE TABLE 已包含全部列, 自动跳过)
+            # v0.4.1: 模型注册表 (模型一等实体, RFC model-registry)
+            # id = 复合主键 {service_id}:{model}; 能力字段从 role_bindings 收拢至此;
+            # concurrency 默认 20 (0 = 不限), 本版本仅管理, 执行层限流 v0.5
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS models (
+                    id TEXT PRIMARY KEY,
+                    service_id TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    display_name TEXT,
+                    input_modalities TEXT NOT NULL DEFAULT '["text"]',
+                    output_modalities TEXT NOT NULL DEFAULT '["text"]',
+                    context_length INTEGER,
+                    embedding_dim INTEGER,
+                    send_dimensions INTEGER NOT NULL DEFAULT 0,
+                    concurrency INTEGER NOT NULL DEFAULT 20,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL,
+                    UNIQUE (service_id, model),
+                    FOREIGN KEY (service_id) REFERENCES llm_services(id) ON DELETE CASCADE
+                )
+            """)
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_models_service ON models(service_id)")
+            # 命名迁移: 幂等补列/回填 (旧库升级用; 新库 CREATE TABLE 已包含全部列, 自动跳过)
             from src.persistence.migrations import MigrationRunner, add_column_if_missing
 
             await MigrationRunner([
@@ -116,6 +211,10 @@ class LLMServiceStore:
                 ("004_add_input_modalities", add_column_if_missing("role_bindings", "input_modalities", "TEXT DEFAULT '[\"text\"]'")),
                 ("005_add_output_modalities", add_column_if_missing("role_bindings", "output_modalities", "TEXT DEFAULT '[\"text\"]'")),
                 ("006_add_api_format", add_column_if_missing("llm_services", "api_format", "TEXT NOT NULL DEFAULT 'openai'")),
+                ("007_backfill_models_from_bindings", _backfill_models_from_bindings),
+                ("008_backfill_models_from_model_configs", _backfill_models_from_model_configs),
+                ("009_add_binding_model_id", add_column_if_missing("role_bindings", "model_id", "TEXT")),
+                ("010_backfill_binding_model_id", _backfill_binding_model_id),
             ]).apply(db)
             await db.commit()
 
@@ -251,25 +350,242 @@ class LLMServiceStore:
             return datetime.now(UTC)
         return datetime.fromisoformat(v)
 
+    # ============ 模型注册表 CRUD (v0.4.1, RFC model-registry) ============
+
+    _MODEL_COLUMNS = (
+        "id, service_id, model, display_name, input_modalities, output_modalities, "
+        "context_length, embedding_dim, send_dimensions, concurrency, enabled, "
+        "created_at, updated_at"
+    )
+
+    def _model_row_to_entry(self, row: Any) -> ModelRegistryEntry:
+        return ModelRegistryEntry(
+            id=row[0],
+            service_id=row[1],
+            model=row[2],
+            display_name=row[3],
+            input_modalities=json.loads(row[4]) if row[4] else ["text"],
+            output_modalities=json.loads(row[5]) if row[5] else ["text"],
+            context_length=row[6],
+            embedding_dim=row[7],
+            send_dimensions=bool(row[8]),
+            concurrency=row[9] if row[9] is not None else 20,  # 0 = 不限, 不能 or 掉
+            enabled=bool(row[10]),
+            created_at=self._parse_dt(row[11]),
+            updated_at=self._parse_dt(row[12]),
+        )
+
+    async def save_model_registry(self, entry: ModelRegistryEntry) -> ModelRegistryEntry:
+        """upsert 注册表条目 (复合 id {service_id}:{model})."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM llm_services WHERE id = ?", (entry.service_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if not row or row[0] == 0:
+                    raise ValueError(f"服务 '{entry.service_id}' 不存在")
+            await db.execute(
+                "INSERT INTO models (id, service_id, model, display_name, input_modalities, "
+                "output_modalities, context_length, embedding_dim, send_dimensions, "
+                "concurrency, enabled, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "display_name = excluded.display_name, "
+                "input_modalities = excluded.input_modalities, "
+                "output_modalities = excluded.output_modalities, "
+                "context_length = excluded.context_length, "
+                "embedding_dim = excluded.embedding_dim, "
+                "send_dimensions = excluded.send_dimensions, "
+                "concurrency = excluded.concurrency, "
+                "enabled = excluded.enabled, "
+                "updated_at = excluded.updated_at",
+                (
+                    entry.id, entry.service_id, entry.model, entry.display_name,
+                    json.dumps(entry.input_modalities),
+                    json.dumps(entry.output_modalities),
+                    entry.context_length, entry.embedding_dim,
+                    1 if entry.send_dimensions else 0,
+                    entry.concurrency, 1 if entry.enabled else 0,
+                    entry.created_at.isoformat(), entry.updated_at.isoformat(),
+                ),
+            )
+            await db.commit()
+        return entry
+
+    async def get_model_registry(self, model_id: str) -> ModelRegistryEntry | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                f"SELECT {self._MODEL_COLUMNS} FROM models WHERE id = ?", (model_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        return self._model_row_to_entry(row) if row else None
+
+    async def list_model_registry(
+        self, service_id: str | None = None, *, enabled_only: bool = False
+    ) -> list[ModelRegistryEntry]:
+        query = f"SELECT {self._MODEL_COLUMNS} FROM models"
+        conds: list[str] = []
+        params: list[Any] = []
+        if service_id is not None:
+            conds.append("service_id = ?")
+            params.append(service_id)
+        if enabled_only:
+            conds.append("enabled = 1")
+        if conds:
+            query += " WHERE " + " AND ".join(conds)
+        query += " ORDER BY service_id, model"
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(query, tuple(params)) as cursor:
+                rows = await cursor.fetchall()
+        return [self._model_row_to_entry(r) for r in rows]
+
+    async def update_model_registry(
+        self,
+        model_id: str,
+        *,
+        display_name: str | None = None,
+        clear_display_name: bool = False,
+        input_modalities: list[str] | None = None,
+        output_modalities: list[str] | None = None,
+        context_length: int | None = None,
+        clear_context_length: bool = False,
+        embedding_dim: int | None = None,
+        clear_embedding_dim: bool = False,
+        send_dimensions: bool | None = None,
+        concurrency: int | None = None,
+        enabled: bool | None = None,
+    ) -> ModelRegistryEntry | None:
+        """就地更新注册表条目. None 语义 = 不修改; clear_* 显式清空. 找不到返回 None."""
+        if concurrency is not None and concurrency < 0:
+            raise ValueError("concurrency 必须 >= 0 (0 = 不限)")
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                f"SELECT {self._MODEL_COLUMNS} FROM models WHERE id = ?", (model_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row is None:
+                return None
+            sets: list[str] = []
+            params: list[Any] = []
+            if clear_display_name:
+                sets.append("display_name = NULL")
+            elif display_name is not None:
+                sets.append("display_name = ?")
+                params.append(display_name or None)
+            if input_modalities is not None:
+                sets.append("input_modalities = ?")
+                params.append(json.dumps(input_modalities))
+            if output_modalities is not None:
+                sets.append("output_modalities = ?")
+                params.append(json.dumps(output_modalities))
+            if clear_context_length:
+                sets.append("context_length = NULL")
+            elif context_length is not None:
+                sets.append("context_length = ?")
+                params.append(context_length)
+            if clear_embedding_dim:
+                sets.append("embedding_dim = NULL")
+            elif embedding_dim is not None:
+                sets.append("embedding_dim = ?")
+                params.append(embedding_dim)
+            if send_dimensions is not None:
+                sets.append("send_dimensions = ?")
+                params.append(1 if send_dimensions else 0)
+            if concurrency is not None:
+                sets.append("concurrency = ?")
+                params.append(concurrency)
+            if enabled is not None:
+                sets.append("enabled = ?")
+                params.append(1 if enabled else 0)
+            if sets:
+                sets.append("updated_at = ?")
+                params.append(datetime.now(UTC).isoformat())
+                params.append(model_id)
+                await db.execute(
+                    f"UPDATE models SET {', '.join(sets)} WHERE id = ?", tuple(params),
+                )
+                await db.commit()
+        return await self.get_model_registry(model_id)
+
+    async def delete_model_registry(self, model_id: str) -> bool:
+        """删除注册表条目. 被 role_bindings 引用时拒绝 (需先解绑)."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM role_bindings WHERE model_id = ?", (model_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row and row[0] > 0:
+                raise ValueError("模型被角色绑定引用, 请先在『模型管理』中解绑")
+            cur = await db.execute("DELETE FROM models WHERE id = ?", (model_id,))
+            await db.commit()
+            return cur.rowcount > 0
+
+    async def import_model_registry(
+        self, service_id: str, model_names: list[str]
+    ) -> tuple[int, int]:
+        """批量导入模型名 (如上游 /v1/models 结果). 已存在跳过. 返回 (added, skipped)."""
+        added = 0
+        skipped = 0
+        now = datetime.now(UTC).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM llm_services WHERE id = ?", (service_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+            if not row or row[0] == 0:
+                raise ValueError(f"服务 '{service_id}' 不存在")
+            for name in model_names:
+                name = name.strip()
+                if not name:
+                    continue
+                mid = f"{service_id}:{name}"
+                cur = await db.execute(
+                    "INSERT OR IGNORE INTO models "
+                    "(id, service_id, model, display_name, input_modalities, "
+                    "output_modalities, context_length, embedding_dim, send_dimensions, "
+                    "concurrency, enabled, created_at, updated_at) "
+                    "VALUES (?, ?, ?, NULL, '[\"text\"]', '[\"text\"]', NULL, NULL, 0, 20, 1, ?, ?)",
+                    (mid, service_id, name, now, now),
+                )
+                if cur.rowcount and cur.rowcount > 0:
+                    added += 1
+                else:
+                    skipped += 1
+            await db.commit()
+        return added, skipped
+
     # ============ 角色绑定 (role_bindings) ============
 
     async def list_role_bindings(self, role: ModelType | None = None) -> list[RoleBinding]:
-        """列出角色绑定. role 为 None 时返回所有角色的绑定, 已按 (role, priority) 排序."""
+        """列出角色绑定. role 为 None 时返回所有角色的绑定, 已按 (role, priority) 排序.
+
+        v0.4.1: LEFT JOIN models 注册表 — 能力字段优先取注册表 (COALESCE),
+        旧行 (迁移前能力列值) 作为兜底; 同时带出 model_id / display_name.
+        """
+        select_cols = (
+            "b.role, b.priority, b.service_id, b.model, b.created_at, "
+            "COALESCE(m.context_length, b.context_length), "
+            "COALESCE(m.embedding_dim, b.embedding_dim), "
+            "COALESCE(m.send_dimensions, b.send_dimensions, 0), "
+            "COALESCE(m.input_modalities, b.input_modalities, '[\"text\"]'), "
+            "COALESCE(m.output_modalities, b.output_modalities, '[\"text\"]'), "
+            "b.model_id, m.display_name "
+        )
         async with aiosqlite.connect(self.db_path) as db:
             if role is None:
                 query = (
-                    "SELECT role, priority, service_id, model, created_at, "
-                    "context_length, embedding_dim, send_dimensions, "
-                    "input_modalities, output_modalities "
-                    "FROM role_bindings ORDER BY role, priority"
+                    f"SELECT {select_cols} "
+                    "FROM role_bindings b "
+                    "LEFT JOIN models m ON m.id = b.model_id "
+                    "ORDER BY b.role, b.priority"
                 )
                 params: tuple[Any, ...] = ()
             else:
                 query = (
-                    "SELECT role, priority, service_id, model, created_at, "
-                    "context_length, embedding_dim, send_dimensions, "
-                    "input_modalities, output_modalities "
-                    "FROM role_bindings WHERE role = ? ORDER BY priority"
+                    f"SELECT {select_cols} "
+                    "FROM role_bindings b "
+                    "LEFT JOIN models m ON m.id = b.model_id "
+                    "WHERE b.role = ? ORDER BY b.priority"
                 )
                 params = (role.value,)
             async with db.execute(query, params) as cursor:
@@ -280,6 +596,8 @@ class LLMServiceStore:
                 priority=r[1],
                 service_id=r[2],
                 model=r[3],
+                model_id=r[10],
+                display_name=r[11],
                 created_at=self._parse_dt(r[4]),
                 context_length=r[5],
                 embedding_dim=r[6],
@@ -293,20 +611,22 @@ class LLMServiceStore:
     async def add_role_binding(
         self,
         role: ModelType,
-        service_id: str,
-        model: str,
+        model_id: str,
         priority: int | None = None,
-        context_length: int | None = None,
-        embedding_dim: int | None = None,
-        send_dimensions: bool = False,
-        input_modalities: list[str] | None = None,
-        output_modalities: list[str] | None = None,
     ) -> RoleBinding:
-        """追加一条角色绑定. priority 省略时排到列表末尾.
+        """追加一条角色绑定 (v0.4.1: 从模型注册表引用).
 
-        指定 priority 时若已被占用, 后续所有条目 priority += 1 让位.
-        EMBEDDING 角色只允许一条绑定 (换模型会破坏向量语义空间, 走 reindex 流程).
+        模型的服务商/能力字段随注册表 (model_id 解析); 绑定表只冗余 service_id+model.
+        priority 省略时排到列表末尾. 指定 priority 时若已被占用, 后续所有条目
+        priority += 1 让位. EMBEDDING 角色只允许一条绑定 (换模型会破坏向量语义空间,
+        走 reindex 流程). 模型不存在或已禁用时拒绝绑定.
         """
+        entry = await self.get_model_registry(model_id)
+        if entry is None:
+            raise ValueError(f"模型不存在: {model_id}")
+        if not entry.enabled:
+            raise ValueError(f"模型已禁用: {model_id}")
+        service_id, model = entry.service_id, entry.model
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
                 "SELECT COUNT(*) FROM llm_services WHERE id = ?", (service_id,)
@@ -353,26 +673,11 @@ class LLMServiceStore:
                     )
 
             now = datetime.now(UTC)
-            _input_mods = json.dumps(input_modalities or ["text"])
-            _output_mods = json.dumps(output_modalities or ["text"])
             await db.execute(
                 "INSERT INTO role_bindings "
-                "(role, priority, service_id, model, created_at, "
-                "context_length, embedding_dim, send_dimensions, "
-                "input_modalities, output_modalities) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    role.value,
-                    priority,
-                    service_id,
-                    model,
-                    now.isoformat(),
-                    context_length,
-                    embedding_dim,
-                    1 if send_dimensions else 0,
-                    _input_mods,
-                    _output_mods,
-                ),
+                "(role, priority, service_id, model, model_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (role.value, priority, service_id, model, model_id, now.isoformat()),
             )
             await db.commit()
 
@@ -381,12 +686,14 @@ class LLMServiceStore:
             priority=priority,
             service_id=service_id,
             model=model,
+            model_id=model_id,
+            display_name=entry.display_name,
             created_at=now,
-            context_length=context_length,
-            embedding_dim=embedding_dim,
-            send_dimensions=send_dimensions,
-            input_modalities=input_modalities or ["text"],
-            output_modalities=output_modalities or ["text"],
+            context_length=entry.context_length,
+            embedding_dim=entry.embedding_dim,
+            send_dimensions=entry.send_dimensions,
+            input_modalities=entry.input_modalities,
+            output_modalities=entry.output_modalities,
         )
 
     async def update_role_binding(
@@ -396,6 +703,7 @@ class LLMServiceStore:
         *,
         service_id: str | None = None,
         model: str | None = None,
+        model_id: str | None = None,
         context_length: int | None = None,
         embedding_dim: int | None = None,
         send_dimensions: bool | None = None,
@@ -408,6 +716,7 @@ class LLMServiceStore:
 
         清空整型字段需显式传对应 clear_* 标志 (None 语义为 "不修改").
         service_id 若变更, 校验目标服务存在.
+        model_id 传参 = 更换模型 (v0.4.1 注册表引用), 同步更新 service_id/model/model_id.
         找不到目标绑定时返回 None.
         """
         async with aiosqlite.connect(self.db_path) as db:
@@ -420,6 +729,15 @@ class LLMServiceStore:
                 row = await cursor.fetchone()
                 if row is None:
                     return None
+
+            if model_id is not None:
+                entry = await self.get_model_registry(model_id)
+                if entry is None:
+                    raise ValueError(f"模型不存在: {model_id}")
+                if not entry.enabled:
+                    raise ValueError(f"模型已禁用: {model_id}")
+                service_id = entry.service_id
+                model = entry.model
 
             if service_id is not None:
                 async with db.execute(
@@ -437,6 +755,9 @@ class LLMServiceStore:
             if model is not None:
                 sets.append("model = ?")
                 params.append(model)
+            if model_id is not None:
+                sets.append("model_id = ?")
+                params.append(model_id)
             if clear_context_length:
                 sets.append("context_length = NULL")
             elif context_length is not None:
@@ -469,17 +790,18 @@ class LLMServiceStore:
             async with db.execute(
                 "SELECT role, priority, service_id, model, created_at, "
                 "context_length, embedding_dim, send_dimensions, "
-                "input_modalities, output_modalities "
+                "input_modalities, output_modalities, model_id "
                 "FROM role_bindings WHERE role = ? AND priority = ?",
                 (role.value, priority),
             ) as cursor:
                 r = await cursor.fetchone()
                 assert r is not None
-                return RoleBinding(
+                binding = RoleBinding(
                     role=ModelType(r[0]),
                     priority=r[1],
                     service_id=r[2],
                     model=r[3],
+                    model_id=r[10],
                     created_at=self._parse_dt(r[4]),
                     context_length=r[5],
                     embedding_dim=r[6],
@@ -487,6 +809,10 @@ class LLMServiceStore:
                     input_modalities=json.loads(r[8]) if r[8] else ["text"],
                     output_modalities=json.loads(r[9]) if r[9] else ["text"],
                 )
+                if binding.model_id:
+                    reg = await self.get_model_registry(binding.model_id)
+                    binding.display_name = reg.display_name if reg else None
+                return binding
 
     async def delete_role_binding(self, role: ModelType, priority: int) -> bool:
         """删除某条绑定, 并将其后所有条目的 priority 前移一位, 保持连续."""

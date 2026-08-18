@@ -80,12 +80,17 @@ class RoleBinding:
     每个角色 (main/assist/embedding/rerank) 可以有多条候选, priority 越小优先级越高.
     Forwarder 按 priority 升序尝试, 遇上游错误 fallback 到下一条.
     嵌入角色特殊: 只允许一条绑定 (换模型会破坏已存向量的语义空间).
+
+    v0.4.1: 能力字段 (context_length/embedding_dim/modalities) 收拢到 models 注册表,
+    绑定只引用 model_id; 能力值经 join 从注册表读取 (旧行回填后仍有列值, 作为兜底).
     """
 
     role: ModelType
     priority: int
     service_id: str
     model: str
+    model_id: str | None = None          # v0.4.1: 引用 models.id ({service_id}:{model})
+    display_name: str | None = None      # v0.4.1: join models 的展示名
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     context_length: int | None = None
     embedding_dim: int | None = None
@@ -97,6 +102,63 @@ class RoleBinding:
     # v0.4: 模态能力声明
     input_modalities: list[str] = field(default_factory=lambda: ["text"])
     output_modalities: list[str] = field(default_factory=lambda: ["text"])
+
+
+@dataclass
+class ModelRegistryEntry:
+    """模型注册表条目 (v0.4.1: 模型一等实体, RFC model-registry).
+
+    id 为复合主键 `{service_id}:{model}` (服务商 id 创建后不可改, 模型名在上游唯一).
+    - 能力字段 (模态/上下文/嵌入维) 是**模型属性**, 绑定只引用, 不重复声明
+    - concurrency: 并发上限, 默认 20, 0 = 不限 (本版本仅管理, 执行层限流 v0.5)
+    - enabled: 禁用后不再出现在候选解析中
+    """
+
+    id: str
+    service_id: str
+    model: str
+    display_name: str | None = None
+    input_modalities: list[str] = field(default_factory=lambda: ["text"])
+    output_modalities: list[str] = field(default_factory=lambda: ["text"])
+    context_length: int | None = None
+    embedding_dim: int | None = None
+    send_dimensions: bool = False
+    concurrency: int = 20
+    enabled: bool = True
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    @classmethod
+    def create(
+        cls,
+        service_id: str,
+        model: str,
+        *,
+        display_name: str | None = None,
+        input_modalities: list[str] | None = None,
+        output_modalities: list[str] | None = None,
+        context_length: int | None = None,
+        embedding_dim: int | None = None,
+        send_dimensions: bool = False,
+        concurrency: int = 20,
+        enabled: bool = True,
+    ) -> ModelRegistryEntry:
+        now = datetime.now(UTC)
+        return cls(
+            id=f"{service_id}:{model}",
+            service_id=service_id,
+            model=model,
+            display_name=display_name,
+            input_modalities=input_modalities or ["text"],
+            output_modalities=output_modalities or ["text"],
+            context_length=context_length,
+            embedding_dim=embedding_dim,
+            send_dimensions=send_dimensions,
+            concurrency=concurrency,
+            enabled=enabled,
+            created_at=now,
+            updated_at=now,
+        )
 
 
 @dataclass
