@@ -238,6 +238,36 @@ def test_import_carries_upstream_capabilities(app: FastAPI) -> None:
     assert items["plain"]["output_limit"] is None
 
 
+
+
+def test_supports_tools_crud(app: FastAPI) -> None:
+    """工具调用能力: create / patch / import 全程贯通."""
+    client = TestClient(app)
+
+    resp = client.post(
+        "/panel/admin/models",
+        json={"service_id": "s1", "model": "tool-m", "supports_tools": True},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["supports_tools"] is True
+
+    # patch 关闭
+    resp = client.patch("/panel/admin/models/s1:tool-m", json={"supports_tools": False})
+    assert resp.status_code == 200
+    assert resp.json()["supports_tools"] is False
+
+    # import 带工具能力
+    resp = client.post(
+        "/panel/admin/models:import",
+        json={
+            "service_id": "s1",
+            "models": [{"model": "tool-import", "supports_tools": True}],
+        },
+    )
+    assert resp.status_code == 200
+    items = {i["model"]: i for i in client.get("/panel/admin/models?service_id=s1").json()}
+    assert items["tool-import"]["supports_tools"] is True
+
 def test_import_unknown_service_400(app: FastAPI) -> None:
     client = TestClient(app)
     resp = client.post(

@@ -39,6 +39,7 @@ class ModelRegistryItem(BaseModel):
     output_modalities: list[str]
     context_length: int | None
     output_limit: int | None
+    supports_tools: bool
     embedding_dim: int | None
     send_dimensions: bool
     concurrency: int
@@ -55,6 +56,7 @@ class ModelRegistryCreateBody(BaseModel):
     output_modalities: list[str] = ["text"]
     context_length: int | None = Field(default=None, ge=1)
     output_limit: int | None = Field(default=None, ge=1)
+    supports_tools: bool = False
     embedding_dim: int | None = Field(default=None, ge=1)
     send_dimensions: bool = False
     concurrency: int = Field(default=20, ge=0, description="并发上限, 0 = 不限")
@@ -70,6 +72,7 @@ class ModelRegistryUpdateBody(BaseModel):
     clear_context_length: bool = False
     output_limit: int | None = Field(default=None, ge=1)
     clear_output_limit: bool = False
+    supports_tools: bool | None = None
     embedding_dim: int | None = Field(default=None, ge=1)
     clear_embedding_dim: bool = False
     send_dimensions: bool | None = None
@@ -86,6 +89,7 @@ class ModelImportItem(BaseModel):
     display_name: str | None = None
     context_length: int | None = Field(default=None, ge=1)
     output_limit: int | None = Field(default=None, ge=1)
+    supports_tools: bool = False
     input_modalities: list[str] = Field(default_factory=lambda: ["text"])
     output_modalities: list[str] = Field(default_factory=lambda: ["text"])
 
@@ -115,6 +119,7 @@ def _entry_to_item(e: ModelRegistryEntry) -> ModelRegistryItem:
         output_modalities=e.output_modalities,
         context_length=e.context_length,
         output_limit=e.output_limit,
+        supports_tools=e.supports_tools,
         embedding_dim=e.embedding_dim,
         send_dimensions=e.send_dimensions,
         concurrency=e.concurrency,
@@ -162,6 +167,7 @@ async def create_registry_model(
         output_modalities=body.output_modalities,
         context_length=body.context_length,
         output_limit=body.output_limit,
+        supports_tools=body.supports_tools,
         embedding_dim=body.embedding_dim,
         send_dimensions=body.send_dimensions,
         concurrency=body.concurrency,
@@ -185,8 +191,8 @@ async def update_registry_model(
     kwargs: dict[str, Any] = {}
     for key in (
         "clear_display_name", "input_modalities", "output_modalities",
-        "clear_context_length", "clear_output_limit", "clear_embedding_dim",
-        "send_dimensions", "concurrency", "enabled",
+        "clear_context_length", "clear_output_limit", "supports_tools",
+        "clear_embedding_dim", "send_dimensions", "concurrency", "enabled",
     ):
         if key in provided:
             kwargs[key] = provided[key]
@@ -252,6 +258,7 @@ async def import_registry_models(
             display_name=item.display_name,
             context_length=item.context_length,
             output_limit=item.output_limit,
+            supports_tools=item.supports_tools,
             input_modalities=item.input_modalities,
             output_modalities=item.output_modalities,
         )

@@ -88,6 +88,7 @@ class UpstreamModelDetail(BaseModel):
     id: str
     context_length: int | None = None
     output_limit: int | None = None
+    supports_tools: bool = False
     input_modalities: list[str] = ["text"]
     output_modalities: list[str] = ["text"]
 
@@ -295,6 +296,7 @@ async def list_upstream_available_models(
                 id=d.id,
                 context_length=d.context_length,
                 output_limit=d.output_limit,
+                supports_tools=d.supports_tools,
                 input_modalities=d.input_modalities,
                 output_modalities=d.output_modalities,
             )

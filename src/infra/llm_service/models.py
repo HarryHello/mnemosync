@@ -122,6 +122,7 @@ class ModelRegistryEntry:
     output_modalities: list[str] = field(default_factory=lambda: ["text"])
     context_length: int | None = None
     output_limit: int | None = None   # v0.4.1: 输出上限 (token) — 与 context_length (输入) 并列
+    supports_tools: bool = False      # v0.4.1: 支持工具调用 (function calling)
     embedding_dim: int | None = None
     send_dimensions: bool = False
     concurrency: int = 20
@@ -140,6 +141,7 @@ class ModelRegistryEntry:
         output_modalities: list[str] | None = None,
         context_length: int | None = None,
         output_limit: int | None = None,
+        supports_tools: bool = False,
         embedding_dim: int | None = None,
         send_dimensions: bool = False,
         concurrency: int = 20,
@@ -155,6 +157,7 @@ class ModelRegistryEntry:
             output_modalities=output_modalities or ["text"],
             context_length=context_length,
             output_limit=output_limit,
+            supports_tools=supports_tools,
             embedding_dim=embedding_dim,
             send_dimensions=send_dimensions,
             concurrency=concurrency,

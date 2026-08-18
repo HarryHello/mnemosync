@@ -41,8 +41,25 @@ class ModelDetail:
     id: str
     context_length: int | None = None
     output_limit: int | None = None
+    supports_tools: bool = False   # 工具调用 (function calling)
     input_modalities: list[str] = field(default_factory=lambda: ["text"])
     output_modalities: list[str] = field(default_factory=lambda: ["text"])
+
+
+def _parse_tool_support(raw: dict[str, Any]) -> bool:
+    """尽力解析上游是否声明支持工具调用."""
+    for key in ("supports_tools", "tool_calling", "server_side_tool_use", "tool_call"):
+        v = raw.get(key)
+        if v is None:
+            continue
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        if isinstance(v, str):
+            return v.strip().lower() in ("true", "1", "yes")
+        return False
+    return False
 
 
 def _extract_model_capability(
@@ -550,6 +567,7 @@ class Forwarder:
                 raw, "max_output_tokens", "output_limit", "output_token_limit",
                 "max_tokens",
             )
+            st = _parse_tool_support(raw)
             im = _extract_model_capability(raw, "input_modalities", "modalities")
             om = _extract_model_capability(raw, "output_modalities")
             input_mods = [str(x) for x in im] if isinstance(im, list) else ["text"]
@@ -558,6 +576,7 @@ class Forwarder:
                 id=mid,
                 context_length=int(cl) if isinstance(cl, (int, float)) else None,
                 output_limit=int(ol) if isinstance(ol, (int, float)) else None,
+                supports_tools=st,
                 input_modalities=input_mods,
                 output_modalities=output_mods,
             ))

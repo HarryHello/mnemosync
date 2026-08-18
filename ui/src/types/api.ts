@@ -334,6 +334,7 @@ export interface UpstreamModelDetail {
   id: string
   context_length: number | null
   output_limit: number | null
+  supports_tools: boolean
   input_modalities: string[]
   output_modalities: string[]
 }
@@ -397,6 +398,7 @@ export interface ModelRegistryItem {
   output_modalities: string[]
   context_length: number | null
   output_limit: number | null
+  supports_tools: boolean
   embedding_dim: number | null
   send_dimensions: boolean
   concurrency: number
@@ -413,6 +415,7 @@ export interface ModelRegistryCreateBody {
   output_modalities?: string[]
   context_length?: number | null
   output_limit?: number | null
+  supports_tools?: boolean
   embedding_dim?: number | null
   send_dimensions?: boolean
   concurrency?: number
@@ -428,6 +431,7 @@ export interface ModelRegistryUpdateBody {
   clear_context_length?: boolean
   output_limit?: number | null
   clear_output_limit?: boolean
+  supports_tools?: boolean
   embedding_dim?: number | null
   clear_embedding_dim?: boolean
   send_dimensions?: boolean
@@ -440,6 +444,7 @@ export interface ModelImportItem {
   display_name?: string | null
   context_length?: number | null
   output_limit?: number | null
+  supports_tools?: boolean
   input_modalities?: string[]
   output_modalities?: string[]
 }

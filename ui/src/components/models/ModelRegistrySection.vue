@@ -18,7 +18,7 @@ import {
   listUpstreamAvailableModels,
   updateRegistryModel,
 } from '@/api/client'
-import type { ModelRegistryItem } from '@/types/api'
+import type { ModelRegistryItem, UpstreamModelDetail } from '@/types/api'
 
 export interface PendingModel {
   model: string
@@ -26,6 +26,7 @@ export interface PendingModel {
   concurrency?: number
   input_limit?: string           // 输入上限 (K/M 文本, 提交时解析)
   output_limit?: string          // 输出上限 (K/M 文本)
+  supports_tools?: boolean       // 工具调用
   capabilities?: string[]        // 输入模态多选
 }
 
@@ -73,7 +74,7 @@ watch(
   () => props.modelValue,
   (v) => {
     pending.value = v
-      ? v.map((m) => ({ ...m, capabilities: m.capabilities ? [...m.capabilities] : [] }))
+      ? v.map((m) => ({ ...m, capabilities: m.capabilities ? [...m.capabilities] : [], supports_tools: !!m.supports_tools }))
       : []
   },
   { immediate: true, deep: true },
@@ -84,6 +85,7 @@ function addRow() {
     model: '',
     concurrency: DEFAULT_CONCURRENCY,
     capabilities: ['text'],
+    supports_tools: false,
   })
   flush()
 }
@@ -108,6 +110,8 @@ function flush() {
 
 // ── 编辑模式: 实时 CRUD ────────────────────────────────────────────────────
 const availableModels = ref<string[]>([])
+// 拉取到的模型详情 (id -> 上游能力), 用于选中后自动回填
+const upstreamDetails = ref<Record<string, UpstreamModelDetail>>({})
 const upstreamLoading = ref(false)
 
 const addForm = reactive({
@@ -117,6 +121,7 @@ const addForm = reactive({
   output_limit: '',
   concurrency: DEFAULT_CONCURRENCY,
   capabilities: ['text'] as string[],
+  supports_tools: false,
 })
 
 function defaultDisplay(model: string): string {
@@ -131,6 +136,7 @@ function clearAddForm() {
   addForm.output_limit = ''
   addForm.concurrency = DEFAULT_CONCURRENCY
   addForm.capabilities = ['text']
+  addForm.supports_tools = false
 }
 
 async function reload() {
@@ -145,8 +151,12 @@ async function fetchUpstream() {
   try {
     const { models: list } = await listUpstreamAvailableModels(props.serviceId)
     availableModels.value = list.map((d) => d.id)
+    const map: Record<string, UpstreamModelDetail> = {}
+    for (const d of list) map[d.id] = d
+    upstreamDetails.value = map
   } catch (err) {
     availableModels.value = []
+    upstreamDetails.value = {}
     ElMessage.warning(
       '拉取上游 /models 失败, 可手动输入: ' +
         (err instanceof Error ? err.message : String(err)),
@@ -160,6 +170,17 @@ function onModelPick() {
   const chosen = addForm.model.trim()
   if (chosen && !addForm.display_name) {
     addForm.display_name = defaultDisplay(chosen)
+  }
+  // 自动回填上游声明的能力 (如 DeepSeek 的 context_length / modalities)
+  const d = upstreamDetails.value[chosen]
+  if (d) {
+    if (!addForm.input_limit) addForm.input_limit = formatTokenLimit(d.context_length)
+    if (!addForm.output_limit) addForm.output_limit = formatTokenLimit(d.output_limit)
+    if (d.supports_tools) addForm.supports_tools = true
+    const mods = d.input_modalities?.length ? d.input_modalities : ['text']
+    if (!addForm.capabilities || addForm.capabilities.length === 1 && addForm.capabilities[0] === 'text') {
+      addForm.capabilities = [...mods]
+    }
   }
 }
 
@@ -192,6 +213,7 @@ async function submitAdd() {
       display_name: addForm.display_name.trim() || defaultDisplay(name),
       context_length: cl,
       output_limit: ol,
+      supports_tools: addForm.supports_tools,
       concurrency: conv,
       input_modalities: addForm.capabilities,
     })
@@ -390,6 +412,7 @@ watch(
             <el-option label="图片" value="image" />
             <el-option label="音频" value="audio" />
           </el-select>
+          <el-checkbox v-model="row.supports_tools" size="small">工具</el-checkbox>
         </div>
       </div>
       <div v-if="!pending.length" class="empty-add" @click="addRow">
@@ -445,6 +468,7 @@ watch(
             <el-option label="图片" value="image" />
             <el-option label="音频" value="audio" />
           </el-select>
+          <el-checkbox v-model="addForm.supports_tools">工具调用</el-checkbox>
           <el-button type="primary" :loading="saving" @click="submitAdd">注册</el-button>
         </div>
       </div>
@@ -462,6 +486,7 @@ watch(
         <el-table-column label="能力" min-width="180">
           <template #default="{ row }: { row: ModelRegistryItem }">
             <span class="caps">{{ row.input_modalities?.join('/') || 'text' }}</span>
+            <span v-if="row.supports_tools" class="caps muted">· 工具</span>
             <span v-if="row.context_length" class="caps muted">· 入 {{ formatTokenLimit(row.context_length) }}</span>
             <span v-if="row.output_limit" class="caps muted">· 出 {{ formatTokenLimit(row.output_limit) }}</span>
             <span v-if="row.embedding_dim" class="caps muted">· {{ row.embedding_dim }}d</span>
