@@ -211,7 +211,7 @@ def test_import_unknown_service_400(app: FastAPI) -> None:
 
 
 def test_display_name_falls_back_and_concurrency_default(app: FastAPI) -> None:
-    """默认 concurrency 20, 显示名空."""
+    """单个创建: 默认 concurrency 20, 显示名空 (由前端填默认)."""
     client = TestClient(app)
     resp = client.post(
         "/panel/admin/models", json={"service_id": "s1", "model": "plain"}
@@ -220,3 +220,46 @@ def test_display_name_falls_back_and_concurrency_default(app: FastAPI) -> None:
     body = resp.json()
     assert body["concurrency"] == 20
     assert body["display_name"] is None
+
+
+def test_create_with_output_limit(app: FastAPI) -> None:
+    """输出上限字段随创建/响应透传."""
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/models",
+        json={"service_id": "s1", "model": "out-m", "context_length": 131072, "output_limit": 8192},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["context_length"] == 131072
+    assert body["output_limit"] == 8192
+
+
+def test_patch_output_limit_and_clear(app: FastAPI) -> None:
+    client = TestClient(app)
+    client.post("/panel/admin/models", json={"service_id": "s1", "model": "m1"})
+    resp = client.patch("/panel/admin/models/s1:m1", json={"output_limit": 16384})
+    assert resp.status_code == 200
+    assert resp.json()["output_limit"] == 16384
+
+    resp = client.patch("/panel/admin/models/s1:m1", json={"output_limit": None})
+    assert resp.status_code == 200
+    assert resp.json()["output_limit"] is None
+
+
+def test_import_default_display_name(app: FastAPI) -> None:
+    """批量导入的显示名默认为 服务商id/model_name."""
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/models:import",
+        json={"service_id": "s1", "models": ["deepseek-chat", "deepseek-r1"]},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"added": 2, "skipped": 0}
+
+    items = client.get("/panel/admin/models?service_id=s1").json()
+    by_model = {i["model"]: i for i in items}
+    assert by_model["deepseek-chat"]["display_name"] == "s1/deepseek-chat"
+    assert by_model["deepseek-chat"]["concurrency"] == 20
+    assert by_model["deepseek-chat"]["output_limit"] is None
+

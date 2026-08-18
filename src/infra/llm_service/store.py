@@ -190,6 +190,7 @@ class LLMServiceStore:
                     input_modalities TEXT NOT NULL DEFAULT '["text"]',
                     output_modalities TEXT NOT NULL DEFAULT '["text"]',
                     context_length INTEGER,
+                    output_limit INTEGER,
                     embedding_dim INTEGER,
                     send_dimensions INTEGER NOT NULL DEFAULT 0,
                     concurrency INTEGER NOT NULL DEFAULT 20,
@@ -215,6 +216,7 @@ class LLMServiceStore:
                 ("008_backfill_models_from_model_configs", _backfill_models_from_model_configs),
                 ("009_add_binding_model_id", add_column_if_missing("role_bindings", "model_id", "TEXT")),
                 ("010_backfill_binding_model_id", _backfill_binding_model_id),
+                ("011_add_output_limit", add_column_if_missing("models", "output_limit", "INTEGER")),
             ]).apply(db)
             await db.commit()
 
@@ -354,8 +356,8 @@ class LLMServiceStore:
 
     _MODEL_COLUMNS = (
         "id, service_id, model, display_name, input_modalities, output_modalities, "
-        "context_length, embedding_dim, send_dimensions, concurrency, enabled, "
-        "created_at, updated_at"
+        "context_length, output_limit, embedding_dim, send_dimensions, concurrency, "
+        "enabled, created_at, updated_at"
     )
 
     def _model_row_to_entry(self, row: Any) -> ModelRegistryEntry:
@@ -367,12 +369,13 @@ class LLMServiceStore:
             input_modalities=json.loads(row[4]) if row[4] else ["text"],
             output_modalities=json.loads(row[5]) if row[5] else ["text"],
             context_length=row[6],
-            embedding_dim=row[7],
-            send_dimensions=bool(row[8]),
-            concurrency=row[9] if row[9] is not None else 20,  # 0 = 不限, 不能 or 掉
-            enabled=bool(row[10]),
-            created_at=self._parse_dt(row[11]),
-            updated_at=self._parse_dt(row[12]),
+            output_limit=row[7],
+            embedding_dim=row[8],
+            send_dimensions=bool(row[9]),
+            concurrency=row[10] if row[10] is not None else 20,  # 0 = 不限, 不能 or 掉
+            enabled=bool(row[11]),
+            created_at=self._parse_dt(row[12]),
+            updated_at=self._parse_dt(row[13]),
         )
 
     async def save_model_registry(self, entry: ModelRegistryEntry) -> ModelRegistryEntry:
@@ -386,14 +389,15 @@ class LLMServiceStore:
                     raise ValueError(f"服务 '{entry.service_id}' 不存在")
             await db.execute(
                 "INSERT INTO models (id, service_id, model, display_name, input_modalities, "
-                "output_modalities, context_length, embedding_dim, send_dimensions, "
-                "concurrency, enabled, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "output_modalities, context_length, output_limit, embedding_dim, "
+                "send_dimensions, concurrency, enabled, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "display_name = excluded.display_name, "
                 "input_modalities = excluded.input_modalities, "
                 "output_modalities = excluded.output_modalities, "
                 "context_length = excluded.context_length, "
+                "output_limit = excluded.output_limit, "
                 "embedding_dim = excluded.embedding_dim, "
                 "send_dimensions = excluded.send_dimensions, "
                 "concurrency = excluded.concurrency, "
@@ -403,7 +407,7 @@ class LLMServiceStore:
                     entry.id, entry.service_id, entry.model, entry.display_name,
                     json.dumps(entry.input_modalities),
                     json.dumps(entry.output_modalities),
-                    entry.context_length, entry.embedding_dim,
+                    entry.context_length, entry.output_limit, entry.embedding_dim,
                     1 if entry.send_dimensions else 0,
                     entry.concurrency, 1 if entry.enabled else 0,
                     entry.created_at.isoformat(), entry.updated_at.isoformat(),
@@ -449,6 +453,8 @@ class LLMServiceStore:
         output_modalities: list[str] | None = None,
         context_length: int | None = None,
         clear_context_length: bool = False,
+        output_limit: int | None = None,
+        clear_output_limit: bool = False,
         embedding_dim: int | None = None,
         clear_embedding_dim: bool = False,
         send_dimensions: bool | None = None,
@@ -483,6 +489,11 @@ class LLMServiceStore:
             elif context_length is not None:
                 sets.append("context_length = ?")
                 params.append(context_length)
+            if clear_output_limit:
+                sets.append("output_limit = NULL")
+            elif output_limit is not None:
+                sets.append("output_limit = ?")
+                params.append(output_limit)
             if clear_embedding_dim:
                 sets.append("embedding_dim = NULL")
             elif embedding_dim is not None:
@@ -539,13 +550,14 @@ class LLMServiceStore:
                 if not name:
                     continue
                 mid = f"{service_id}:{name}"
+                # 显示名默认 = {service_id}/{model} (可后续 PATCH 改)
                 cur = await db.execute(
                     "INSERT OR IGNORE INTO models "
                     "(id, service_id, model, display_name, input_modalities, "
-                    "output_modalities, context_length, embedding_dim, send_dimensions, "
-                    "concurrency, enabled, created_at, updated_at) "
-                    "VALUES (?, ?, ?, NULL, '[\"text\"]', '[\"text\"]', NULL, NULL, 0, 20, 1, ?, ?)",
-                    (mid, service_id, name, now, now),
+                    "output_modalities, context_length, output_limit, embedding_dim, "
+                    "send_dimensions, concurrency, enabled, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, '[\"text\"]', '[\"text\"]', NULL, NULL, NULL, 0, 20, 1, ?, ?)",
+                    (mid, service_id, name, f"{service_id}/{name}", now, now),
                 )
                 if cur.rowcount and cur.rowcount > 0:
                     added += 1

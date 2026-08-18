@@ -38,6 +38,7 @@ class ModelRegistryItem(BaseModel):
     input_modalities: list[str]
     output_modalities: list[str]
     context_length: int | None
+    output_limit: int | None
     embedding_dim: int | None
     send_dimensions: bool
     concurrency: int
@@ -53,6 +54,7 @@ class ModelRegistryCreateBody(BaseModel):
     input_modalities: list[str] = ["text"]
     output_modalities: list[str] = ["text"]
     context_length: int | None = Field(default=None, ge=1)
+    output_limit: int | None = Field(default=None, ge=1)
     embedding_dim: int | None = Field(default=None, ge=1)
     send_dimensions: bool = False
     concurrency: int = Field(default=20, ge=0, description="并发上限, 0 = 不限")
@@ -66,6 +68,8 @@ class ModelRegistryUpdateBody(BaseModel):
     output_modalities: list[str] | None = None
     context_length: int | None = Field(default=None, ge=1)
     clear_context_length: bool = False
+    output_limit: int | None = Field(default=None, ge=1)
+    clear_output_limit: bool = False
     embedding_dim: int | None = Field(default=None, ge=1)
     clear_embedding_dim: bool = False
     send_dimensions: bool | None = None
@@ -99,6 +103,7 @@ def _entry_to_item(e: ModelRegistryEntry) -> ModelRegistryItem:
         input_modalities=e.input_modalities,
         output_modalities=e.output_modalities,
         context_length=e.context_length,
+        output_limit=e.output_limit,
         embedding_dim=e.embedding_dim,
         send_dimensions=e.send_dimensions,
         concurrency=e.concurrency,
@@ -145,6 +150,7 @@ async def create_registry_model(
         input_modalities=body.input_modalities,
         output_modalities=body.output_modalities,
         context_length=body.context_length,
+        output_limit=body.output_limit,
         embedding_dim=body.embedding_dim,
         send_dimensions=body.send_dimensions,
         concurrency=body.concurrency,
@@ -168,8 +174,8 @@ async def update_registry_model(
     kwargs: dict[str, Any] = {}
     for key in (
         "clear_display_name", "input_modalities", "output_modalities",
-        "clear_context_length", "clear_embedding_dim", "send_dimensions",
-        "concurrency", "enabled",
+        "clear_context_length", "clear_output_limit", "clear_embedding_dim",
+        "send_dimensions", "concurrency", "enabled",
     ):
         if key in provided:
             kwargs[key] = provided[key]
@@ -191,6 +197,12 @@ async def update_registry_model(
             kwargs["clear_embedding_dim"] = True
         else:
             kwargs["embedding_dim"] = ed
+    if "output_limit" in provided:
+        ol = provided["output_limit"]
+        if ol is None:
+            kwargs["clear_output_limit"] = True
+        else:
+            kwargs["output_limit"] = ol
 
     try:
         entry = await store.update_model_registry(model_id, **kwargs)

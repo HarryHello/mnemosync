@@ -121,6 +121,7 @@ class ModelRegistryEntry:
     input_modalities: list[str] = field(default_factory=lambda: ["text"])
     output_modalities: list[str] = field(default_factory=lambda: ["text"])
     context_length: int | None = None
+    output_limit: int | None = None   # v0.4.1: 输出上限 (token) — 与 context_length (输入) 并列
     embedding_dim: int | None = None
     send_dimensions: bool = False
     concurrency: int = 20
@@ -138,6 +139,7 @@ class ModelRegistryEntry:
         input_modalities: list[str] | None = None,
         output_modalities: list[str] | None = None,
         context_length: int | None = None,
+        output_limit: int | None = None,
         embedding_dim: int | None = None,
         send_dimensions: bool = False,
         concurrency: int = 20,
@@ -152,6 +154,7 @@ class ModelRegistryEntry:
             input_modalities=input_modalities or ["text"],
             output_modalities=output_modalities or ["text"],
             context_length=context_length,
+            output_limit=output_limit,
             embedding_dim=embedding_dim,
             send_dimensions=send_dimensions,
             concurrency=concurrency,
