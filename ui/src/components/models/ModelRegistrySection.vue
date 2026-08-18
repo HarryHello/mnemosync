@@ -26,8 +26,7 @@ export interface PendingModel {
   concurrency?: number
   input_limit?: string           // 输入上限 (K/M 文本, 提交时解析)
   output_limit?: string          // 输出上限 (K/M 文本)
-  supports_tools?: boolean       // 工具调用
-  capabilities?: string[]        // 输入模态多选
+  capabilities?: string[]        // 能力: 模态 text/image/audio + tools(工具调用)
 }
 
 const props = defineProps<{
@@ -74,7 +73,7 @@ watch(
   () => props.modelValue,
   (v) => {
     pending.value = v
-      ? v.map((m) => ({ ...m, capabilities: m.capabilities ? [...m.capabilities] : [], supports_tools: !!m.supports_tools }))
+      ? v.map((m) => ({ ...m, capabilities: m.capabilities ? [...m.capabilities] : [] }))
       : []
   },
   { immediate: true, deep: true },
@@ -85,7 +84,6 @@ function addRow() {
     model: '',
     concurrency: DEFAULT_CONCURRENCY,
     capabilities: ['text'],
-    supports_tools: false,
   })
   flush()
 }
@@ -121,7 +119,6 @@ const addForm = reactive({
   output_limit: '',
   concurrency: DEFAULT_CONCURRENCY,
   capabilities: ['text'] as string[],
-  supports_tools: false,
 })
 
 function defaultDisplay(model: string): string {
@@ -136,7 +133,6 @@ function clearAddForm() {
   addForm.output_limit = ''
   addForm.concurrency = DEFAULT_CONCURRENCY
   addForm.capabilities = ['text']
-  addForm.supports_tools = false
 }
 
 async function reload() {
@@ -176,10 +172,12 @@ function onModelPick() {
   if (d) {
     if (!addForm.input_limit) addForm.input_limit = formatTokenLimit(d.context_length)
     if (!addForm.output_limit) addForm.output_limit = formatTokenLimit(d.output_limit)
-    if (d.supports_tools) addForm.supports_tools = true
     const mods = d.input_modalities?.length ? d.input_modalities : ['text']
-    if (!addForm.capabilities || addForm.capabilities.length === 1 && addForm.capabilities[0] === 'text') {
-      addForm.capabilities = [...mods]
+    if (
+      !addForm.capabilities.length ||
+      (addForm.capabilities.length === 1 && addForm.capabilities[0] === 'text')
+    ) {
+      addForm.capabilities = [...mods, ...(d.supports_tools ? ['tools'] : [])]
     }
   }
 }
@@ -213,9 +211,10 @@ async function submitAdd() {
       display_name: addForm.display_name.trim() || defaultDisplay(name),
       context_length: cl,
       output_limit: ol,
-      supports_tools: addForm.supports_tools,
       concurrency: conv,
-      input_modalities: addForm.capabilities,
+      // 能力合并: tools 归属 supports_tools, 其余为输入模态
+      supports_tools: addForm.capabilities.includes('tools'),
+      input_modalities: addForm.capabilities.filter((c) => c !== 'tools'),
     })
     ElMessage.success('已注册')
     clearAddForm()
@@ -404,15 +403,15 @@ watch(
           <el-select
             v-model="row.capabilities"
             multiple
-            placeholder="能力"
+            placeholder="能力 (模态/工具调用)"
             size="small"
             style="flex: 2"
           >
             <el-option label="文本" value="text" />
             <el-option label="图片" value="image" />
             <el-option label="音频" value="audio" />
+            <el-option label="工具调用" value="tools" />
           </el-select>
-          <el-checkbox v-model="row.supports_tools" size="small">工具</el-checkbox>
         </div>
       </div>
       <div v-if="!pending.length" class="empty-add" @click="addRow">
@@ -461,14 +460,14 @@ watch(
           <el-select
             v-model="addForm.capabilities"
             multiple
-            placeholder="能力 (输入模态)"
+            placeholder="能力 (模态/工具调用)"
             style="flex: 2"
           >
             <el-option label="文本" value="text" />
             <el-option label="图片" value="image" />
             <el-option label="音频" value="audio" />
+            <el-option label="工具调用" value="tools" />
           </el-select>
-          <el-checkbox v-model="addForm.supports_tools">工具调用</el-checkbox>
           <el-button type="primary" :loading="saving" @click="submitAdd">注册</el-button>
         </div>
       </div>
@@ -485,8 +484,7 @@ watch(
         </el-table-column>
         <el-table-column label="能力" min-width="180">
           <template #default="{ row }: { row: ModelRegistryItem }">
-            <span class="caps">{{ row.input_modalities?.join('/') || 'text' }}</span>
-            <span v-if="row.supports_tools" class="caps muted">· 工具</span>
+            <span class="caps">{{ (row.input_modalities?.join('/') || 'text') + (row.supports_tools ? '/工具' : '') }}</span>
             <span v-if="row.context_length" class="caps muted">· 入 {{ formatTokenLimit(row.context_length) }}</span>
             <span v-if="row.output_limit" class="caps muted">· 出 {{ formatTokenLimit(row.output_limit) }}</span>
             <span v-if="row.embedding_dim" class="caps muted">· {{ row.embedding_dim }}d</span>

@@ -26,6 +26,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpe
 from .connection_pool import ConnectionPool
 from .debug_hook import get_debug_bus
 from .debug_utils import emit_upstream_debug as _emit_debug  # noqa: F401
+from .model_capabilities import known_capability_for
 
 logger = logging.getLogger(__name__)
 
@@ -572,6 +573,17 @@ class Forwarder:
             om = _extract_model_capability(raw, "output_modalities")
             input_mods = [str(x) for x in im] if isinstance(im, list) else ["text"]
             output_mods = [str(x) for x in om] if isinstance(om, list) else ["text"]
+            # 上游未声明能力时, 用内置知名模型表兜底 (如 DeepSeek 的 /v1/models 只有 id)
+            known = known_capability_for(mid)
+            if known is not None:
+                if not isinstance(cl, (int, float)) and known.context_length is not None:
+                    cl = known.context_length
+                if not isinstance(ol, (int, float)) and known.output_limit is not None:
+                    ol = known.output_limit
+                if not st and known.supports_tools:
+                    st = True
+                if input_mods == ["text"] and known.input_modalities != ("text",):
+                    input_mods = list(known.input_modalities)
             out.append(ModelDetail(
                 id=mid,
                 context_length=int(cl) if isinstance(cl, (int, float)) else None,

@@ -126,3 +126,32 @@ class TestListModelDetails:
             with pytest.raises(UpstreamError) as ei:
                 await fwd.list_model_details()
         assert ei.value.status_code == 429
+
+
+def test_known_capability_fallback_for_deepseek() -> None:
+    """DeepSeek /v1/models 只有 id: 内置表兜底回填上下文/输出/工具."""
+    # 直接复用现有 _detail helper (mock client + run)
+    d = _detail(_model(id="deepseek-chat"))
+    assert d.context_length == 65536
+    assert d.output_limit == 8192
+    assert d.supports_tools is True
+
+
+def test_known_capability_prefix_match() -> None:
+    d = _detail(_model(id="deepseek-v4-flash"))
+    assert d.context_length == 131072
+    assert d.supports_tools is True
+
+
+def test_upstream_declaration_wins_over_known_table() -> None:
+    """上游显式声明的能力优先于内置表."""
+    d = _detail(_model(model_extra={"context_length": 32000}))
+    assert d.context_length == 32000
+
+
+def test_unknown_model_falls_back_to_defaults() -> None:
+    d = _detail(_model(id="custom-model-123"))
+    assert d.context_length is None
+    assert d.output_limit is None
+    assert d.supports_tools is False
+
