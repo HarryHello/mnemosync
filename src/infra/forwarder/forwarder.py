@@ -15,7 +15,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from types import TracebackType
 from typing import Any, cast
@@ -28,6 +28,44 @@ from .debug_hook import get_debug_bus
 from .debug_utils import emit_upstream_debug as _emit_debug  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ModelDetail:
+    """上游 /v1/models 单条模型: id + 尽力解析的能力声明.
+
+    能力字段来自服务商在模型列表里携带的扩展字段 (非 OpenAI 标准),
+    常见键名见 _extract_model_capability; 缺失时回落默认 (text / None).
+    """
+
+    id: str
+    context_length: int | None = None
+    output_limit: int | None = None
+    input_modalities: list[str] = field(default_factory=lambda: ["text"])
+    output_modalities: list[str] = field(default_factory=lambda: ["text"])
+
+
+def _extract_model_capability(
+    raw: dict[str, Any],
+    *names: str,
+) -> Any | None:
+    """从模型条目 dict 里按候选键名尽力取值 (int 或 list)."""
+    for name in names:
+        v = raw.get(name)
+        if v is None:
+            continue
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, int):
+            return max(0, v)
+        if isinstance(v, (float, str)):
+            try:
+                return max(0, int(float(str(v).replace(",", ""))))
+            except ValueError:
+                continue
+        if isinstance(v, list):
+            return v
+    return None
 
 
 def _log_upstream(direction: str, base_url: str, data: Any, status: int | None = None) -> None:
@@ -475,13 +513,55 @@ class Forwarder:
     # ============ 模型列表 ============
 
     async def list_models(self) -> list[str]:
-        """列出服务商可用模型. 使用 openai SDK."""
+        """列出服务商可用模型 id. 使用 openai SDK."""
+        details = await self.list_model_details()
+        return [d.id for d in details]
+
+    async def list_model_details(self) -> list[ModelDetail]:
+        """列出服务商可用模型并尽力解析能力声明.
+
+        /v1/models 每条 model 对象除 id 外可能携带服务商扩展字段
+        (context_length / max_output_tokens / input_modalities 等), 这里把它们
+        映射到 ModelDetail; 缺失回落默认 (text / None). 未识别字段忽略.
+        """
         client = self._get_openai_client()
         try:
             models = await client.models.list()
-            return [m.id for m in models.data]
         except APIStatusError as e:
             raise UpstreamError(e.status_code, e.response.text) from e
+
+        out: list[ModelDetail] = []
+        for m in models.data:
+            raw: dict[str, Any] = {}
+            for key in ("id", "object", "created", "owned_by"):
+                v = getattr(m, key, None)
+                if v is not None:
+                    raw[key] = v
+            extra = getattr(m, "model_extra", None) or {}
+            raw.update(extra)  # SDK 未声明但上游返回的扩展字段
+            mid = str(raw.get("id") or "")
+            if not mid:
+                continue
+            cl = _extract_model_capability(
+                raw, "context_length", "max_context_length",
+                "max_context_window", "context_window", "model_max_length",
+            )
+            ol = _extract_model_capability(
+                raw, "max_output_tokens", "output_limit", "output_token_limit",
+                "max_tokens",
+            )
+            im = _extract_model_capability(raw, "input_modalities", "modalities")
+            om = _extract_model_capability(raw, "output_modalities")
+            input_mods = [str(x) for x in im] if isinstance(im, list) else ["text"]
+            output_mods = [str(x) for x in om] if isinstance(om, list) else ["text"]
+            out.append(ModelDetail(
+                id=mid,
+                context_length=int(cl) if isinstance(cl, (int, float)) else None,
+                output_limit=int(ol) if isinstance(ol, (int, float)) else None,
+                input_modalities=input_mods,
+                output_modalities=output_mods,
+            ))
+        return out
 
     # ============ 生命周期 ============
 

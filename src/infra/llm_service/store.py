@@ -532,9 +532,13 @@ class LLMServiceStore:
             return cur.rowcount > 0
 
     async def import_model_registry(
-        self, service_id: str, model_names: list[str]
+        self, service_id: str, entries: list[ModelRegistryEntry]
     ) -> tuple[int, int]:
-        """批量导入模型名 (如上游 /v1/models 结果). 已存在跳过. 返回 (added, skipped)."""
+        """批量导入模型注册表条目 (来自上游 /v1/models, 含能力解析).
+
+        display_name 为空时默认 {service_id}/{model}; 已存在 (同 service+model) 跳过.
+        返回 (added, skipped).
+        """
         added = 0
         skipped = 0
         now = datetime.now(UTC).isoformat()
@@ -545,19 +549,27 @@ class LLMServiceStore:
                 row = await cursor.fetchone()
             if not row or row[0] == 0:
                 raise ValueError(f"服务 '{service_id}' 不存在")
-            for name in model_names:
-                name = name.strip()
+            for entry in entries:
+                name = entry.model.strip()
                 if not name:
                     continue
                 mid = f"{service_id}:{name}"
-                # 显示名默认 = {service_id}/{model} (可后续 PATCH 改)
+                display = (entry.display_name or "").strip() or f"{service_id}/{name}"
                 cur = await db.execute(
                     "INSERT OR IGNORE INTO models "
                     "(id, service_id, model, display_name, input_modalities, "
                     "output_modalities, context_length, output_limit, embedding_dim, "
                     "send_dimensions, concurrency, enabled, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, '[\"text\"]', '[\"text\"]', NULL, NULL, NULL, 0, 20, 1, ?, ?)",
-                    (mid, service_id, name, f"{service_id}/{name}", now, now),
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?)",
+                    (
+                        mid, service_id, name, display,
+                        json.dumps(entry.input_modalities),
+                        json.dumps(entry.output_modalities),
+                        entry.context_length, entry.output_limit,
+                        1 if entry.send_dimensions else 0,
+                        entry.concurrency if entry.concurrency else 20,
+                        now, now,
+                    ),
                 )
                 if cur.rowcount and cur.rowcount > 0:
                     added += 1

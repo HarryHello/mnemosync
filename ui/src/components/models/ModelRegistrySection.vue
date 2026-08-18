@@ -144,7 +144,7 @@ async function fetchUpstream() {
   upstreamLoading.value = true
   try {
     const { models: list } = await listUpstreamAvailableModels(props.serviceId)
-    availableModels.value = list
+    availableModels.value = list.map((d) => d.id)
   } catch (err) {
     availableModels.value = []
     ElMessage.warning(
@@ -273,13 +273,25 @@ async function importFromUpstream() {
   if (!props.serviceId) return
   importing.value = true
   try {
-    const { models: names } = await listUpstreamAvailableModels(props.serviceId)
-    if (!names.length) {
+    const { models: details } = await listUpstreamAvailableModels(props.serviceId)
+    if (!details.length) {
       ElMessage.info('上游未返回可用模型 (可手动添加)')
       return
     }
-    const res = await importRegistryModels({ service_id: props.serviceId, models: names })
-    ElMessage.success('导入完成: 新增 ' + res.added + ' 个, 跳过 ' + res.skipped + ' 个 (显示名默认 服务商/模型)')
+    // 读取上游声明的模型能力 (尽力解析, 缺失回落默认)
+    const res = await importRegistryModels({
+      service_id: props.serviceId,
+      models: details.map((d) => ({
+        model: d.id,
+        context_length: d.context_length ?? undefined,
+        output_limit: d.output_limit ?? undefined,
+        input_modalities: d.input_modalities?.length ? d.input_modalities : undefined,
+        output_modalities: d.output_modalities?.length ? d.output_modalities : undefined,
+      })),
+    })
+    ElMessage.success(
+      '导入完成: 新增 ' + res.added + ' 个, 跳过 ' + res.skipped + ' 个 (已带上游能力声明)',
+    )
     await reload()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))

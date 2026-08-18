@@ -330,8 +330,16 @@ export interface UpstreamServiceUpdateBody {
   api_format?: string
 }
 
+export interface UpstreamModelDetail {
+  id: string
+  context_length: number | null
+  output_limit: number | null
+  input_modalities: string[]
+  output_modalities: string[]
+}
+
 export interface UpstreamAvailableModels {
-  models: string[]
+  models: UpstreamModelDetail[]
 }
 
 // ============================================================================
@@ -427,9 +435,18 @@ export interface ModelRegistryUpdateBody {
   enabled?: boolean
 }
 
+export interface ModelImportItem {
+  model: string
+  display_name?: string | null
+  context_length?: number | null
+  output_limit?: number | null
+  input_modalities?: string[]
+  output_modalities?: string[]
+}
+
 export interface ModelImportBody {
   service_id: string
-  models: string[]
+  models: ModelImportItem[]
 }
 
 export interface ModelImportResponse {

@@ -82,8 +82,18 @@ class UpstreamModelBody(BaseModel):
     model: str
 
 
+class UpstreamModelDetail(BaseModel):
+    """上游 /v1/models 单条 (id + 尽力解析的能力声明)."""
+
+    id: str
+    context_length: int | None = None
+    output_limit: int | None = None
+    input_modalities: list[str] = ["text"]
+    output_modalities: list[str] = ["text"]
+
+
 class UpstreamModelListResponse(BaseModel):
-    models: list[str]
+    models: list[UpstreamModelDetail]
 
 
 # ============================================================================
@@ -272,15 +282,24 @@ async def list_upstream_available_models(
     service_id: str,
     store: LLMServiceStore = Depends(get_llm_service_store),
 ) -> UpstreamModelListResponse:
-    """调用上游 /v1/models 获取该服务商可用模型列表 (用于下拉选择)."""
+    """调用上游 /v1/models 获取该服务商可用模型 (含能力解析, v0.4.1)."""
     service = await store.get_service(service_id)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     try:
         config = ForwarderConfig(base_url=service.base_url, api_key=service.api_key)
         async with Forwarder(config) as forwarder:
-            models = await forwarder.list_models()
-        return UpstreamModelListResponse(models=list(models))
+            details = await forwarder.list_model_details()
+        return UpstreamModelListResponse(models=[
+            UpstreamModelDetail(
+                id=d.id,
+                context_length=d.context_length,
+                output_limit=d.output_limit,
+                input_modalities=d.input_modalities,
+                output_modalities=d.output_modalities,
+            )
+            for d in details
+        ])
     except UpstreamTimeout as e:
         raise HTTPException(status_code=504, detail=f"上游超时: {e}")
     except UpstreamError as e:

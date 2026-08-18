@@ -192,7 +192,14 @@ def test_import_models_added_and_skipped(app: FastAPI) -> None:
 
     resp = client.post(
         "/panel/admin/models:import",
-        json={"service_id": "s1", "models": ["exists", "new-a", "new-b", "  ", ""]},
+        json={
+            "service_id": "s1",
+            "models": [
+                {"model": "exists"},
+                {"model": "new-a"},
+                {"model": "new-b"},
+            ],
+        },
     )
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"added": 2, "skipped": 1}
@@ -201,11 +208,41 @@ def test_import_models_added_and_skipped(app: FastAPI) -> None:
     assert {i["model"] for i in items} == {"exists", "new-a", "new-b"}
 
 
+def test_import_carries_upstream_capabilities(app: FastAPI) -> None:
+    """导入携带上游声明的能力: context_length / output_limit / modalities."""
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/models:import",
+        json={
+            "service_id": "s1",
+            "models": [
+                {
+                    "model": "vision-model",
+                    "context_length": 131072,
+                    "output_limit": 8192,
+                    "input_modalities": ["text", "image"],
+                },
+                {"model": "plain", "context_length": 4096},
+            ],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"added": 2, "skipped": 0}
+
+    items = {i["model"]: i for i in client.get("/panel/admin/models?service_id=s1").json()}
+    assert items["vision-model"]["context_length"] == 131072
+    assert items["vision-model"]["output_limit"] == 8192
+    assert items["vision-model"]["input_modalities"] == ["text", "image"]
+    assert items["vision-model"]["display_name"] == "s1/vision-model"
+    assert items["plain"]["context_length"] == 4096
+    assert items["plain"]["output_limit"] is None
+
+
 def test_import_unknown_service_400(app: FastAPI) -> None:
     client = TestClient(app)
     resp = client.post(
         "/panel/admin/models:import",
-        json={"service_id": "nope", "models": ["a"]},
+        json={"service_id": "nope", "models": [{"model": "a"}]},
     )
     assert resp.status_code == 400
 
@@ -252,7 +289,7 @@ def test_import_default_display_name(app: FastAPI) -> None:
     client = TestClient(app)
     resp = client.post(
         "/panel/admin/models:import",
-        json={"service_id": "s1", "models": ["deepseek-chat", "deepseek-r1"]},
+        json={"service_id": "s1", "models": [{"model": "deepseek-chat"}, {"model": "deepseek-r1"}]},
     )
     assert resp.status_code == 200
     assert resp.json() == {"added": 2, "skipped": 0}

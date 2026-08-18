@@ -79,9 +79,20 @@ class ModelRegistryUpdateBody(BaseModel):
     model_config = {"protected_namespaces": ()}
 
 
+class ModelImportItem(BaseModel):
+    """带能力的待导入模型 (来自上游 /v1/models 解析)."""
+
+    model: str
+    display_name: str | None = None
+    context_length: int | None = Field(default=None, ge=1)
+    output_limit: int | None = Field(default=None, ge=1)
+    input_modalities: list[str] = Field(default_factory=lambda: ["text"])
+    output_modalities: list[str] = Field(default_factory=lambda: ["text"])
+
+
 class ModelImportBody(BaseModel):
     service_id: str
-    models: list[str]
+    models: list[ModelImportItem]
 
 
 class ModelImportResponse(BaseModel):
@@ -233,9 +244,22 @@ async def import_registry_models(
     body: ModelImportBody,
     store: LLMServiceStore = Depends(get_llm_service_store),
 ) -> ModelImportResponse:
-    """从上游模型名列表批量导入注册表 (如 /v1/models 结果). 已存在跳过."""
+    """从上游模型列表批量导入注册表 (含能力解析结果). 已存在跳过."""
+    entries = [
+        ModelRegistryEntry.create(
+            body.service_id,
+            item.model.strip(),
+            display_name=item.display_name,
+            context_length=item.context_length,
+            output_limit=item.output_limit,
+            input_modalities=item.input_modalities,
+            output_modalities=item.output_modalities,
+        )
+        for item in body.models
+        if item.model and item.model.strip()
+    ]
     try:
-        added, skipped = await store.import_model_registry(body.service_id, body.models)
+        added, skipped = await store.import_model_registry(body.service_id, entries)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return ModelImportResponse(added=added, skipped=skipped)
