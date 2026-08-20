@@ -7,6 +7,7 @@ import {
   putMoodMatrixCell,
 } from '@/api/prompts'
 import type { MoodMatrixCell } from '@/api/prompts'
+import TabHeader from '@/components/common/TabHeader.vue'
 
 interface MatrixRow {
   tierId: string
@@ -146,19 +147,15 @@ onMounted(() => {
 
 <template>
   <div>
-    <div class="tab-head">
-      <div>
-        <h3 class="tab-title">情绪矩阵</h3>
-        <p class="tab-subtitle">
-          按「好感度档 × 心情段」配置人格的情绪引导文本。点击任意格子可编辑, 支持重置为默认;
-          加粗 + 浅色底纹表示已被自定义覆盖, 文本留空表示使用默认。
-        </p>
-      </div>
-      <div class="head-actions">
+    <TabHeader
+      title="情绪矩阵"
+      subtitle="按「好感度档 × 心情段」配置人格的情绪引导文本。点击任意格子可编辑, 支持重置为默认; 加粗 + 浅色底纹表示已被自定义覆盖, 文本留空表示使用默认。"
+    >
+      <template #actions>
         <el-button :loading="loading" @click="refresh"><el-icon><Refresh /></el-icon><span>刷新</span></el-button>
         <el-button type="warning" plain :loading="resettingAll" @click="onResetAll">重置全部自定义</el-button>
-      </div>
-    </div>
+      </template>
+    </TabHeader>
 
     <el-card>
       <el-table :data="rows" v-loading="loading" stripe empty-text="暂无情绪矩阵数据">
@@ -221,30 +218,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.tab-head {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.tab-title {
-  margin: 0 0 4px;
-  font-size: 18px;
-}
-
-.tab-subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-
-.head-actions {
-  display: flex;
-  gap: 8px;
-}
-
 .hint {
   margin: 0 0 10px;
   font-size: 12px;

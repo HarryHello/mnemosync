@@ -19,6 +19,7 @@ import type {
   PersonaProfileRead,
   PersonaVersionItem,
 } from '@/types/api'
+import TabHeader from '@/components/common/TabHeader.vue'
 
 const props = defineProps<{
   active: boolean
@@ -352,21 +353,18 @@ watch(
 
 <template>
   <div>
-    <div class="tab-head">
-      <div>
-        <h3 class="tab-title">人格编辑</h3>
-        <p class="tab-subtitle">
-          编辑结构化人格。保存将创建新版本，
-          当前版本 {{ definition?.version || '—' }}
-        </p>
-      </div>
-      <div class="head-actions">
+    <TabHeader title="人格编辑">
+      <template #subtitle>
+        编辑结构化人格。保存将创建新版本，
+        当前版本 {{ definition?.version || '—' }}
+      </template>
+      <template #actions>
         <el-button size="small" @click="newProfileDialogVisible = true">新建人格</el-button>
         <el-button size="small" :loading="importing" @click="onPickImportFile">导入角色卡</el-button>
         <el-button size="small" @click="onExport">导出</el-button>
         <el-button size="small" @click="openVersions">版本历史</el-button>
-      </div>
-    </div>
+      </template>
+    </TabHeader>
 
     <input
       ref="fileInputRef"
@@ -600,32 +598,6 @@ watch(
 </template>
 
 <style lang="scss" scoped>
-.tab-head {
-  display: flex;
-  gap: $space-4;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: $space-4;
-}
-
-.tab-title {
-  margin: 0 0 $space-1;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.tab-subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-
-.head-actions {
-  display: flex;
-  gap: $space-2;
-  align-items: center;
-}
-
 .profile-selector {
   display: flex;
   gap: $space-3;

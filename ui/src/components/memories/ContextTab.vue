@@ -12,6 +12,7 @@ import type { ConversationTurn } from '@/types/api'
 import ContextTable from './ContextTable.vue'
 import ContextDetailDrawer from './ContextDetailDrawer.vue'
 import InteractionList from './InteractionList.vue'
+import TabHeader from '@/components/common/TabHeader.vue'
 
 const props = defineProps<{
   active?: boolean
@@ -202,12 +203,11 @@ watch(() => props.active, (active) => {
 
 <template>
   <div class="context-tab">
-    <div class="tab-head">
-      <div>
-        <h3 class="tab-title">短期记忆（上下文）</h3>
-        <p class="tab-subtitle">按说话者拆分的结构化事件流，历史快照会去重并保留平台身份、空间与事件时间。</p>
-      </div>
-      <div class="head-actions">
+    <TabHeader
+      title="短期记忆（上下文）"
+      subtitle="按说话者拆分的结构化事件流，历史快照会去重并保留平台身份、空间与事件时间。"
+    >
+      <template #actions>
         <el-button
           :loading="loading"
           @click="() => { refreshSources(); refresh(); }"
@@ -215,8 +215,8 @@ watch(() => props.active, (active) => {
           <el-icon><Refresh /></el-icon>
           <span>刷新</span>
         </el-button>
-      </div>
-    </div>
+      </template>
+    </TabHeader>
 
     <el-card class="context-card">
       <template #header>
@@ -317,29 +317,4 @@ watch(() => props.active, (active) => {
   margin-top: $space-4;
 }
 
-.tab-head {
-  display: flex;
-  gap: $space-4;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: $space-4;
-}
-
-.tab-title {
-  margin: 0 0 $space-1;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.tab-subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-
-.head-actions {
-  display: flex;
-  gap: $space-2;
-  align-items: center;
-}
 </style>

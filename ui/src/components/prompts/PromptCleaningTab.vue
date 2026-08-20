@@ -12,6 +12,7 @@ import {
 } from '@/api/client'
 import type { PromptCacheEntryDto, PromptCleanSettingDto } from '@/api/client'
 import { formatDate } from '@/utils/format'
+import TabHeader from '@/components/common/TabHeader.vue'
 
 const items = ref<PromptCacheEntryDto[]>([])
 const total = ref(0)
@@ -155,19 +156,15 @@ onMounted(() => {
 
 <template>
   <div>
-    <div class="tab-head">
-      <div>
-        <h3 class="tab-title">提示词清洗缓存</h3>
-        <p class="tab-subtitle">
-          客户端 system 提示词按标题拆分为模块, 每个模块的清洗结果按前台缓存。跳过模块=原样保留;
-          手动编辑直接改缓存值; 删除缓存后下次请求自动重新清洗。
-        </p>
-      </div>
-      <div class="head-actions">
+    <TabHeader
+      title="提示词清洗缓存"
+      subtitle="客户端 system 提示词按标题拆分为模块, 每个模块的清洗结果按前台缓存。跳过模块=原样保留; 手动编辑直接改缓存值; 删除缓存后下次请求自动重新清洗。"
+    >
+      <template #actions>
         <el-button :loading="loading" @click="refresh"><el-icon><Refresh /></el-icon><span>刷新</span></el-button>
         <el-button type="danger" plain @click="onClearAll">清空缓存</el-button>
-      </div>
-    </div>
+      </template>
+    </TabHeader>
 
     <el-row :gutter="16">
       <el-col :span="16">
@@ -266,30 +263,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.tab-head {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.tab-title {
-  margin: 0 0 4px;
-  font-size: 18px;
-}
-
-.tab-subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-
-.head-actions {
-  display: flex;
-  gap: 8px;
-}
-
 .filter-bar {
   display: flex;
   gap: 8px;

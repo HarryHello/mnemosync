@@ -17,6 +17,7 @@ import {
   listUpstreamAvailableModels,
 } from '@/api/client'
 import type { UpstreamService } from '@/types/api'
+import TabHeader from '@/components/common/TabHeader.vue'
 import ModelRegistrySection from './ModelRegistrySection.vue'
 
 const services = ref<UpstreamService[]>([])
@@ -189,15 +190,10 @@ defineExpose({ refresh })
 </script>
 
 <template>
-  <div class="tab-head">
-    <div>
-      <h3 class="tab-title">上游 API</h3>
-      <p class="tab-subtitle">
-        管理 Mnemosync 使用的上游服务商 (如 DashScope / OpenRouter / 本地网关)。左侧选择服务商,
-        右侧就地编辑凭证与模型配置; 按角色绑定去『模型管理』tab。
-      </p>
-    </div>
-  </div>
+  <TabHeader
+    title="上游 API"
+    subtitle="管理 Mnemosync 使用的上游服务商 (如 DashScope / OpenRouter / 本地网关)。左侧选择服务商, 右侧就地编辑凭证与模型配置; 按角色绑定去『模型管理』tab。"
+  />
   <el-card class="provider-workbench" v-loading="loading" shadow="never">
     <!-- ── 左侧: 服务商来源列表 ─────────────────────────────────────────── -->
     <div class="provider-sidebar">
@@ -370,26 +366,6 @@ defineExpose({ refresh })
 </template>
 
 <style lang="scss" scoped>
-.tab-head {
-  display: flex;
-  gap: $space-4;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: $space-4;
-}
-
-.tab-title {
-  margin: 0 0 $space-1;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.tab-subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-
 .provider-workbench {
   display: flex;
   flex-direction: column;

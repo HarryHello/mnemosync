@@ -15,6 +15,7 @@ import type {
   UpstreamModelType,
   UpstreamService,
 } from '@/types/api'
+import TabHeader from '@/components/common/TabHeader.vue'
 import ModelBindingsSection from './ModelBindingsSection.vue'
 import ModelBindingDialog from './ModelBindingDialog.vue'
 
@@ -137,20 +138,17 @@ defineExpose({ refresh })
 
 <template>
   <div>
-    <div class="tab-head">
-      <div>
-        <h3 class="tab-title">模型管理</h3>
-        <p class="tab-subtitle">
-          按角色维护候选优先级列表: priority 0 为首选, 上游返回可重试错误 (5xx / 超时) 时自动回退到下一位。嵌入模型为单绑定, 更换需走重建流程。
-        </p>
-      </div>
-      <div class="head-actions">
+    <TabHeader
+      title="模型管理"
+      subtitle="按角色维护候选优先级列表: priority 0 为首选, 上游返回可重试错误 (5xx / 超时) 时自动回退到下一位。嵌入模型为单绑定, 更换需走重建流程。"
+    >
+      <template #actions>
         <el-button :loading="loading" @click="refresh">
           <el-icon><Refresh /></el-icon>
           <span>刷新</span>
         </el-button>
-      </div>
-    </div>
+      </template>
+    </TabHeader>
 
     <el-alert
       v-if="!loading && servicesEmpty"
@@ -182,31 +180,3 @@ defineExpose({ refresh })
     />
   </div>
 </template>
-
-<style lang="scss" scoped>
-.tab-head {
-  display: flex;
-  gap: $space-4;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: $space-4;
-}
-
-.tab-title {
-  margin: 0 0 $space-1;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.tab-subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-
-.head-actions {
-  display: flex;
-  gap: $space-2;
-  align-items: center;
-}
-</style>
