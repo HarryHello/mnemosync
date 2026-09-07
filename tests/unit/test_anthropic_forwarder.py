@@ -164,3 +164,44 @@ def test_convert_tool_use_response() -> None:
     assert result["choices"][0]["finish_reason"] == "tool_calls"
     assert msg["tool_calls"][0]["function"]["name"] == "get_weather"
     assert '"city"' in msg["tool_calls"][0]["function"]["arguments"]
+
+
+def test_convert_assistant_tool_calls_to_tool_use() -> None:
+    """OpenAI assistant.tool_calls → Anthropic tool_use blocks (不再丢弃)."""
+    messages = [
+        {"role": "assistant", "content": "我来查", "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "get_weather", "arguments": '{"city": "北京"}'}},
+        ]},
+    ]
+    system, msgs = _convert_messages_to_anthropic(messages)
+    assert system is None
+    blocks = msgs[0]["content"]
+    assert any(b["type"] == "text" and b["text"] == "我来查" for b in blocks)
+    tool_use = next(b for b in blocks if b["type"] == "tool_use")
+    assert tool_use["id"] == "call_1"
+    assert tool_use["name"] == "get_weather"
+    assert tool_use["input"] == {"city": "北京"}
+
+
+def test_convert_thinking_to_reasoning_content() -> None:
+    """Anthropic thinking block → OpenAI reasoning_content."""
+    resp = _make_anthropic_response(
+        [SimpleNamespace(type="thinking", thinking="让我想想")],
+    )
+    result = _convert_anthropic_response_to_openai(resp, "claude-3")
+    assert result["choices"][0]["message"]["reasoning_content"] == "让我想想"
+
+
+def test_stream_thinking_delta_to_reasoning_content() -> None:
+    """Anthropic 流式 thinking_delta → OpenAI reasoning_content chunk."""
+    from types import SimpleNamespace
+
+    from src.infra.forwarder.anthropic import _convert_stream_event
+
+    event = SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(
+        type="thinking_delta", thinking="思考中",
+    ))
+    chunk = _convert_stream_event(event, "chatcmpl_1", "claude-3")
+    assert chunk is not None
+    assert chunk["choices"][0]["delta"]["reasoning_content"] == "思考中"

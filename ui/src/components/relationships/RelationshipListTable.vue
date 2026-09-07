@@ -27,15 +27,20 @@ const emit = defineEmits<{
 type TagType = 'info' | 'primary' | 'success' | 'warning' | 'danger'
 
 function typeTag(t: string | null): { label: string; type: TagType } {
+  // 档位与措辞对齐后端 RELATIONSHIP_STAGE_LABELS (models.py) 与详情面板 levelText
   switch (t) {
     case 'intimate':
-      return { label: '亲密', type: 'danger' }
+      return { label: '亲密', type: 'success' }
     case 'friend':
-      return { label: '朋友', type: 'success' }
+      return { label: '友好', type: 'primary' }
     case 'acquaintance':
-      return { label: '熟人', type: 'primary' }
+      return { label: '熟悉', type: 'success' }
     case 'stranger':
-      return { label: '陌生', type: 'info' }
+      return { label: '普通', type: 'info' }
+    case 'cold':
+      return { label: '冷淡', type: 'warning' }
+    case 'hostile':
+      return { label: '敌对', type: 'danger' }
     default:
       return { label: t ?? '—', type: 'info' }
   }
@@ -56,6 +61,15 @@ function identityDetail(row: Relationship): string {
   return accounts
     .map((account) => `${account.frontend} · ${account.external_key}`)
     .join(' / ')
+}
+
+function clamp(v: number, min: number, max: number): number {
+  if (Number.isNaN(v)) return 0
+  return Math.max(min, Math.min(max, v))
+}
+
+function favorScore(row: Relationship): number {
+  return Math.round(clamp(row.favor, -1, 1) * 100)
 }
 </script>
 
@@ -84,14 +98,9 @@ function identityDetail(row: Relationship): string {
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="亲密度" width="120" sortable="custom" prop="intimacy">
+      <el-table-column label="好感度" width="120" sortable="custom" prop="favor">
         <template #default="{ row }: { row: Relationship }">
-          <span class="mono">{{ row.intimacy.toFixed(3) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="信任度" width="120" sortable="custom" prop="trust">
-        <template #default="{ row }: { row: Relationship }">
-          <span class="mono">{{ row.trust.toFixed(3) }}</span>
+          <span class="mono">{{ favorScore(row) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="用户称呼" width="140" show-overflow-tooltip>
@@ -129,31 +138,31 @@ function identityDetail(row: Relationship): string {
 <style lang="scss" scoped>
 .identity-cell {
   display: flex;
-  min-width: 0;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .identity-name {
   overflow: hidden;
-  color: var(--el-text-color-primary);
-  font-weight: 600;
   text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
   white-space: nowrap;
 }
 
 .identity-detail {
   overflow: hidden;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
   text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
   white-space: nowrap;
 }
 
 .pagination-wrap {
-  margin-top: $space-4;
   display: flex;
   justify-content: flex-end;
+  margin-top: $space-4;
 }
 
 .mono {

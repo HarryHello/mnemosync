@@ -209,11 +209,39 @@ async def check_update() -> dict[str, Any]:
     return {"update_available": False}
 
 
+@router.get("/versions")
+async def list_versions() -> dict[str, Any]:
+    """列出所有可用版本 (含发布描述), 供面板选择升级目标."""
+    from src.infra.update_checker import list_releases
+
+    current = _current_version()
+    releases = await list_releases(limit=30)
+    return {
+        "current_version": current,
+        "releases": releases,
+    }
+
+
+def _current_version() -> str:
+    """读取当前运行版本."""
+    try:
+        return _pkg_version("mnemosync")
+    except PackageNotFoundError:
+        return "0.0.0+unknown"
+
+
+class UpgradeBody(BaseModel):
+    """升级请求体. version 可选, 指定则升级到该版本, 否则到最新."""
+
+    version: str | None = None
+
+
 @router.post("/upgrade")
-async def upgrade() -> dict[str, Any]:
+async def upgrade(body: UpgradeBody | None = None) -> dict[str, Any]:
     """执行升级 (mnemosync upgrade).
 
     通过 subprocess 触发, 因为升级会替换代码文件, 不能在当前进程内执行.
+    body.version 指定时升级到该版本 (如 "v0.4.0"), 否则升级到分支最新.
     """
     import subprocess
 
@@ -224,12 +252,17 @@ async def upgrade() -> dict[str, Any]:
     env.setdefault("PYTHONPATH", project_root)
     env["MNEMOSYNC_DIR"] = project_root
 
+    cmd = [sys.executable, "-m", "src.cli.cli", "upgrade"]
+    if body and body.version:
+        cmd += ["--version", body.version]
+
     proc = subprocess.Popen(
-        [sys.executable, "-m", "src.cli.cli", "upgrade"],
+        cmd,
         cwd=project_root,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
-    return {"success": True, "message": f"升级已启动 (PID: {proc.pid}), 请稍后刷新页面"}
+    target = body.version if body and body.version else "最新版"
+    return {"success": True, "message": f"升级到 {target} 已启动 (PID: {proc.pid}), 请稍后刷新页面"}

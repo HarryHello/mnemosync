@@ -52,6 +52,7 @@ class PersonaDefinition:
     author: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    relationship_alpha: str = "normal"  # v0.4.1: 好感度演进预设 id (RFC §2.3)
 
     def get_identity_for_space(self, space_id: str | None) -> PersonaIdentity:
         """获取指定空间的有效身份 (应用覆盖后).
@@ -136,6 +137,7 @@ class PersonaDefinition:
             "author": self.author,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+            "relationship_alpha": self.relationship_alpha,
         }
 
     @staticmethod
@@ -162,4 +164,5 @@ class PersonaDefinition:
             author=d.get("author"),
             created_at=datetime.fromisoformat(d["created_at"]) if "created_at" in d else datetime.now(UTC),
             updated_at=datetime.fromisoformat(d["updated_at"]) if "updated_at" in d else datetime.now(UTC),
+            relationship_alpha=d.get("relationship_alpha", "normal"),
         )

@@ -1,6 +1,6 @@
 # 故障排查指南
 
-> **系统版本**: v0.3.4
+> **系统版本**: v0.4.1
 > **最后更新**: 2026-08-01
 
 常见问题、症状与解决方案索引。
@@ -188,6 +188,56 @@ v0.3.x 起改用 `MigrationRunner` + `_migrations` 跟踪表，幂等迁移不�
 **症状**: CLI 操作报 connection refused。
 
 **原因**: CLI 默认连 `http://localhost:16125`，若服务跑在其他地址需要 `--host` 参数。
+
+---
+
+## 8. 多模态 / 多格式 (v0.4)
+
+### 8.1 图片没被识别 / 模型看不到图片
+
+**症状**: 发送图片后模型回复不含图片内容，或日志出现 `[图片描述失败]`。
+
+**原因**:
+- 目标模型不支持图片 → 由 Vision Description Agent 转述；转述失败返回占位符 `[图片描述失败]`
+- ASSIST 角色绑定的模型也不支持视觉 → 无法转述
+
+**解决**:
+1. 模型管理 → 角色绑定 → 检查 MAIN 模型的 `input_modalities` 是否含 `image`
+2. 若 MAIN 不支持图片，确保 **ASSIST** 绑定了一个支持视觉的模型（Vision Agent 用 ASSIST 转述）
+3. 检查服务商 API Key 是否有图片权限
+
+### 8.2 流式错误帧
+
+**症状**: 流式响应返回 `data: {"error": "..."}` 错误帧。
+
+**原因**: 上游 4xx（参数不被该 api_format 接受）或网络错误。
+
+**排查**:
+1. 模型管理 → 上游服务 → 确认该服务商的 `api_format` 与 base_url 匹配
+   - `openai` → base_url 根地址 (如 `https://api.openai.com/v1`)
+   - `anthropic` → base_url 指向 Anthropic 端点 (如 `https://api.anthropic.com/v1`)
+   - `responses` → base_url 指向 OpenAI Responses 端点
+2. 用 `mnemosync serve --debug` 查看上游请求/响应 JSON
+
+---
+
+## 9. 升级 / 版本 (v0.4.1)
+
+### 9.1 `版本降级被拒绝`
+
+**症状**: 升级时报 `版本降级被拒绝: 当前 X → 目标 Y`。
+
+**原因**: install.sh 带版本守卫, 只能升不能降 (低版本 < Beta版 < 正式版)。
+
+**解决**: 不能回退到更低版本。若确有需要, 手动 `git checkout` 指定 tag 并强制忽略守卫。
+
+### 9.2 `mnemosync versions` 无法获取列表
+
+**症状**: `versions` 命令报网络错误或空列表。
+
+**原因**: 依赖 GitHub API, 服务器无法访问 GitHub。
+
+**解决**: 配置 `GITHUB_PROXY` 代理, 或检查 DNS / 防火墙。
 
 ---
 

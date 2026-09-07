@@ -1,9 +1,16 @@
 """请求派发辅助: 模型验证、消息规范化、工具事务、提示词清洗、身份绑定、状态构建."""
+
+import asyncio
 import json as _json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from src.infra.forwarder.forwarder import UpstreamError
+
+if TYPE_CHECKING:
+    from src.core.agents.cleaning_module import CleaningModule
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -14,6 +21,7 @@ from src.api.tool_transactions import (
     ToolTransactionError,
     extract_tool_transaction_tail,
 )
+from src.core.agents.spec import get_spec
 from src.core.config import get_settings
 from src.core.constants import VIRTUAL_MODEL_ANY
 from src.core.utils import last_user_message
@@ -24,6 +32,8 @@ from ._accessors import (
     _get_debug_bus,
     _get_identity_store,
     _get_multi_forwarder,
+    _get_prompt_cache_store,
+    _get_prompt_clean_semaphore,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +48,7 @@ class BindContext:
 
     携带确定性的绑定结果数据和注入提示词, 由调用方构建精简 state 走 LLM 自然回复.
     """
+
     kind: Literal["initiate", "confirm"]
     success: bool
     code: str | None = None  # 发起绑定时的验证码
@@ -97,10 +108,7 @@ def _normalize_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
         content = m.get("content")
         if isinstance(content, list):
             # 检查是否包含图片
-            has_image = any(
-                isinstance(p, dict) and p.get("type") == "image_url"
-                for p in content
-            )
+            has_image = any(isinstance(p, dict) and p.get("type") == "image_url" for p in content)
             if has_image:
                 # 保留原始 content parts, 由后续步骤处理
                 pass
@@ -259,17 +267,253 @@ async def _extract_and_resolve_tool_transaction(
 # ── 提示词清洗 + 内部工具 ────────────────────────────────────
 
 
+# 提示词清洗: 单模块前台等待上限 (秒, 与 AgentSpec timeout 单一来源),
+# 超时本次丢弃 + 后台继续
+PROMPT_CLEAN_FRONT_TIMEOUT = float(get_spec("prompt_cleaning").timeout_seconds)
+# 429 限流退避重试 (秒)
+_PROMPT_CLEAN_RETRY_DELAYS = (1.0, 2.0, 4.0)
+# in-flight 去重表: (frontend, module_hash) -> Task
+_INFLIGHT_CLEAN: dict[tuple[str, str], "asyncio.Task[Any]"] = {}
+
+
+async def _clean_module_with_retry(
+    module_text: str,
+    forwarder: "Any",
+    semaphore: "asyncio.Semaphore",
+) -> str:
+    """清洗单个模块: 受全局信号量约束, 429 限流退避重试 (每批最多 4 次尝试).
+
+    Returns:
+        清洗结果 clean_prompt (可能为空 = 全部丢弃).
+    Raises:
+        失败的 UpstreamError 等异常 (由调用方处理).
+    """
+    from src.core.agents.factory import run_prompt_cleaning
+
+    attempts = len(_PROMPT_CLEAN_RETRY_DELAYS) + 1
+    for attempt in range(attempts):
+        try:
+            async with semaphore:
+                out = await run_prompt_cleaning(
+                    forwarder=forwarder,
+                    system_message=module_text,
+                )
+            return out.clean_prompt
+        except UpstreamError as e:
+            is_rate = e.status_code == 429 and e.category in ("rate", "unknown")
+            if is_rate and attempt < len(_PROMPT_CLEAN_RETRY_DELAYS):
+                logger.warning(
+                    "  🧹 429 限流, 退避重试 (%ds): %s", _PROMPT_CLEAN_RETRY_DELAYS[attempt], e
+                )
+                await asyncio.sleep(_PROMPT_CLEAN_RETRY_DELAYS[attempt])
+                continue
+            raise
+
+    # 循环正常结束 (理论上不可达: 429 永续时最后 raise; 此处兜底)
+    raise UpstreamError(429, "prompt cleaning rate limited after retries")
+
+
+async def _save_clean_cache(
+    cache: Any,
+    frontend: str,
+    module_hash: str,
+    module_title: str,
+    module_text: str,
+    clean_prompt: str,
+) -> None:
+    from src.persistence.prompt_cache_store import PromptCacheEntry
+
+    try:
+        await cache.save(
+            PromptCacheEntry(
+                frontend=frontend,
+                module_hash=module_hash,
+                module_title=module_title,
+                module_text=module_text,
+                clean_prompt=clean_prompt,
+            )
+        )
+    except Exception as e:
+        logger.warning("  🧹 写清洗缓存失败: %s", e)
+
+
+async def _clean_one_module(
+    mod: "CleaningModule",
+    *,
+    frontend: str,
+    skip_titles: set[str],
+    cache: Any,
+    semaphore: "asyncio.Semaphore",
+    forwarder: "Any",
+) -> tuple[str, dict[str, Any]]:
+    """清洗一个模块: 跳过配置 → 缓存命中 → in-flight 复用 → 发送(超时丢弃+后台).
+
+    Returns:
+        (clean_prompt, meta): clean_prompt 为空表示本次不注入该模块
+        (跳过时返回原文, 由调用方按 skipped 处理).
+    """
+    import hashlib
+
+    # 跳过配置: 原样保留
+    if mod.title in skip_titles:
+        return mod.text, {"skipped": True}
+
+    module_hash = hashlib.sha256(mod.text.encode("utf-8")).hexdigest()
+    key = (frontend, module_hash)
+
+    # 缓存命中
+    if cache is not None:
+        try:
+            entry = await cache.get(frontend, module_hash)
+        except Exception:
+            entry = None
+        if entry is not None:
+            return entry.clean_prompt, {"cached": True}
+
+    # in-flight 复用: 同一 (frontend, hash) 正在清洗 → 等它结果
+    existing = _INFLIGHT_CLEAN.get(key)
+    if existing is not None:
+        try:
+            clean = await asyncio.shield(existing)
+            return clean, {"inflight": True}
+        except Exception:
+            return "", {"failed": True}
+
+    task = asyncio.create_task(_clean_module_with_retry(mod.text, forwarder, semaphore))
+    _INFLIGHT_CLEAN[key] = task
+
+    def _on_done(_t: "asyncio.Task[Any]", k: tuple[str, str] = key) -> None:
+        _INFLIGHT_CLEAN.pop(k, None)
+
+    task.add_done_callback(_on_done)
+
+    try:
+        clean = await asyncio.wait_for(asyncio.shield(task), timeout=PROMPT_CLEAN_FRONT_TIMEOUT)
+        # 成功: 写缓存
+        if cache is not None:
+            await _save_clean_cache(cache, frontend, module_hash, mod.title, mod.text, clean)
+        return clean, {}
+    except TimeoutError:
+        # 本次丢弃, 后台继续 (完成后写缓存)
+        logger.warning(
+            "  🧹 模块 [%s] 清洗超过 %.0fs, 本次丢弃, 后台继续",
+            mod.title,
+            PROMPT_CLEAN_FRONT_TIMEOUT,
+        )
+
+        async def _bg_save(t: "asyncio.Task[Any]") -> None:
+            try:
+                c = await asyncio.shield(t)
+                if cache is not None:
+                    await _save_clean_cache(cache, frontend, module_hash, mod.title, mod.text, c)
+                logger.info("  🧹 后台清洗完成 [%s], 已写缓存", mod.title)
+            except Exception as e:
+                logger.warning("  🧹 后台清洗失败 [%s]: %s", mod.title, e)
+
+        asyncio.create_task(_bg_save(task))
+        return "", {"deferred": True}
+    except Exception as e:
+        logger.warning("  🧹 清洗失败 [%s], 本次丢弃: %s", mod.title, e)
+        return "", {"failed": True}
+
+
+async def _run_parallel_preprocess(
+    *,
+    request_messages: list[ChatMessage],
+    persona: str,
+    http_request: Request,
+    source_frontend: str | None,
+    messages_dict: list[dict[str, Any]],
+    interaction_id: str | None,
+) -> tuple[
+    str,
+    dict[str, Any] | None,
+    dict[str, Any],
+    dict[str, Any] | None,
+    str,
+    Any | None,
+]:
+    """并行预处理 (v0.4.1): 提示词清洗 ∥ 情绪分析+mood ∥ 图片转写.
+
+    三者输入在请求早期就绪、互不依赖, 用 gather 并发发出 (省 ~2/3 的
+    LLM 往返时间, 融入首 token 延迟的只有最慢那一个).
+    代理推理 (proxy_thinking) 不入此并行 — 它是主模型的"思考", 必须串行于主对话之前.
+
+    Returns:
+        (persona, prompt_cleaning_result, emotion_analysis, mood_state,
+         vision_content, main_candidate)
+    """
+    from src.api.routes.forward.identity import _resolve_main_candidate
+    from src.core.constants import DEFAULT_PERSONA_ID
+    from src.core.memory.mood import run_emotion_mood_channel
+
+    from ._accessors import _get_multi_forwarder
+
+    multi_forwarder = _get_multi_forwarder(http_request)
+    # 主候选一次解析: 供 Vision 图片支持判断 + 复用为第 13 步 main_model
+    main_candidate = await _resolve_main_candidate(http_request, streaming=False)
+    model_supports_images = bool(
+        main_candidate is not None and "image" in (main_candidate.input_modalities or [])
+    )
+    # 情绪输入: 本轮用户消息 (extracted_new 的等价物)
+    extracted: list[dict[str, Any]] = []
+    user_msg = last_user_message(messages_dict)
+    if user_msg:
+        extracted = [{"role": "user", "content": user_msg}]
+
+    async def _clean() -> tuple[str, dict[str, Any] | None]:
+        return await _prepare_prompt(request_messages, persona, http_request, source_frontend)
+
+    async def _emotion() -> tuple[dict[str, Any], dict[str, Any] | None]:
+        from src.api.deps import _state as _api_state
+
+        persona_store = getattr(_api_state(http_request), "persona_store", None)
+        return await run_emotion_mood_channel(
+            multi_forwarder,
+            persona_store,
+            DEFAULT_PERSONA_ID,
+            interaction_id=interaction_id,
+            extracted=extracted,
+        )
+
+    async def _vision() -> str:
+        # 模型支持图片时不转写 (图片直接透传); 无图片快速返回
+        from src.api.routes.forward.stream import _describe_images_if_needed
+
+        if model_supports_images:
+            return ""
+        return await _describe_images_if_needed(
+            {"_original_messages": messages_dict},
+            "",
+            multi_forwarder,
+        )
+
+    (
+        (persona2, cleaning_result),
+        (emotion_analysis, mood_state),
+        vision_content,
+    ) = await asyncio.gather(_clean(), _emotion(), _vision())
+    return persona2, cleaning_result, emotion_analysis, mood_state, vision_content, main_candidate
+
+
 async def _prepare_prompt(
     request_messages: list[ChatMessage],
     persona: str,
     http_request: Request,
+    source_frontend: str | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
-    """提取客户端 system 消息并执行提示词清洗.
+    """提取客户端 system 消息并执行模块化提示词清洗 (v0.4.1).
+
+    流程: markdown 标题分割 → 按模块跳过/缓存/in-flight 去重 →
+    受全局并发信号量约束的并发清洗 (429 限流退避, 配额类由 MultiForwarder
+    fallback) → 超时模块丢本次 + 后台继续写缓存 → 按原顺序拼接注入 persona.
 
     Returns:
         (persona, prompt_cleaning_result) — persona 已追加清洗后指令;
         prompt_cleaning_result 为 None 表示无清洗动作.
     """
+    from src.core.agents.cleaning_module import split_prompt_modules
+
     client_system_msg = ""
     for msg in request_messages:
         if msg.role == "system" and msg.content:
@@ -279,35 +523,77 @@ async def _prepare_prompt(
     if not client_system_msg.strip():
         return persona, None
 
-    logger.debug("  cleaning client system message (length: %d)", len(client_system_msg))
+    frontend = source_frontend or "unknown"
+    logger.debug("  🧹 清洗客户端 system (len=%d, frontend=%s)", len(client_system_msg), frontend)
+
+    modules = split_prompt_modules(client_system_msg)
+    cache = _get_prompt_cache_store(http_request)
+    semaphore = _get_prompt_clean_semaphore(http_request) or asyncio.Semaphore(20)
     multi_forwarder = _get_multi_forwarder(http_request)
+
+    # 加载跳过配置 (按前台 + `*` 通配)
+    skip_titles: set[str] = set()
+    if cache is not None:
+        try:
+            skip_titles = await cache.skip_modules(frontend)
+        except Exception as e:
+            logger.debug("  🧹 跳过配置加载失败: %s", e)
+
     try:
-        from src.api.deps import _state as _get_state
-        from src.core.agents import run_prompt_cleaning
-        from src.core.agents.tracking import run_agent_tracked
-        _st = _get_state(http_request)
-        cleaning_out = await run_agent_tracked(
-            "prompt_cleaning",
-            run_prompt_cleaning(
-                forwarder=multi_forwarder,
-                system_message=client_system_msg,
-            ),
-            store=_st.agent_run_store,
-            debug_bus=_st.debug_bus,
+        results = await asyncio.gather(
+            *[
+                asyncio.create_task(
+                    _clean_one_module(
+                        mod,
+                        frontend=frontend,
+                        skip_titles=skip_titles,
+                        cache=cache,
+                        semaphore=semaphore,
+                        forwarder=multi_forwarder,
+                    )
+                )
+                for mod in modules
+            ]
         )
-        result = {
-            "clean_prompt": cleaning_out.clean_prompt,
-            "reasoning": cleaning_out.reasoning,
-        }
-        if cleaning_out.clean_prompt:
-            persona = persona + "\n\n" + cleaning_out.clean_prompt
-            logger.debug("  cleaned: output length %d", len(cleaning_out.clean_prompt))
-        else:
-            logger.debug("  cleaned: no retainable instructions, all discarded")
-        return persona, result
     except Exception as e:
-        logger.warning("prompt cleaning failed, degrading: discard all client system (%s)", e)
-        return persona, {"clean_prompt": "", "reasoning": str(e)}
+        logger.warning("提示词清洗整体失败, 降级为全部丢弃: %s", e)
+        return persona, {"clean_prompt": "", "reasoning": str(e), "modules": []}
+
+    # 按原顺序拼接: 成功(clean 非空) / 跳过(原文) 注入; 失败/超时丢弃
+    parts: list[str] = []
+    module_metas: list[dict[str, Any]] = []
+    for mod, (clean, meta) in zip(modules, results, strict=True):
+        if meta.get("skipped"):
+            parts.append(clean)
+            module_metas.append({"title": mod.title, "skipped": True})
+            continue
+        if clean:
+            parts.append(clean)
+        module_metas.append(
+            {
+                "title": mod.title,
+                "clean_prompt": clean,
+                **{k: v for k, v in meta.items() if k != "skipped"},
+            }
+        )
+
+    joined = "\n\n".join(parts).strip()
+    if joined:
+        persona = persona + "\n\n" + joined
+
+    result: dict[str, Any] = {
+        "clean_prompt": joined,
+        "reasoning": "",
+        "modules": module_metas,
+        "frontend": frontend,
+    }
+    logger.debug(
+        "  🧹 清洗完成: %d/%d 模块注入 (总长 %d)",
+        sum(1 for p in parts if p),
+        len(modules),
+        len(joined),
+    )
+    return persona, result
 
 
 # ── 身份绑定处理 ──────────────────────────────────────────────
@@ -331,20 +617,42 @@ async def _handle_identity_binding(
     bind_cmd = settings.runtime.identity_bind_command
     bind_prefix = settings.runtime.identity_bind_confirm_prefix
 
-    if not actor_id:
-        return None
-
     last_user_msg = last_user_message(messages_dict).strip()
+
+    # 无 actor_id (API Key 未配置身份策略, 非归属模式): 仍拦截绑定指令,
+    # 但给出明确提示而非直接放行让模型瞎猜.
+    if not actor_id:
+        if last_user_msg == bind_cmd or (
+            last_user_msg.startswith(bind_prefix + " ") and len(last_user_msg.split()) == 2
+        ):
+            return BindContext(
+                kind="initiate",
+                success=False,
+                message="当前接入未启用身份识别",
+                prompt_hint=(
+                    "用户请求跨平台身份绑定, 但当前 API Key 未配置身份识别策略,\n"
+                    "无法建立身份进行绑定。请用你的风格告知用户: 需要先在面板的"
+                    "「API Key」页面为该 Key 配置身份识别策略 (direct / api_key_bound / "
+                    "regex / llm), 才能使用跨平台绑定功能。"
+                ),
+            )
+        return None
 
     if last_user_msg == bind_cmd:
         return await _bind_initiate(
-            http_request, actor_id, space_id, current_speaker, bind_prefix,
+            http_request,
+            actor_id,
+            space_id,
+            current_speaker,
+            bind_prefix,
         )
 
     if last_user_msg.startswith(bind_prefix + " ") and len(last_user_msg.split()) == 2:
         input_code = last_user_msg.split(None, 1)[1].strip()
         return await _bind_confirm(
-            http_request, input_code, actor_id,
+            http_request,
+            input_code,
+            actor_id,
         )
 
     return None
@@ -362,7 +670,9 @@ async def _bind_initiate(
 
     code_store = get_binding_code_store()
     code = await code_store.generate(
-        actor_id=actor_id, space_id=space_id, display_name=current_speaker,
+        actor_id=actor_id,
+        space_id=space_id,
+        display_name=current_speaker,
     )
     return BindContext(
         kind="initiate",
@@ -428,7 +738,12 @@ async def _bind_confirm(
         await identity_store.bind_actor_to_group(actor_id, group_id)
         migrated = await _migrate_relationships(http_request, actor_id, group_id)
         if migrated:
-            logger.info("relationship migration: actor=%s -> group=%s, %d rows", actor_id, group_id, migrated)
+            logger.info(
+                "relationship migration: actor=%s -> group=%s, %d rows",
+                actor_id,
+                group_id,
+                migrated,
+            )
         return BindContext(
             kind="confirm",
             success=True,
@@ -442,7 +757,9 @@ async def _bind_confirm(
         for aid in (target_actor_id, actor_id):
             migrated = await _migrate_relationships(http_request, aid, group.id)
             if migrated:
-                logger.info("relationship migration: actor=%s -> group=%s, %d rows", aid, group.id, migrated)
+                logger.info(
+                    "relationship migration: actor=%s -> group=%s, %d rows", aid, group.id, migrated
+                )
         return BindContext(
             kind="confirm",
             success=True,
@@ -461,7 +778,9 @@ async def _migrate_relationships(http_request: Request, actor_id: str, group_id:
     if not relationship_store:
         return 0
     return await relationship_store.migrate_relationships_to_group(
-        DEFAULT_PERSONA_ID, actor_id, group_id,
+        DEFAULT_PERSONA_ID,
+        actor_id,
+        group_id,
     )
 
 
@@ -469,17 +788,21 @@ def _build_bind_response(content: str, *, model: str = VIRTUAL_MODEL_ANY) -> JSO
     """构建身份绑定 JSONResponse."""
     from fastapi.responses import JSONResponse
 
-    return JSONResponse(content={
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion",
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
-        }],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    })
+    return JSONResponse(
+        content={
+            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+            "object": "chat.completion",
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+    )
 
 
 # ── 初始状态构建 ──────────────────────────────────────────────
@@ -541,7 +864,8 @@ def _build_initial_state(
         "api_key_id": api_key_id,
         "normalized_events": (
             [event for event in preprocess_result.events if event.origin == "current"]
-            if preprocess_result else []
+            if preprocess_result
+            else []
         ),
     }
     if prompt_cleaning_result:

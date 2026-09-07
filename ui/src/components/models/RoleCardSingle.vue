@@ -96,12 +96,12 @@ function formatContext(n: number | null): string {
 .single-binding {
   display: grid;
   grid-template-columns: 1fr auto;
-  align-items: center;
   gap: $space-3;
+  align-items: center;
   padding: $space-2 $space-3;
+  background: var(--el-fill-color-lighter);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: $radius-sm;
-  background: var(--el-fill-color-lighter);
 }
 
 .cand-body {
@@ -109,36 +109,36 @@ function formatContext(n: number | null): string {
 }
 
 .cand-model {
-  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 13px;
   white-space: nowrap;
 }
 
 .cand-svc {
-  font-size: 12px;
   margin-top: 2px;
+  font-size: 12px;
 }
 
 .cand-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: $space-1;
   margin-top: $space-1;
-  flex-wrap: wrap;
 }
 
 .meta-chip {
+  padding: 1px 6px;
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 11px;
-  padding: 1px 6px;
-  border-radius: $radius-sm;
-  background: var(--el-fill-color);
   color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
+  border-radius: $radius-sm;
 }
 
 .meta-chip-warn {
-  background: var(--el-color-warning-light-9);
   color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
 }
 
 .muted {

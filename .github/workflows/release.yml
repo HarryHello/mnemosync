@@ -50,12 +50,21 @@ jobs:
           tar -czf ui-dist.tar.gz -C ui dist
           ls -lh ui-dist.tar.gz
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (CHANGELOG 描述)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME="${GITHUB_REF#refs/tags/}"
+          # 从 CHANGELOG.md 提取对应版本章节作为 release notes
+          NOTES=$(awk -v tag="$TAG_NAME" '
+              $0 ~ "^## \\[" tag "\\]" {flag=1; next}
+              $0 ~ "^## \\[" && flag {exit}
+              flag {print}
+          ' CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="无 CHANGELOG 条目, 请查看 commit 了解变更。"
+          fi
           gh release create "$TAG_NAME" \
             --title "Mnemosync $TAG_NAME" \
-            --generate-notes \
+            --notes "$NOTES" \
             ui-dist.tar.gz

@@ -56,20 +56,20 @@ const visible = computed({
 }
 
 .secret-label {
+  margin-bottom: $space-1;
   font-size: 13px;
   color: var(--el-text-color-secondary);
-  margin-bottom: $space-1;
 }
 
 .secret-value {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   padding: $space-2 $space-3;
-  border-radius: $radius-sm;
-  background: var(--el-fill-color-light);
   margin-bottom: $space-3;
   word-break: break-all;
+  background: var(--el-fill-color-light);
+  border-radius: $radius-sm;
 
   .mono {
     flex: 1;

@@ -19,16 +19,19 @@ function goToRelationships() {
   router.push('/relationships')
 }
 
-// 根据值返回进度条颜色
+function clamp(v: number, min: number, max: number): number {
+  if (Number.isNaN(v)) return 0
+  return Math.max(min, Math.min(max, v))
+}
+
+// 根据好感度返回进度条颜色 (负数一律用 exception)
 function getProgressType(value: number): '' | 'success' | 'warning' | 'exception' {
+  if (value < 0) return 'exception'
   if (value >= RELATIONSHIP_LEVEL_HIGH) return 'success'
   if (value >= RELATIONSHIP_LEVEL_MEDIUM) return ''
   if (value >= RELATIONSHIP_LEVEL_LOW) return 'warning'
   return 'exception'
 }
-
-// 格式化显示值 (三位小数)
-const formatValue = (v: number) => v.toFixed(3)
 
 function identityName(rel: Relationship): string {
   const account = rel.identity?.accounts[0]
@@ -73,24 +76,14 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
         </div>
         <div class="user-metrics">
           <div class="metric-line">
-            <span class="metric-label">亲密度</span>
+            <span class="metric-label">好感度</span>
             <el-progress
-              :percentage="rel.intimacy * 100"
+              :percentage="(clamp(rel.favor, -1, 1) + 1) * 50"
               :stroke-width="6"
-              :status="getProgressType(rel.intimacy)"
+              :status="getProgressType(rel.favor)"
               :show-text="false"
             />
-            <span class="metric-value">{{ formatValue(rel.intimacy) }}</span>
-          </div>
-          <div class="metric-line">
-            <span class="metric-label">信任度</span>
-            <el-progress
-              :percentage="rel.trust * 100"
-              :stroke-width="6"
-              :status="getProgressType(rel.trust)"
-              :show-text="false"
-            />
-            <span class="metric-value">{{ formatValue(rel.trust) }}</span>
+            <span class="metric-value">{{ Math.round(clamp(rel.favor, -1, 1) * 100) }}</span>
           </div>
         </div>
       </div>
@@ -99,19 +92,18 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
 </template>
 
 <style lang="scss" scoped>
-
 .card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: $space-4;
   padding-bottom: $space-3;
+  margin-bottom: $space-4;
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .card-title {
-  font-weight: 700;
   font-size: 15px;
+  font-weight: 700;
   color: var(--el-text-color-primary);
 }
 
@@ -126,32 +118,32 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
   flex-direction: column;
   gap: $space-2;
   padding: $space-3;
-  border-radius: $radius-md;
   background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-lighter);
+  border-radius: $radius-md;
 }
 
 .user-identity {
   display: flex;
-  min-width: 0;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .user-name {
   overflow: hidden;
-  color: var(--el-text-color-primary);
+  text-overflow: ellipsis;
   font-size: 13px;
   font-weight: 600;
-  text-overflow: ellipsis;
+  color: var(--el-text-color-primary);
   white-space: nowrap;
 }
 
 .user-source {
   overflow: hidden;
-  color: var(--el-text-color-secondary);
-  font-size: 11px;
   text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
   white-space: nowrap;
 }
 
@@ -163,8 +155,8 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
 
 .metric-line {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .metric-line :deep(.el-progress) {
@@ -176,18 +168,18 @@ const topUsers = computed(() => (props.relationships ?? []).slice(0, 5))
 }
 
 .metric-label {
-  width: 48px;
   flex-shrink: 0;
+  width: 48px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
 
 .metric-value {
-  width: 50px;
   flex-shrink: 0;
-  text-align: right;
+  width: 50px;
   font-size: 13px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+  text-align: right;
 }
 </style>

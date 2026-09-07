@@ -121,3 +121,56 @@ def test_convert_tool_call_response() -> None:
     assert result["choices"][0]["finish_reason"] == "tool_calls"
     assert msg["tool_calls"][0]["function"]["name"] == "get_weather"
     assert msg["tool_calls"][0]["id"] == "fc_1"
+
+
+def test_convert_assistant_tool_calls_to_function_call() -> None:
+    """OpenAI assistant.tool_calls → Responses function_call input items."""
+    messages = [
+        {"role": "assistant", "content": "查一下", "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "get_weather", "arguments": "{}"}},
+        ]},
+    ]
+    result = _convert_chat_to_responses(messages)
+    item = next(i for i in result["input"] if i.get("type") == "function_call")
+    assert item["type"] == "function_call"
+    assert item["call_id"] == "call_1"
+    assert item["name"] == "get_weather"
+    assert item["arguments"] == "{}"
+
+
+def test_stream_arguments_delta_and_finish_reason() -> None:
+    """Responses 流式: function_call start → arguments 分片 → completed 带 tool_calls."""
+    from types import SimpleNamespace
+
+    from src.infra.forwarder.responses import _convert_stream_event
+
+    state: dict = {}
+
+    # output_item.added (function_call) → tool_calls start
+    ev = SimpleNamespace(type="response.output_item.added", item=SimpleNamespace(
+        type="function_call", call_id="call_1", name="get_weather", arguments="",
+    ))
+    chunk = _convert_stream_event(ev, "chatcmpl_1", "m", state)
+    assert chunk["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "get_weather"
+
+    # function_call_arguments.delta → arguments 分片
+    ev2 = SimpleNamespace(type="response.function_call_arguments.delta", delta='{"city"')
+    chunk2 = _convert_stream_event(ev2, "chatcmpl_1", "m", state)
+    assert chunk2["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"] == '{"city"'
+
+    # completed → finish_reason tool_calls (已见工具调用)
+    ev3 = SimpleNamespace(type="response.completed")
+    chunk3 = _convert_stream_event(ev3, "chatcmpl_1", "m", state)
+    assert chunk3["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_stream_reasoning_delta() -> None:
+    """Responses 流式 reasoning_text.delta → OpenAI reasoning_content."""
+    from types import SimpleNamespace
+
+    from src.infra.forwarder.responses import _convert_stream_event
+
+    ev = SimpleNamespace(type="response.reasoning_text.delta", delta="推理中")
+    chunk = _convert_stream_event(ev, "chatcmpl_1", "m")
+    assert chunk["choices"][0]["delta"]["reasoning_content"] == "推理中"

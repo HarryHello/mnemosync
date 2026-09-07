@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import PromptCleaningTab from '@/components/prompts/PromptCleaningTab.vue'
 import PromptListTab from '@/components/prompts/PromptListTab.vue'
 import PersonaEditorTab from '@/components/prompts/PersonaEditorTab.vue'
+import MoodMatrixTab from '@/components/prompts/MoodMatrixTab.vue'
 
 const router = useRouter()
 const activeTab = ref('prompts')
@@ -20,6 +22,12 @@ function onEdit(name: string) {
       </el-tab-pane>
       <el-tab-pane label="人格" name="persona">
         <PersonaEditorTab :active="activeTab === 'persona'" />
+      </el-tab-pane>
+      <el-tab-pane label="清洗缓存" name="cleaning">
+        <PromptCleaningTab />
+      </el-tab-pane>
+      <el-tab-pane label="情绪矩阵" name="mood-matrix">
+        <MoodMatrixTab />
       </el-tab-pane>
     </el-tabs>
   </div>

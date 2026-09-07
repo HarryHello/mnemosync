@@ -232,25 +232,25 @@ function contentPreview(content: string): string {
 <style lang="scss" scoped>
 .speaker-cell {
   display: flex;
-  min-width: 0;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .speaker-name {
   overflow: hidden;
-  font-weight: 600;
   text-overflow: ellipsis;
+  font-weight: 600;
   white-space: nowrap;
 }
 
 .mem-content-preview {
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
-  color: var(--el-text-color-regular);
   line-height: 1.5;
+  color: var(--el-text-color-regular);
+  white-space: nowrap;
+  cursor: pointer;
 
   &:hover {
     color: var(--el-color-primary);
@@ -262,8 +262,8 @@ function contentPreview(content: string): string {
 }
 
 .mini {
-  font-size: 11px;
   margin-top: 2px;
+  font-size: 11px;
   color: var(--el-text-color-secondary);
 }
 </style>

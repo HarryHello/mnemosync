@@ -31,10 +31,10 @@ import AppSidebar from './AppSidebar.vue'
 }
 
 .content {
-  flex: 1;
-  min-width: 0;
   display: flex;
+  flex: 1;
   flex-direction: column;
+  min-width: 0;
   background:
     radial-gradient(circle at top right, rgba(66, 133, 244, 0.06), transparent 28%),
     var(--el-bg-color-page);

@@ -1,9 +1,9 @@
 # LangGraph 编排模块 | LangGraph Orchestration
 
-> **模块版本**: v0.3.4
+> **模块版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-12
-> **最后更新**: 2026-08-01
+> **最后更新**: 2026-08-14
 > **作者**: HarryHelloo
 
 ---
@@ -12,7 +12,7 @@
 
 LangGraph 是 Mnemosync 的编排骨架。它决定节点执行顺序、在 Agent 间传递 state、驱动 ReAct 循环。它自身不做模型推理——所有 LLM 调用通过 [Forwarder](forward.md) 转发到远端服务商。
 
-**代码入口**: [src/core/graph/](../../src/core/graph/) (`builder.py` / `nodes.py` / `state.py`)。
+**代码入口**: [src/core/graph/](../../src/core/graph/) (`builder.py` / `nodes/` 节点目录 / `state.py`)。
 
 ---
 
@@ -41,7 +41,8 @@ class AgentState(TypedDict, total=False):
     # main_dialogue 写入
     response: str
     response_chunks: list[bytes]
-    emotion_analysis: dict                  # 预计算的情绪分析 (v0.3.0, 供后续节点共享)
+    emotion_analysis: dict                  # API 层并行预注入 (v0.4.1); 图内兜底计算
+    mood_state: dict | None                 # v0.4.1: 全局 mood (valence/tier/cause), 并行预处理预注入
 
     # memory_analysis 写入
     new_memories: list[dict]
@@ -58,12 +59,12 @@ class AgentState(TypedDict, total=False):
 
 **不在 state 中的东西**:
 - `retrieved_memories` / `permanent_memories` 由 `main_dialogue_node` 内部处理, 不上共享状态
-- `main_model` / `source_frontend` / `api_key_id` / `external_event_id` 是请求级附加键, 由 [forward.py](../../src/api/routes/forward.py) 注入, 不在 TypedDict 定义中
+- `main_model` / `source_frontend` / `api_key_id` / `external_event_id` / `_vision_user_content` (v0.4.1) 是请求级附加键, 由 [forward 包](../../src/api/routes/forward/__init__.py) 注入, 不在 TypedDict 定义中
 - 上游 API Key 与请求体不进 state, API 层预处理完毕
 
 ### 2.1 状态流转
 
-`actor_id` / `space_id` / `channel_type` / `persona_id` 由 API 层 ([forward.py](../../src/api/routes/forward.py)) 在进入图之前写入 state, 节点不自行解析身份。详见 [身份子系统](identity.md)。
+`actor_id` / `space_id` / `channel_type` / `persona_id` 由 API 层 ([forward 包](../../src/api/routes/forward/__init__.py)) 在进入图之前写入 state, 节点不自行解析身份。详见 [身份子系统](identity.md)。
 
 ```
 parse_request       写: extracted_new, source_user
@@ -73,8 +74,9 @@ proxy_thinking      读: extracted_new, source_user
 (可选)              写: proxy_thinking_result
        │
        ▼
-main_dialogue       读: extracted_new, persona, proxy_thinking_result
-                    写: response, response_chunks, emotion_analysis
+main_dialogue       读: extracted_new, persona, proxy_thinking_result,
+                    emotion_analysis / mood_state (API 层并行预注入)
+                    写: response, response_chunks
        │
        ├───────────────────────────┐  (并行分支, 无先后)
        ▼                           ▼
@@ -100,7 +102,7 @@ relationship_analysis        memory_analysis
 | `proxy_thinking` | Agent (CoT) | 可选; 为主对话生成 CoT 推理 | 是 (若启用) |
 | `main_dialogue` | Agent | 拼上下文 + 预计算情绪 + 生成回复 | 是 |
 | `memory_analysis` | Agent (ReAct) | 提取候选记忆 + 受众过滤查重 + 向量入库; 非归属模式跳过 | 否 (流式模式下后台跑) |
-| `relationship_analysis` | Agent (ReAct) | 亲密度/信任度分析; 非归属模式跳过 | 否 (流式模式下后台跑) |
+| `relationship_analysis` | Agent (ReAct) | 好感度增量分析 (v0.4.1: 单 `favor_delta`, 可负, 慢热快冷); 非归属模式跳过 | 否 (流式模式下后台跑) |
 
 **没有独立的 `vector_index` 节点**——嵌入向量的写入 (Chroma) 在 `memory_analysis_node` 内由 `MemoryLifecycle.store_candidate()` 顺手完成。
 
@@ -129,7 +131,7 @@ async def memory_analysis_node(state: AgentState) -> dict:
             make_vector_search_tool(retriever, _retrieval_context(state, rel)),
         ]
 
-        # 从 state 获取预计算的情绪分析 (由 main_dialogue 计算)
+        # 从 state 获取情绪分析 (v0.4.1: API 层并行预处理预注入; 图内兜底计算)
         emotion_analysis = state.get("emotion_analysis", {})
 
         out = await run_memory_analysis(
@@ -214,7 +216,7 @@ graph.add_edge("memory_analysis", END)
 
 ### 4.3 流式模式下的同步 / 异步边界
 
-流式请求下, `main_dialogue` 的 SSE chunks 边收边返给客户端 (在 [forward.py](../../src/api/routes/forward.py) 里直接由 `_handle_stream` 处理, 不完全走图); 主对话完成后, 记忆图通过 `asyncio.create_task(_run_memory_graph(...))` 在后台执行, 不阻塞响应。
+流式请求下, `main_dialogue` 的 SSE chunks 边收边返给客户端 (在 [forward/stream.py](../../src/api/routes/forward/stream.py) 里直接由 `_handle_stream` 处理, 不完全走图); 主对话完成后, 记忆图通过 `asyncio.create_task(_run_memory_graph(...))` 在后台执行, 不阻塞响应。
 
 ```
 主线 (阻塞客户端):
@@ -261,7 +263,7 @@ v0.2.6 把 (b) 剥离到服务端 `conversation_turns` 表 (见 [memory-system.m
 
 - **`thread_id` 由客户端决定**, 不同前端各起各的 thread, 无法跨前端同步 — 直接违背 Mnemosync"多前端 = 同一用户"的核心承诺
 - **进程内 MemorySaver 重启即失** — 服务器视角的记忆真相不该依赖进程生命周期
-- **主对话在流式路径下已不完整走图** — `_handle_stream` 直接从 forward.py 装填 messages + 转发, 图 (`_run_memory_graph`) 仅在后台跑记忆分析和关系分析, checkpoint 作跨请求上下文用不上
+- **主对话在流式路径下已不完整走图** — `_handle_stream` 直接从 forward/stream.py 装填 messages + 转发, 图 (`_run_memory_graph`) 仅在后台跑记忆分析和关系分析, checkpoint 作跨请求上下文用不上
 
 现在 checkpoint 仅剩单请求内节点间 state 共享的角色 ([graph] `checkpoint_backend` 配置仍保留), 生产也不再需要切 SqliteSaver。
 
@@ -273,7 +275,7 @@ v0.2.6 把 (b) 剥离到服务端 `conversation_turns` 表 (见 [memory-system.m
 | 内容 | 逐字 user/assistant turn (append-only) | 结构化 MemoryEntry (抽取后的事实) |
 | 生命周期 | 时间窗 (默认 7d) 后台清理 | 衰减模型 + 手动 Prune |
 | 检索 | 按 ts 直取 + 双窗裁剪 | embedding + rerank |
-| 装填时机 | forward.py `build_short_term_history` | forward.py `render_main_dialogue_system` + 工具调用 |
+| 装填时机 | forward 包 `build_short_term_history` | forward 包 `render_main_dialogue_system` + 工具调用 |
 
 ---
 
@@ -329,3 +331,4 @@ Agent 执行函数在 [src/core/agents/](../../src/core/agents/) (`factory.py` /
 | v0.2.1 | 2026-07-15 | 与代码对齐: 5 节点 (无 vector_index)、AgentState 字段修正、模块路径修正为 `src/core/graph/` |
 | v0.2.6 | 2026-07-18 | §6 checkpoint 不再承担跨请求短期记忆, 迁到 `conversation_turns`; 保留 checkpoint 仅作单请求内 state 共享 |
 | v0.3.0 | 2026-07-26 | 身份字段: AgentState 新增 `actor_id` / `persona_id` / `space_id` / `channel_type` / `emotion_analysis`; `source_user` 语义改为 `effective_user_id` (可为空, 非归属模式); 节点加非归属 guard; 情绪预计算 (`_compute_emotion`) 共享; 衰减由确定性公式 (`run_deterministic_decay`) 处理; 受众过滤 (`_retrieval_context` + `AudienceFilter`) 贯穿检索; 交叉链接 [身份子系统](identity.md) |
+| v0.4.1 | 2026-08-14 | AgentState 新增 `mood_state`; 情绪/mood 由 API 层并行预处理预注入 (`dispatch._run_parallel_preprocess`), 图内 `_prepare_context` 兜底计算; 称呼注入 (`format_relationship` addressing) |

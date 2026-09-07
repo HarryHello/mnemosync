@@ -1,4 +1,7 @@
-"""Relationship analysis node: CoT agent that computes intimacy delta."""
+"""Relationship analysis node: CoT agent computing favor_delta (v0.4.1).
+
+好感度 (favor) 增量可正可负, 慢热快冷 (alpha 预设); 显著负向时写
+EPHEMERAL 情绪锚点 + 更新全局 mood. 旧 intimacy_delta 兼容读取 (T8)."""
 
 import logging
 from typing import Any
@@ -22,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 async def relationship_analysis_node(
-    state: AgentState, config: RunnableConfig | None = None,
+    state: AgentState,
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
-    """Relationship analysis agent: CoT, computes intimacy delta."""
+    """Relationship analysis agent: CoT, computes favor_delta (+ mood_anchor)."""
     from src.core.graph.nodes import _get_stores
 
     if state.get("finish_reason") == "tool_calls":
@@ -75,7 +79,9 @@ async def relationship_analysis_node(
                 conversation=conversation,
                 tools=[
                     make_update_addressing_tool(
-                        relationship_store, state["persona_id"], source_user,
+                        relationship_store,
+                        state["persona_id"],
+                        source_user,
                         actor_id=state.get("actor_id"),
                     ),
                 ],
@@ -93,25 +99,50 @@ async def relationship_analysis_node(
             parent_request_id=state.get("interaction_id"),
         )
 
-        logger.debug("  ✅ 关系分析完成: 亲密 %+.2f, 信任 %+.2f",
-                     out.intimacy_delta, out.trust_delta)
+        logger.debug("  ✅ 关系分析完成: 好感度 %+.2f", out.favor_delta)
 
-        lifecycle = MemoryLifecycle(memory_store, None, forwarder, relationship_store=relationship_store)
+        # v0.4.1: 应用人格的演进预设 (α_up/α_down), 慢热快冷
+        from src.core.config import get_relationship_alpha
+
+        persona_def = state.get("persona_definition")
+        alpha_preset_id = (
+            getattr(persona_def, "relationship_alpha", None) if persona_def is not None else None
+        )
+        alpha = get_relationship_alpha(alpha_preset_id, presets=settings.relationship_alpha)
+        raw_delta = out.favor_delta
+        eff_delta = raw_delta * (alpha.alpha_up if raw_delta >= 0 else alpha.alpha_down)
+
+        lifecycle = MemoryLifecycle(
+            memory_store, None, forwarder, relationship_store=relationship_store
+        )
         await lifecycle.apply_relationship_update(
             persona_id=state["persona_id"],
             user_id=source_user,
-            intimacy_delta=out.intimacy_delta,
-            trust_delta=out.trust_delta,
+            favor_delta=eff_delta,
             new_type=out.new_relationship_type,
             notes=out.notes,
         )
 
+        # v0.4.1: 显著负面 → 写对象化情绪锚点 (EPHEMERAL 记忆, 脱敏, supersedes 旧锚点)
+        anchor_written = False
+        actor_id = state.get("actor_id")
+        if raw_delta <= -0.15 and out.mood_anchor and actor_id:
+            anchor_written = await _write_mood_anchor(
+                memory_store=memory_store,
+                persona_id=state["persona_id"],
+                subject_actor_id=actor_id,
+                content=out.mood_anchor,
+                source_user=source_user,
+                space_id=state.get("space_id"),
+            )
+
         return {
             "relationship_delta": {
-                "intimacy_delta": out.intimacy_delta,
-                "trust_delta": out.trust_delta,
+                "favor_delta": eff_delta,
+                "raw_delta": raw_delta,
                 "new_type": out.new_relationship_type,
                 "notes": out.notes,
+                "anchor_written": anchor_written,
             }
         }
     except Exception as e:
@@ -120,3 +151,41 @@ async def relationship_analysis_node(
     finally:
         if owns_fwd:
             await forwarder.close()
+
+
+async def _write_mood_anchor(
+    *,
+    memory_store: SqliteMemoryStore,
+    persona_id: str,
+    subject_actor_id: str,
+    content: str,
+    source_user: str,
+    space_id: str | None,
+) -> bool:
+    """写入/更新人格对某人的对象化情绪锚点 (v0.4.1, RFC §6).
+
+    - EPHEMERAL 类型 + 高衰减 (0.95 ≈ 2~3 天半衰期)
+    - 同 subject 旧锚点 supersedes 标记 (去重)
+    - 内容已由关系分析 Agent 按卫生规则脱敏 (只含"被谁/大致原因")
+    """
+    try:
+        from src.core.memory.models import MemoryEntry, MemoryType
+
+        old = await memory_store.list_ephemeral_by_subject(subject_actor_id, limit=1)
+
+        entry = MemoryEntry.create(
+            content=content,
+            role="system",
+            source_user=source_user,
+            memory_type=MemoryType.EPHEMERAL,
+            importance=0.8,
+            decay_rate=0.95,
+        )
+        entry.subject_actor_id = subject_actor_id
+        await memory_store.save(entry)
+        if old:
+            await memory_store.mark_superseded(old[0].id, entry.id)
+        return True
+    except Exception as e:
+        logger.warning("写入情绪锚点失败: %s", e)
+        return False

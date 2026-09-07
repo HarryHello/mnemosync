@@ -286,13 +286,13 @@ onMounted(() => {
 
 .section-header {
   display: flex;
-  align-items: baseline;
   gap: $space-2;
+  align-items: baseline;
 }
 
 .section-title {
-  font-weight: 600;
   font-size: 15px;
+  font-weight: 600;
 }
 
 .section-subtitle {
@@ -312,8 +312,8 @@ onMounted(() => {
 
 .plugin-name {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .installed-tag {
@@ -321,9 +321,9 @@ onMounted(() => {
 }
 
 .plugin-meta {
+  margin-top: 2px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-top: 2px;
 }
 
 .file-name {

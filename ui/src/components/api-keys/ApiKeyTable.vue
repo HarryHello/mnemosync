@@ -113,8 +113,8 @@ function maskKey(item: ApiKeyInfo): string {
 <style lang="scss" scoped>
 .card-header {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .muted {
@@ -123,12 +123,12 @@ function maskKey(item: ApiKeyInfo): string {
 
 .key-cell {
   display: inline-flex;
-  align-items: center;
   gap: $space-1;
+  align-items: center;
   padding: 2px 8px;
-  border-radius: $radius-sm;
   cursor: pointer;
   user-select: all;
+  border-radius: $radius-sm;
   transition: background 0.15s;
 
   &:hover {
@@ -137,8 +137,8 @@ function maskKey(item: ApiKeyInfo): string {
 }
 
 .key-cell-disabled {
-  cursor: not-allowed;
   color: var(--el-text-color-secondary);
+  cursor: not-allowed;
 
   &:hover {
     background: transparent;
@@ -146,7 +146,7 @@ function maskKey(item: ApiKeyInfo): string {
 }
 
 .copy-icon {
-  color: var(--el-text-color-secondary);
   font-size: 14px;
+  color: var(--el-text-color-secondary);
 }
 </style>

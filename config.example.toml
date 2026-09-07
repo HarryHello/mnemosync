@@ -19,6 +19,9 @@
 #   - DashScope: chat/embedding 走 /compatible-mode/v1，rerank 走 /compatible-api/v1
 #   - 其他服务商（如硅基流动）可能共用同一 base_url
 # 所以 rerank 单独配置 base_url。若服务商无 rerank，注释掉整个 [rerank] 段即可（降级为纯 embedding 检索）。
+#
+# ⚠️ v0.2.3 起，服务器运行时的模型由面板「服务商管理」+ 模型注册表管理 (llm_service.db)，
+# 下面的 [chat] / [embedding] / [rerank] / [chat_alt] 段仅被 scripts/ 下的开发探针脚本读取。
 
 # ----------------------------------------------------------------------------
 # 服务商 1：对话 + 嵌入（主用）
@@ -120,6 +123,8 @@ memory_db_path   = "data/memory.db"
 llm_db_path      = "data/llm_service.db"
 auth_db_path     = "data/auth.db"
 chroma_dir       = "data/chroma"
+# 提示词清洗缓存库 (v0.4.1: prompt_cache + prompt_clean_settings 两表)
+prompt_cache_db_path = "data/prompt_cache.db"
 
 [memory]
 permanent_limit = 15          # 永久记忆条数上限
@@ -142,3 +147,24 @@ proxy_thinking_native_reasoning_models = [
     "qwq*",
     "gpt-5-thinking-*",
 ]
+# 提示词清洗全局并发信号量上限 (v0.4.1, 模块化清洗的并发请求治理)
+prompt_clean_max_concurrency = 20
+
+# ── 好感度演进预设 (v0.4.1, RFC §2.3) ──────────────────────────
+# 人格内通过 relationship_alpha 预设 id 引用; 面板不做自定义,
+# 直接改本文件 (或 config.local.toml 同段) 即可, 服务照常读取.
+# 不对称更新: favor += (delta >= 0 ? alpha_up : alpha_down) × delta
+# 慢热快冷: alpha_up 小 (信任建立慢), alpha_down 大 (冒犯掉得快)
+[relationship_alpha]
+# 内置预设 (可覆盖或追加; 未知 id 回退 normal):
+#   normal    普通     alpha_up=0.2 alpha_down=0.5
+#   sensitive 高敏感   alpha_up=0.5 alpha_down=0.8
+#   rational  理性     alpha_up=0.1 alpha_down=0.3
+#   gullible  轻信     alpha_up=0.5 alpha_down=0.4
+#   guarded   戒备     alpha_up=0.1 alpha_down=0.8
+# 自定义示例:
+# [[relationship_alpha.presets]]
+# id = "custom"
+# label = "自定义"
+# alpha_up = 0.3
+# alpha_down = 0.6

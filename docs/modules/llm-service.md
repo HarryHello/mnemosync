@@ -1,6 +1,6 @@
 # LLM 服务管理模块 | LLM Service Module
 
-> **模块版本**: v0.4.0
+> **模块版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-12
 > **最后更新**: 2026-07-26
@@ -10,9 +10,11 @@
 
 ## 1. 概述
 
-LLM 服务管理模块存储**服务商凭证** (`services` 表) 与**角色 → 候选优先级列表** (`role_bindings` 表), 以对称加密保护 API Key。真实的模型调用交由 [Forwarder / MultiForwarder](forward.md) 完成 — 本模块只回答 "有哪些服务商可用" 和 "MAIN/ASSIST/EMBEDDING/RERANK 各角色按什么顺序尝试哪个服务商的哪个模型"。
+LLM 服务管理模块存储**服务商凭证** (`services` 表)、**模型注册表** (v0.4.1, `models` 表) 与**角色 → 候选优先级列表** (`role_bindings` 表), 以对称加密保护 API Key。真实的模型调用交由 [Forwarder / MultiForwarder](forward.md) 完成 — 本模块回答 "有哪些服务商可用"、"每个服务商注册了哪些模型 (含能力/并发)" 和 "各角色按什么顺序尝试哪个模型"。
 
 **v0.2.3 起, `role_bindings` 是模型绑定的唯一真相源** — `config.local.toml` 里旧的 `[chat]` / `[embedding]` / `[rerank]` 段已废弃, `get_settings()` 也不再读它们, `RoleResolver` 直接从这两张表构造 `ResolvedCandidate`。
+
+**v0.4.1 起 (RFC model-registry)**: 模型提升为一等实体 (`models` 表, id = `{service_id}:{model}`)。能力字段 (模态/上下文/嵌入维) 与并发数**归属模型**, 绑定只引用 `model_id`, 不再逐条重复声明。`model_configs` 表并入注册表后进入废弃通道。
 
 **代码位置**:
 - [src/infra/llm_service/models.py](../../src/infra/llm_service/models.py) — dataclass 定义
@@ -194,12 +196,18 @@ class LLMServiceStore:
     async def list_services()            -> list[LLMServiceProvider]
     async def delete_service(service_id) -> bool
 
-    async def add_role_binding(role, service_id, model, *,
-                                context_length=None, embedding_dim=None,
-                                send_dimensions=False) -> RoleBinding
+    async def add_role_binding(role, model_id, *, priority=None) -> RoleBinding   # v0.4.1: 从注册表引用
     async def list_role_bindings(role: ModelType | None = None) -> list[RoleBinding]
     async def delete_role_binding(role, priority) -> bool
     async def reorder_role_bindings(role, priority_order: list[int]) -> None
+
+    # 模型注册表 (v0.4.1)
+    async def save_model_registry(entry) -> ModelRegistryEntry          # upsert
+    async def get_model_registry(model_id) -> ModelRegistryEntry | None
+    async def list_model_registry(service_id=None, *, enabled_only=False) -> list[...]
+    async def update_model_registry(model_id, **fields) -> ModelRegistryEntry | None
+    async def delete_model_registry(model_id) -> bool                   # 被绑定引用时拒绝
+    async def import_model_registry(service_id, names) -> (added, skipped)
 ```
 
 ---
@@ -210,7 +218,7 @@ class LLMServiceStore:
 
 `resolve(role: ModelType) -> list[ResolvedCandidate]`: 从 `role_bindings` 拉出该角色的候选按 priority 排序, join `services` 拿到 `base_url` 与解密后的 `api_key`, 组装成 `ResolvedCandidate` 列表返回。
 
-被 `MultiForwarder` 用来构造内部 `Forwarder` 实例; 也被 forward.py 用来读取 `context_length` (给短期记忆装填算预算)。
+被 `MultiForwarder` 用来构造内部 `Forwarder` 实例; 也被 forward 包用来读取 `context_length` (给短期记忆装填算预算)。
 
 ---
 
@@ -225,7 +233,8 @@ class LLMServiceStore:
 | `show-service <id>` | 查看服务商详情 |
 | `rm-service <id>` | 删除服务商 + 级联删除 role_bindings |
 | `ls-models <id>` | 通过 Forwarder 拉取服务商 `/models` 端点 |
-| `set-model <role> <service_id> <model> [--context N] [--dim N] [--send-dim]` | 追加角色绑定 (embedding 只允许一条; `--send-dim` 才透传 `dimensions` 上游) |
+| `model register <service_id> <model> [--display NAME] [--context N] [--dim N] [--send-dim] [--concurrency N]` | 注册模型到注册表 (v0.4.1; 并发默认 20, 0 = 不限) |
+| `model add <role> <model_id> [--priority N]` | 追加角色绑定 (embedding 只允许一条; 能力随注册表) |
 | `rm-model <role> <priority>` | 删除某个绑定 |
 | `set-embedding-model <service_id> <model> --dim N` | 快捷设置嵌入 (替换现有) |
 | `test-model <id> <model>` | 探活 |
@@ -297,3 +306,6 @@ src/core/models/
 | v0.2.3 | 2026-07-17 | 引入 `role_bindings` 表 + `ModelType.EMBEDDING/RERANK`; `[chat]/[embedding]/[rerank]` 段废弃; `RoleResolver` 组装 `ResolvedCandidate` |
 | v0.2.4 | 2026-07-17 | 嵌入角色单绑定约束; `context_length` / `embedding_dim` 元数据字段; Reindex + Prune 触发点 |
 | v0.2.8 | 2026-07-18 | `send_dimensions` 透传开关: 拆分向量库锁与上游 `dimensions` 参数, 默认不透传 (兼容 bge/bce/jina/mistral/gemini 等固定维模型) |
+| v0.3.x | 2026-07~08 | 模型候选工具能力声明 (`supports_tools` 等); `first_for_tools()` 跳过不支持工具的候选 |
+| v0.4.1 | 2026-08-17 | **模型注册表**: `models` 表 (id=`{service_id}:{model}`) + 能力/并发字段; `role_bindings` 引用 `model_id`; 迁移 007-010 回填; admin `/models` CRUD + 批量导入; 绑定 API 改 `model_id` 语义; `model_configs` 并入后废弃 |
+| v0.4.0 | 2026-08 | `LLMServiceProvider.api_format` (openai/anthropic/responses) 决定上游转发器; `RoleBinding` / `ResolvedCandidate` 新增 `input_modalities` / `output_modalities` (模态能力) |

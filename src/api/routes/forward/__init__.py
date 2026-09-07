@@ -51,7 +51,6 @@ from .dispatch import (
     _extract_and_resolve_tool_transaction,
     _handle_identity_binding,
     _normalize_messages,
-    _prepare_prompt,
     _resolve_tool_policy,
     _validate_model,
 )
@@ -335,10 +334,30 @@ async def create_chat_completion(
         persona_name = persona_definition.name
     logger.debug("  persona: %s (structured=%s)", persona_name, persona_definition is not None)
 
-    # 10. 提示词清洗
-    persona, prompt_cleaning_result = await _prepare_prompt(
-        request.messages, persona, http_request,
+    # 10. 并行预处理 (v0.4.1): 提示词清洗 ∥ 情绪分析+mood ∥ 图片转写
+    #     代理推理不入此并行 — 它是主模型的思考, 串行于主对话之前 (第 13 步).
+    from .dispatch import _run_parallel_preprocess
+
+    (
+        persona,
+        prompt_cleaning_result,
+        emotion_analysis,
+        mood_state,
+        vision_content,
+        main_candidate,
+    ) = await _run_parallel_preprocess(
+        request_messages=request.messages,
+        persona=persona,
+        http_request=http_request,
+        source_frontend=source_frontend,
+        messages_dict=messages_dict,
+        interaction_id=interaction_id,
     )
+    logger.debug("  并行预处理完成: 清洗=%s 情绪=%s mood=%s vision=%d字",
+                 "有" if prompt_cleaning_result else "无",
+                 "有" if emotion_analysis else "无",
+                 "有" if mood_state else "无",
+                 len(vision_content or ""))
 
     # 11. 入站工具过滤 + 内部工具注入
     allowed_tools = filter_client_tools(request.tools, tool_policy)
@@ -352,7 +371,8 @@ async def create_chat_completion(
         logger.debug("  injected %d internal tools", len(internal_tools))
 
     # 12. 身份绑定指令处理 (可能提前返回)
-    if not tool_transaction and actor_id:
+    # 始终尝试拦截绑定指令 (即使无 actor_id — 无身份时给出明确提示而非让模型瞎猜)
+    if not tool_transaction:
         bind_response = await _handle_identity_binding(
             http_request, request, messages_dict,
             actor_id, space_id, current_speaker,
@@ -368,12 +388,15 @@ async def create_chat_completion(
                 actor_id=actor_id,
             )
 
-    # 13. 模型解析 + 代理推理
-    main_model = await _resolve_main_model(
-        http_request,
-        require_tools=bool(allowed_tools),
-        streaming=bool(request.stream),
-    )
+    # 13. 模型解析 + 代理推理 (main_candidate 已在并行预处理中解析, 直接复用)
+    if main_candidate is not None:
+        main_model = main_candidate.model
+    else:
+        main_model = await _resolve_main_model(
+            http_request,
+            require_tools=bool(allowed_tools),
+            streaming=bool(request.stream),
+        )
     use_proxy = should_use_proxy_thinking(request, settings, main_model=main_model)
     if tool_transaction:
         use_proxy = False
@@ -437,6 +460,13 @@ async def create_chat_completion(
     initial_state["_original_messages"] = [
         msg.model_dump(exclude_none=True) for msg in request.messages
     ]
+    # v0.4.1 并行预处理结果注入 (流式/非流式据此跳过重复计算)
+    if emotion_analysis:
+        initial_state["emotion_analysis"] = emotion_analysis
+    if mood_state is not None:
+        initial_state["mood_state"] = mood_state
+    if vision_content:
+        initial_state["_vision_user_content"] = vision_content
 
     from src.api.deps import _state
     space_locks_mgr = _state(http_request).space_locks

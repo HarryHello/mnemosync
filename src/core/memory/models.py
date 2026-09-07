@@ -17,11 +17,14 @@ class MemoryType(StrEnum):
     - PERMANENT: 永久记忆，不衰减，除非被覆盖或删除
     - NORMAL: 普通记忆，遵循衰减模型，优先级随时间降低
     - EXPRESSION_STYLE: 表达习惯记忆，作用域为 space_id，低衰减率
+    - EPHEMERAL: 情绪锚点记忆 (v0.4.1)，高衰减 (2~3 天半衰期)，按 subject_actor_id
+      定位，承载"人格对某人的对象化情绪"，同对象新锚点 supersedes 旧锚点
     """
 
     PERMANENT = "permanent"
     NORMAL = "normal"
     EXPRESSION_STYLE = "expression_style"
+    EPHEMERAL = "ephemeral"
 
 
 class Visibility(StrEnum):
@@ -151,6 +154,7 @@ class MemoryEntry:
     expires_at: datetime | None = None
     space_id: str | None = None  # v0.3.0: 诞生空间 (非空 = 空间共享记忆, 受众过滤用)
     superseded_by: str | None = None  # v0.3.4: 被哪条记忆替代 (非空 = 已过期, 检索不返回)
+    subject_actor_id: str | None = None  # v0.4.1: 情绪锚点记忆的目标对象 (EPHEMERAL 专用)
 
     @staticmethod
     def create(
@@ -252,18 +256,53 @@ class MemoryEntry:
         self.is_forgotten = self.decay_state == DecayState.FORGOTTEN
 
 
+# ── 好感度类型谱系 (v0.4.1: 亲密度+信任度统一为好感度) ─────────
+# 负侧: hostile(-1.0~-0.5) / cold(-0.5~-0.1) / stranger(-0.1~0.2)
+# 正侧: acquaintance(0.2~0.5) / friend(0.5~0.8) / intimate(0.8~1.0)
+RELATIONSHIP_TIERS: tuple[tuple[str, float, float], ...] = (
+    ("hostile", -1.0, -0.5),
+    ("cold", -0.5, -0.1),
+    ("stranger", -0.1, 0.2),
+    ("acquaintance", 0.2, 0.5),
+    ("friend", 0.5, 0.8),
+    ("intimate", 0.8, 1.0),
+)
+
+# 阶段标签 → 自然语言描述 (提示词层使用; 枚举名仅内部/面板, 模型看不到)
+RELATIONSHIP_STAGE_LABELS: dict[str, str] = {
+    "hostile": "敌对",
+    "cold": "冷淡",
+    "stranger": "普通",
+    "acquaintance": "熟悉",
+    "friend": "友好",
+    "intimate": "亲密",
+}
+
+
+def relationship_type_from_favor(favor: float) -> str:
+    """好感度数值 → 关系阶段标签 (类型谱系投影)."""
+    for name, lo, hi in RELATIONSHIP_TIERS:
+        if lo <= favor < hi:
+            return name
+    return "intimate"  # favor == 1.0 边界
+
+
 @dataclass
 class Relationship:
     """用户与 AI 人格的关系状态.
 
     由关系分析 Agent 维护，主对话 Agent 加载用于上下文.
 
+    v0.4.1: 亲密度 + 信任度统一为单一**好感度** (favor, -1.0~1.0,
+    允许为负表达厌恶/敌对). 旧 intimacy_score/trust_level 字段由 DB 迁移
+    回填 (favor = MAX(intimacy, trust)) 后即废弃, 模型层不提供旧属性
+    (旧列保留在 DB 中供 v0.5 大版本清理, 见 relationship_store 迁移注释).
+
     Attributes:
         persona_id: 人格标识
         user_id: 用户标识
-        type: 关系类型（stranger/acquaintance/friend/intimate）
-        intimacy_score: 亲密度（0.0-1.0）
-        trust_level: 信任度（0.0-1.0）
+        type: 关系阶段标签（hostile/cold/stranger/acquaintance/friend/intimate）
+        favor: 好感度（-1.0~1.0，负值=厌恶/敌对）
         interaction_count: 互动次数
         last_active: 最后活跃时间
         notes: 备注（由关系分析 Agent 总结）
@@ -271,9 +310,8 @@ class Relationship:
 
     persona_id: str
     user_id: str
-    type: str = "stranger"  # stranger | acquaintance | friend | intimate
-    intimacy_score: float = 0.0
-    trust_level: float = 0.0
+    type: str = "stranger"  # 类型谱系投影: hostile/cold/stranger/acquaintance/friend/intimate
+    favor: float = 0.0
     interaction_count: int = 0
     last_active: datetime | None = None
     notes: str = ""
@@ -289,29 +327,25 @@ class Relationship:
             persona_id=persona_id,
             user_id=user_id,
             type="stranger",
-            intimacy_score=0.0,
-            trust_level=0.0,
+            favor=0.0,
             interaction_count=0,
             last_active=datetime.now(UTC),
         )
 
     def apply_delta(
         self,
-        intimacy_delta: float,
-        trust_delta: float,
+        favor_delta: float,
         new_type: str | None = None,
         notes: str | None = None,
     ) -> None:
         """应用关系分析 Agent 计算出的增量.
 
         Args:
-            intimacy_delta: 亲密度变化（可正可负）
-            trust_delta: 信任度变化
-            new_type: 新关系类型（可选，由 Agent 决定是否升级）
+            favor_delta: 好感度变化（可正可负，负值=关系恶化）
+            new_type: 新关系阶段标签（可选，由 Agent 决定是否调整）
             notes: 备注更新（可选）
         """
-        self.intimacy_score = min(1.0, max(0.0, self.intimacy_score + intimacy_delta))
-        self.trust_level = min(1.0, max(0.0, self.trust_level + trust_delta))
+        self.favor = min(1.0, max(-1.0, self.favor + favor_delta))
         self.interaction_count += 1
         self.last_active = datetime.now(UTC)
         if new_type is not None:

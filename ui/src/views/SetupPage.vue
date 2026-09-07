@@ -141,7 +141,9 @@ async function onSubmit() {
 <style lang="scss" scoped>
 .setup-page {
   min-height: 100vh;
+
   @include flex-center;
+
   padding: $space-5;
 }
 
@@ -154,18 +156,18 @@ async function onSubmit() {
 }
 
 .brand {
-  text-align: center;
   margin-bottom: $space-4;
+  text-align: center;
 
   .brand-mark {
     display: block;
     width: 56px;
     height: 56px;
-    margin: 0 auto $space-2;
-    border-radius: $radius-lg;
     padding: 8px;
+    margin: 0 auto $space-2;
     background: rgba(66, 133, 244, 0.08);
     border: 1px solid rgba(66, 133, 244, 0.12);
+    border-radius: $radius-lg;
   }
 
   h1 {
@@ -176,9 +178,9 @@ async function onSubmit() {
   }
 
   .subtitle {
-    color: var(--el-text-color-secondary);
     margin-top: $space-1;
     font-size: 13px;
+    color: var(--el-text-color-secondary);
   }
 }
 

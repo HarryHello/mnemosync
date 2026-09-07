@@ -1,9 +1,9 @@
 # 部署指南 | Deployment
 
-> **系统版本**: v0.3.4
+> **系统版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-25
-> **最后更新**: 2026-08-01
+> **最后更新**: 2026-08-10
 > **作者**: HarryHelloo
 
 ---
@@ -37,7 +37,9 @@ Mnemosync/
 │   ├── api/                # FastAPI 路由 + 中间件 + reasoning_control + admin_debug
 │   ├── cli/                # 顶层命令 + 交互式 shell + ask + identity (v0.3.0)
 │   ├── core/               # config / graph / memory / agents / models / prompts / identity (v0.3.0)
-│   ├── infra/              # forwarder + MultiForwarder / llm_service / vector_store / debug_bus
+│   │   └── agents/vision.py  # v0.4 Vision Description Agent (图片转文字)
+│   ├── infra/              # forwarder (Forwarder/Anthropic/Responses/Multi v0.4) + llm_service + vector_store + debug_bus
+│   ├── panel/              # v0.3.5 轻量面板 (静态文件 + auth + 后端启停 + 反向代理)
 │   ├── persistence/        # SQLite stores (memory / auth / api_key / conversation / http_log / identity / idempotency)
 │   ├── tools/              # make_*_tool 工厂
 │   └── main.py
@@ -60,6 +62,8 @@ Mnemosync/
 - `persona.db` — **v0.3.3** 结构化人格版本存储 (personas + persona_versions)
 - `lorebook.db` — **v0.3.3** Lorebook 关键词知识条目
 - `space_policy.db` — **v0.3.3** 空间社交策略
+- `agent_runs.db` — **v0.3.5** Agent 运行记录
+- `prompt_cache.db` — **v0.4.1** 提示词清洗模块缓存 + 跳过配置 (prompt_cache / prompt_clean_settings)
 - `chroma/` — ChromaDB 向量库 (含 v0.2.4 embedding lock metadata)
 - `prompts/` — v0.2.1 用户提示词覆盖层 (可选; 无覆盖时读默认层)
 - `prompts/.history/` — 提示词覆盖备份 (每个 name 保留最近 10 份)
@@ -270,14 +274,39 @@ docker cp $(docker compose ps -q mnemosync):/tmp/backup.tar.gz ./
 
 ## 8. 升级
 
-顶层 CLI 提供便捷升级 (拉分支 + 重装依赖):
+### 8.1 一键升级 (推荐)
+
+`mnemosync upgrade` 委托目标分支的**远程 install.sh** 执行，自动带版本守卫 / 镜像切换 / 分支切换 / UI 下载，无需本地编译前端：
 
 ```bash
-mnemosync upgrade                # 默认 main 分支
-mnemosync upgrade --branch dev   # 开发者可切 dev
+mnemosync upgrade                       # 升级到当前分支最新
+mnemosync upgrade --version v0.4.0      # 升级到指定版本
+mnemosync upgrade --branch dev          # 切到 dev 分支
+mnemosync versions                      # 列出所有可用版本及发布描述
 ```
 
-手动:
+也可以用安装脚本（会检测已有安装并升级）：
+
+```bash
+# 正式版 (main)
+curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
+# 预发布 (beta) — 无需编译前端, 自动拉 preview pre-release 的 UI
+curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.sh | sh
+```
+
+环境变量控制：
+
+| 变量 | 作用 |
+|------|------|
+| `MNEMOSYNC_BRANCH` | 安装/升级的目标分支 (各分支脚本默认装本分支) |
+| `MNEMOSYNC_RELEASE_TAG` | 预编译 UI 的来源 release tag (默认 latest; beta 用 preview) |
+| `MNEMOSYNC_VERSION` | 锁定到指定版本 tag (如 `v0.4.0`) |
+| `MNEMOSYNC_INSTALL_DIR` / `MNEMOSYNC_DIR` | 安装目录 (默认 `~/.mnemosync`) |
+
+**版本守卫**: 只能升不能降 (低版本 < Beta版 < 正式版)。降级会被拒绝。
+
+### 8.2 手动升级
+
 ```bash
 git pull
 uv sync
@@ -333,41 +362,50 @@ rm -rf /opt/Mnemosync
 
 ## 11. 发布流程 (维护者)
 
-Release 由 [.github/workflows/release.yml](../.github/workflows/release.yml) 自动化。整体流程:
+发布有两条路径，**禁止直接从 dev → main**，必须先经 beta 预发布测试。完整步骤见 `.claude/skills/release/SKILL.md`。
 
-```bash
-# 1. 在 release 分支上做 dev→main 的差异修正 (install.sh BRANCH 默认、cli 描述等)
-git checkout -b release/v0.2.X
-
-# 2. 冒烟验证 (可选)
-uv run pytest -q --no-cov
-cd ui && npm install && npm run build && cd ..
-
-# 3. 合并到 main
-git checkout main
-git merge --no-ff release/v0.2.X -m "release: v0.2.X"
-git push origin main
-
-# 4. 打 tag 并推送 — 这一步触发 GitHub Actions
-git tag -a v0.2.X -m "Mnemosync v0.2.X"
-git push origin v0.2.X
-
-# 5. 观察 Actions
-# https://github.com/HarryHello/mnemosync/actions/workflows/release.yml
-# 成功后 https://github.com/HarryHello/mnemosync/releases 会出现新 Release
-# 附件包含 ui-dist.tar.gz
+```
+dev (开发) ──► beta (预发布测试, preview pre-release) ──► main (正式, vX.Y.Z Release)
 ```
 
-Actions 的具体动作:
+### 11.1 Beta 预发布 (dev → beta)
+
+```bash
+git checkout -b release/beta-v{VERSION} dev
+# 预处理: 把 install.sh 默认分支改成 beta (BRANCH=beta, RELEASE_TAG=preview)
+git add -A && git commit -m "release: beta v{VERSION}"
+git checkout beta && git merge --no-ff release/beta-v{VERSION}
+git push origin refs/heads/beta:refs/heads/beta   # 触发 preview.yml
+# 验证 preview pre-release 存在 (含 ui-dist.tar.gz)
+gh release view preview --json tagName,isPrerelease,assets
+```
+
+### 11.2 Main 正式发布 (beta → main)
+
+前置: 确认 beta 已发布并测试通过 (`gh release view preview`)。
+
+```bash
+git checkout -b release/v{VERSION} beta
+# 预处理: 版本号去掉 -beta.N, install.sh 默认分支改成 main (BRANCH=main, RELEASE_TAG=latest)
+git add -A && git commit -m "release: v{VERSION}"
+git checkout main && git merge --no-ff release/v{VERSION}
+git push origin main
+git tag -a v{VERSION} -m "Mnemosync v{VERSION}" && git push origin v{VERSION}
+# 验证
+gh run watch $(gh run list --workflow=release.yml --limit=1 --json databaseId --jq '.[0].databaseId')
+gh release view v{VERSION} --json tagName,publishedAt,assets
+```
+
+### 11.3 Actions 自动动作
 
 1. checkout tag 指向的 commit
-2. setup Node.js 22 + npm 缓存
+2. setup Node.js 24 + npm 缓存
 3. `cd ui && npm ci && npm run build`
 4. 校验 `ui/dist/index.html` 存在
 5. `tar -czf ui-dist.tar.gz -C ui dist`
-6. `gh release create $TAG --generate-notes ui-dist.tar.gz`
+6. `gh release create $TAG --notes <CHANGELOG 对应章节> ui-dist.tar.gz` — **描述从 CHANGELOG.md 提取**, 不再是 `--generate-notes`
 
-**回滚**: 直接删除 tag 与 GitHub Release, 再重新推 tag; 用户 install.sh 会自动拉最新 release, 无需通知。
+**回滚**: 直接删除 tag 与 GitHub Release, 再重新推 tag; 用户 install.sh 会自动拉取, 无需通知。
 
 ---
 
@@ -383,3 +421,6 @@ Actions 的具体动作:
 | v0.3.0 | 2026-07-26 | data 列表补 `identity.db` / `idempotency.db` (多用户身份 + 幂等重放) 与 `notifications.db`; 备份清单同步; 目录树补 `src/core/identity/` 与 persistence 新库; CLI 模型命令名修正为 `model add` |
 | v0.3.3 | 2026-08-01 | data 列表补 `persona.db` / `lorebook.db` / `space_policy.db` (结构化人格 / Lorebook / 空间策略); 目录树补 `src/core/persona/` / `src/core/tools/` / `src/infra/space_lock.py` / `src/infra/character_card.py`; plugins/ 目录说明 |
 | v0.3.4 | 2026-07-30 | 人格系统重构: 多人格 profile 支持 (`personas` 表 + 切换 API); `PersonaIdentity` 移除 per-user 字段 (`user_addressing`/`context`, 由 `Relationship` 维护); 人格改名支持; 默认提示词结构化; 前端人格编辑器重构 |
+| v0.3.5 | 2026-08 | 前后端分离 (panel 16125 + backend 16126, 面板内启停); Agent 运行契约; 版本更新检测; install.sh 镜像自动切换; 群聊上下文混杂修复 |
+| v0.4.0 | 2026-08 | 多模态视觉 (Vision Agent 转述); Anthropic / Responses API 双向兼容; 上游改用官方 SDK; 绑定流程 LLM 自然回复; beta 预发布分支 + preview pre-release |
+| v0.4.1 | 2026-08 | 逐版本升级 (`mnemosync versions` / `upgrade --version` / `MNEMOSYNC_VERSION`); 发布描述从 CHANGELOG 提取; `mnemosync upgrade` 委托远程 install.sh; **好感度系统** (favor 统一 + 慢热快冷 α 预设); **全局 mood 状态机** (personas 表 + 前置情绪通道 + 幂等); **6×6 情绪矩阵** (每格一文件 + 面板 grid 编辑); **情绪锚点** (EPHEMERAL); **称呼注入**; **API 层三路并行预处理** |

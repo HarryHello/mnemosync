@@ -5,7 +5,7 @@
 **跨平台人格记忆同步代理 | Cross-Platform Persona Memory Sync Proxy**
 
 [![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Status](https://img.shields.io/badge/Status-Early%20Development-yellow)](https://github.com/Mnemosync/Mnemosync)
+[![Status](https://img.shields.io/badge/Status-Early%20Development-yellow)](https://github.com/HarryHello/mnemosync)
 [![Python](https://img.shields.io/badge/Python-3.12+-green.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-red.svg)](https://fastapi.tiangolo.com/)
 
@@ -19,7 +19,7 @@
 │  \_│  │_╱╲_│ ╲_╱╲____╱╲_│  │_╱╲___╱╲____╱  \_/ ╲_│ ╲_╱╲____╱  │
 │                                                               │
 │                         Mnemosync                             │
-│                          v0.3.4                               │
+│                          v0.4.1                               │
 │                                                               │
 ╰───────────────────────────────────────────────────────────────╯
 ```
@@ -35,7 +35,7 @@
 
 在当前的 LLM 生态中，用户往往需要在多个平台（如 AIRI 桌宠、AstrBot 机器人、Web 聊天室）之间切换。传统架构导致**上下文记忆分散**：你在桌宠上告诉模型的名字，机器人并不知道；你在工作中培养的人格，回家后无法延续。
 
-Mnemosync 在网络层拦截 OpenAI 兼容请求，**服务器持有对话真相**，把所有前端的对话汇聚成一条连续流后再转发给上游模型。它不仅是代理，更是人格记忆的同步器。
+Mnemosync 在网络层拦截对话（OpenAI兼容、Anthropic和Respose API）请求，**服务器持有对话真相**，把所有前端的对话汇聚成一条连续流后再转发给上游模型。它不仅是代理，更是人格记忆的同步器。
 
 > **名字由来**：Mnemosyne（希腊神话记忆女神）+ Sync（同步）。
 
@@ -52,14 +52,26 @@ Mnemosync 在网络层拦截 OpenAI 兼容请求，**服务器持有对话真相
 - **🎭 服务器优先人格 (Server-First Persona)**
   人格由服务器 `[persona]` 段权威定义，客户端 system 消息走**提示词清洗 Agent** 剥离人格描述、保留功能性指令。第三方前端注入的角色扮演不会污染人格。
 
-- **🔌 OpenAI 兼容接口**
-  遵循 OpenAI API `/v1/chat/completions` 标准 (流式 / 非流式)。前端只需改 API Base 与 Key，即可无缝接入 AstrBot、AIRI、NextChat 等平台。
+- **🔌 多格式接口兼容 (v0.4)**
+  除 OpenAI `/v1/chat/completions` 标准外，v0.4 起支持 **Anthropic Messages** (`/v1/messages`) 与 **OpenAI Responses API** (`/v1/responses`) 下游端点；上游可按服务商选择 OpenAI / Anthropic / Responses 三种 `api_format`，由对应的 SDK 转发器自动完成格式转换。前端只需改 API Base 与 Key，即可无缝接入 AstrBot、AIRI、NextChat、Cherry Studio 等平台。
+
+- **🖼️ 多模态视觉 (v0.4)**
+  目标模型支持图片时直接透传 image content parts；不支持时由 **Vision Description Agent** 自动把图片转述为文字描述再交给主模型，流式与非流式路径均支持。模型绑定时可配置 `input_modalities` / `output_modalities`。
+
+- **📦 逐版本升级 (v0.4.1)**
+  `mnemosync versions` 列出所有可用版本及发布描述；`mnemosync upgrade --version vX.Y.Z` 升级到指定版本（不再总是到最新）。安装脚本支持 `MNEMOSYNC_VERSION` 锁定版本，且带**只能升不能降**的版本守卫。
+
+- **❤️ 好感度 × 情绪 (v0.4.1)**
+  亲密度 + 信任度统一为单一好感度（`favor`，-1.0~1.0 允许为负），6 档关系类型 + 慢热快冷的非对称演进预设；全局人格心情（mood）状态机随对话自然演化，面板可查；6×6 **情绪矩阵**（好感度档 × 心情段）以 grid 编辑器逐格定制引导文本，注入主对话“你此刻的状态”段；显著负面事件落 `EPHEMERAL` 情绪锚点记忆并跨请求生效；称呼（addressing）自动注入主对话。
+
+- **⚡ 三路并行预处理 (v0.4.1)**
+  提示词清洗 ∥ 情绪分析+mood ∥ 图片转写（Vision）三路 `asyncio.gather` 并发，融入首 token 延迟的只有最慢一路；代理推理作为无原生推理模型的“思考”（`reasoning_content`）串行于主对话之前。
 
 - **🗄️ 智能长期记忆**
   ChromaDB 向量库 + SQLite 元数据 + 时间衰减模型。永久记忆 (核心事实) 常驻；普通记忆按重要性/衰减/过期动态管理。支持背景 Reindex 与低价值记忆 Prune (v0.2.4)。
 
 - **🔧 多服务商模型绑定 (v0.2.3+)**
-  main / assist / embedding / rerank 四种角色各自维护优先级候选列表 (存 `role_bindings` 表)。主对话与辅助 Agent 上游失败自动 fallback；**嵌入角色单绑定** (v0.2.4)，换嵌入模型必须走 Reindex 走完再服务。
+  main / assist / embedding / rerank 四种角色各自维护优先级候选列表 (存 `role_bindings` 表)。主对话与辅助 Agent 上游失败自动 fallback；**嵌入角色单绑定** (v0.2.4)，换嵌入模型必须走 Reindex 走完再服务。每个服务商可声明 `api_format` (openai / anthropic / responses) 与模态能力 (v0.4)。
 
 - **✏️ 提示词两层可覆盖 (v0.2.1)**
   记忆分析 / 关系分析 / 代理推理 / 提示词清洗 / 主对话框架等 Agent 提示词以 Markdown 文件形式随包发布 (默认层)，可在 `data/prompts/` 覆盖。通过 `mnemosync prompt` CLI 或面板 `/panel/admin/prompts` 即时生效，无需重启。
@@ -119,10 +131,16 @@ API Key (每前端一枚) 的双重作用:
 ### 方式一：一键安装脚本（推荐）
 
 ```bash
+# 正式版 (main)
 curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
+
+# 预发布测试版 (beta) — 服务器无需编译前端
+curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.sh | sh
 ```
 
-脚本自动完成：安装 uv → 克隆代码 → 安装依赖 → 下载/构建管理面板 → 初始化数据库 → 注册 `mnemosync` 命令。
+每个分支有自己的一份 install.sh，默认安装对应分支——`curl 哪个分支的脚本就装哪个分支`。脚本自动完成：安装 uv → 克隆代码 → 安装依赖 → 下载/构建管理面板 → 初始化数据库 → 注册 `mnemosync` 命令。
+
+**逐版本升级**：`mnemosync versions` 列出版本，`mnemosync upgrade --version vX.Y.Z` 升级到指定版本。
 
 安装完成后：
 ```bash
@@ -135,8 +153,8 @@ mnemosync login     # 进入交互式 CLI
 ### 方式二：Docker 部署
 
 ```bash
-git clone https://github.com/Mnemosync/Mnemosync.git
-cd Mnemosync
+git clone https://github.com/HarryHello/mnemosync.git
+cd mnemosync
 docker compose up -d
 docker compose logs -f
 docker compose exec mnemosync uv run mnemosync init
@@ -148,8 +166,8 @@ docker compose exec mnemosync uv run mnemosync init
 # 安装 uv (若未装)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-git clone https://github.com/Mnemosync/Mnemosync.git
-cd Mnemosync
+git clone https://github.com/HarryHello/mnemosync.git
+cd mnemosync
 
 # 1. 复制配置模板并填 [persona] / 服务商凭证
 cp config.example.toml config.local.toml
@@ -191,7 +209,7 @@ Mnemosync > model add embedding dashscope text-embedding-v3 --dim 1024
 不配置身份策略也能用 (非归属模式: 不建身份、不读写私有记忆、照常回复)。要让记忆按用户隔离:
 
 ```bash
-# 以 AstrBot 群为例: 创建 regex 策略, 从 prompt 文本提取 QQ号/群号
+# 创建 regex 策略, 从 prompt 文本提取 QQ号/群号
 mnemosync identity strategy create --name "AstrBot QQ" --type regex \
     --frontend astrbot \
     --actor-pattern 'QQ号[:：]\s*(\d+)' \
@@ -264,6 +282,9 @@ mnemosync identity bind <actor_id> <group_id>
 - [x] **v0.3.1** — 身份解析插件 (`plugin` 策略类型) + AstrBot 参考实现; regex `search_in` 重构
 - [x] **v0.3.3** — **结构化人格**: PersonaDefinition + 空间覆盖; SillyTavern V1/V2 角色卡导入; Lorebook 关键词知识; SocialPolicy 空间社交策略; Expressor 表达改写; 内部 tool 注册表; 跨平台身份绑定; 空间级串行锁; 管线调试事件
 - [x] **v0.3.4** — **多人格 profile**: `personas` 表 + 切换 API; `PersonaIdentity` 移除 per-user 字段; 用户自助跨平台绑定; 人格改名
+- [x] **v0.3.5** — **前后端分离** (panel 16125 + backend 16126); Agent 运行契约; 版本更新检测; 群聊上下文混杂漏洞修复
+- [x] **v0.4.0** — **多模态视觉** (Vision Agent 转述); **Anthropic / Responses API 双向兼容**; 上游改用官方 SDK; 绑定流程 LLM 自然回复
+- [x] **v0.4.1** — **逐版本升级** (`versions` / `upgrade --version` / `MNEMOSYNC_VERSION`); 发布描述从 CHANGELOG 提取; beta 预发布分支
 - [ ] **未来** — 人格自我演化 / 群聊摘要与检查点
 
 ---

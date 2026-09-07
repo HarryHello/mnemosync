@@ -600,11 +600,11 @@ defineExpose({
 }
 
 .ai-panel {
+  padding: $space-3;
+  text-align: left;
   background: var(--el-fill-color-lighter);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: $radius-md;
-  padding: $space-3;
-  text-align: left;
 }
 
 .ai-panel-header {
@@ -616,8 +616,8 @@ defineExpose({
 
 .ai-panel-title {
   display: flex;
-  align-items: center;
   gap: $space-1;
+  align-items: center;
   font-weight: 500;
   color: var(--el-text-color-primary);
 }
@@ -625,8 +625,8 @@ defineExpose({
 .ai-hint {
   margin: 0 0 $space-2;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .ai-field {
@@ -651,21 +651,21 @@ defineExpose({
 .form-hint {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .form-intro {
   margin: 0 0 $space-3;
   font-size: 13px;
-  color: var(--el-text-color-secondary);
   line-height: 1.6;
+  color: var(--el-text-color-secondary);
 
   code {
-    background: var(--el-fill-color);
     padding: 1px 4px;
-    border-radius: 3px;
     font-size: 12px;
+    background: var(--el-fill-color);
+    border-radius: 3px;
   }
 }
 
@@ -684,8 +684,8 @@ defineExpose({
 .field-help {
   margin: 2px 0 0;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.4;
+  color: var(--el-text-color-secondary);
 }
 
 /* Regex 测试面板 */
@@ -699,28 +699,28 @@ defineExpose({
 .test-hint {
   margin: 0 0 $space-2;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .test-results {
-  margin-top: $space-2;
   display: flex;
   flex-direction: column;
   gap: $space-1;
+  margin-top: $space-2;
 }
 
 .test-result-row {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   font-size: 13px;
 }
 
 .test-label {
-  color: var(--el-text-color-secondary);
-  min-width: 70px;
   flex-shrink: 0;
+  min-width: 70px;
+  color: var(--el-text-color-secondary);
 }
 
 .test-value {
@@ -728,15 +728,15 @@ defineExpose({
   font-size: 12px;
 
   &.match {
+    padding: 1px 6px;
     color: var(--el-color-success);
     background: var(--el-color-success-light-9);
-    padding: 1px 6px;
     border-radius: 3px;
   }
 
   &.no-match {
-    color: var(--el-text-color-placeholder);
     font-style: italic;
+    color: var(--el-text-color-placeholder);
   }
 }
 
@@ -748,8 +748,8 @@ defineExpose({
 .tool-policy-toggle {
   :deep(.el-form-item__content) {
     display: flex;
-    align-items: center;
     gap: $space-2;
+    align-items: center;
   }
 }
 
@@ -776,15 +776,15 @@ defineExpose({
   :deep(.el-form-item__content) {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
     gap: $space-1;
+    align-items: flex-start;
   }
 }
 
 .field-hint {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.4;
+  color: var(--el-text-color-secondary);
 }
 
 /* divider 样式 */

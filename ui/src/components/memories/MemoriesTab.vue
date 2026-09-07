@@ -5,6 +5,7 @@ import { listMemories, listMemorySources, deleteMemory, deleteMemoriesBatch } fr
 import type { Memory } from '@/types/api'
 import MemoryTable from './MemoryTable.vue'
 import MemoryDetailDrawer from './MemoryDetailDrawer.vue'
+import TabHeader from '@/components/common/TabHeader.vue'
 
 const props = defineProps<{
   active?: boolean
@@ -157,12 +158,8 @@ watch(() => props.active, (active) => {
 
 <template>
   <div class="memories-tab">
-    <div class="tab-head">
-      <div>
-        <h3 class="tab-title">长期记忆</h3>
-        <p class="tab-subtitle">按重要度/衰减规则汰换，列头可点击排序 / 过滤。</p>
-      </div>
-      <div class="head-actions">
+    <TabHeader title="长期记忆" subtitle="按重要度/衰减规则汰换，列头可点击排序 / 过滤。">
+      <template #actions>
         <el-button type="danger" plain :disabled="total === 0" :loading="loading" @click="onBatchDelete">
           <el-icon><Delete /></el-icon>
           <span>批量删除</span>
@@ -171,8 +168,8 @@ watch(() => props.active, (active) => {
           <el-icon><Refresh /></el-icon>
           <span>刷新</span>
         </el-button>
-      </div>
-    </div>
+      </template>
+    </TabHeader>
 
     <el-card class="memories-card">
       <template #header>
@@ -241,16 +238,16 @@ watch(() => props.active, (active) => {
 <style lang="scss" scoped>
 .card-header {
   display: flex;
+  flex-wrap: wrap;
+  gap: $space-4;
   align-items: center;
   justify-content: space-between;
-  gap: $space-4;
-  flex-wrap: wrap;
 }
 
 .header-left {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .header-right {
@@ -265,30 +262,4 @@ watch(() => props.active, (active) => {
   padding-top: $space-3;
 }
 
-.tab-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: $space-4;
-  margin-bottom: $space-4;
-
-}
-
-.tab-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0 0 $space-1;
-}
-
-.tab-subtitle {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  margin: 0;
-}
-
-.head-actions {
-  display: flex;
-  gap: $space-2;
-  align-items: center;
-}
 </style>

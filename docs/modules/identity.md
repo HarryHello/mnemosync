@@ -1,6 +1,6 @@
 # 身份管理模块
 
-> **模块版本**: v0.3.4
+> **模块版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-26
 > **最后更新**: 2026-08-01
@@ -42,7 +42,7 @@ v0.3.0 起 Mnemosync 从"单人格单用户"演进为**单人格多用户**: 同
 - 策略解析器: [src/core/identity/resolver.py](../../src/core/identity/resolver.py)
 - 持久化: [src/persistence/identity_store.py](../../src/persistence/identity_store.py) (`data/identity.db`)
 - 幂等存储: [src/persistence/idempotency_store.py](../../src/persistence/idempotency_store.py) (`data/idempotency.db`)
-- 请求贯通: [src/api/routes/forward.py](../../src/api/routes/forward.py) `_resolve_identity_context`
+- 请求贯通: [forward 包](../../src/api/routes/forward/__init__.py) `_resolve_identity_context`
 - 管理端点: [src/api/routes/admin.py](../../src/api/routes/admin.py) `/panel/admin/identity/*`
 - CLI: [src/cli/identity_cmd.py](../../src/cli/identity_cmd.py)
 - 面板: `ui/src/views/IdentityPage.vue` (身份管理页)
@@ -263,11 +263,13 @@ class IdentityContext:
 
 ### 用户自助绑定 (跨平台身份归一)
 
-用户可自行跨平台绑定, 无需管理员操作。双触发模式:
+用户可自行跨平台绑定, 无需管理员操作。双触发模式 (v0.4 起两者都经 LLM 自然语气回复):
 
-**指令触发** (可靠): 用户发送自定义指令词 (默认"绑定"), 服务端拦截并生成 6 位验证码。另一端发送"绑定 {code}"完成确认。不调 LLM, 零成本。
+**指令触发** (可靠, v0.4 重构): 用户发送自定义指令词 (默认"绑定"), 服务端**确定性**生成 6 位验证码, 返回 `BindContext` (含验证码/结果/提示词), 再走 LLM 用自然语气回复 (兼容流式/非流式, 不再硬编码 JSONResponse)。另一端发送"绑定 {code}"完成确认时同样经 `BindContext` → LLM。
 
-**自然语言触发** (增强): Mnemosync 注入内部 tool (`initiate_identity_binding` / `confirm_identity_binding`), 模型在对话中自然判断意图并调用。服务端拦截执行, 合成 tool_result, 再调一轮 LLM 生成自然回复。客户端看不到内部 tool_calls。
+**自然语言触发** (增强): Mnemosync 注入内部 tool (`mnemosync_initiate_identity_binding` / `mnemosync_confirm_identity_binding`, v0.4 加前缀防与客户端工具冲突), 模型在对话中自然判断意图并调用。服务端拦截执行, 合成 tool_result, 再调一轮 LLM 生成自然回复。客户端看不到内部 tool_calls。
+
+**自绑定拒绝** (v0.4): 同账号与自身绑定会被拒绝 ("不能与自身绑定")。
 
 绑定逻辑: 复用 UserGroup, 把两个 Actor 归到同一组。验证码 5 分钟 TTL, 内存存储。指令词可通过 `runtime.identity_bind_command` / `runtime.identity_bind_confirm_prefix` 自定义。
 

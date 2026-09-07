@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 GITHUB_RELEASES_URL = (
     "https://api.github.com/repos/HarryHello/mnemosync/releases/latest"
 )
+GITHUB_RELEASES_LIST_URL = (
+    "https://api.github.com/repos/HarryHello/mnemosync/releases"
+)
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
@@ -65,3 +68,39 @@ async def check_for_update() -> dict[str, Any] | None:
             "url": data.get("html_url", ""),
         }
     return None
+
+
+async def list_releases(limit: int = 30) -> list[dict[str, Any]]:
+    """列出所有 GitHub releases (含描述).
+
+    Returns:
+        list of {version, description, published_at, is_prerelease, url},
+        按发布时间倒序. 网络失败时返回空列表.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            resp = await client.get(
+                GITHUB_RELEASES_LIST_URL,
+                params={"per_page": limit},
+                headers={"Accept": "application/vnd.github.v3+json"},
+            )
+            if resp.status_code != 200:
+                logger.debug("GitHub releases list API 返回 %d", resp.status_code)
+                return []
+            data = resp.json()
+    except httpx.HTTPError as e:
+        logger.debug("列出版本失败: %s", e)
+        return []
+
+    releases: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        releases.append({
+            "version": item.get("tag_name", ""),
+            "description": item.get("body", "") or "",
+            "published_at": item.get("published_at", ""),
+            "is_prerelease": bool(item.get("prerelease", False)),
+            "url": item.get("html_url", ""),
+        })
+    return releases

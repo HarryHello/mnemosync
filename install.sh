@@ -13,9 +13,7 @@
 #   MNEMOSYNC_BIN_DIR   自定义命令目录 (默认 ~/.local/bin)
 #   MNEMOSYNC_BRANCH    自定义分支 (默认 beta; 此分支的 install.sh 默认装本分支)
 #   MNEMOSYNC_RELEASE_TAG  预编译 UI 的 release tag (默认 preview; 与本分支对应)
-#
-# 预发布测试 (服务器无需编译前端, 直接 curl 本分支脚本即可):
-#   curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.sh | sh
+#   MNEMOSYNC_VERSION   锁定安装/升级到指定版本 tag (如 v0.4.0), 默认跟随分支最新
 #
 # 使用代理安装示例:
 #   GITHUB_PROXY=https://ghproxy.com/ curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/HarryHello/mnemosync/dev/install.sh | sh
@@ -129,7 +127,12 @@ _version_gt() {
 check_not_downgrade() {
     local current_ver target_ver
     current_ver=$(_version_of "$INSTALL_DIR/pyproject.toml")
-    target_ver=$(git show "origin/$BRANCH:pyproject.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+    if [ -n "$MNEMOSYNC_VERSION" ]; then
+        # 锁定版本: 目标版本 = 指定 tag 的 pyproject 版本
+        target_ver=$(git show "$MNEMOSYNC_VERSION:pyproject.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+    else
+        target_ver=$(git show "origin/$BRANCH:pyproject.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+    fi
     # 缺版本信息 (如全新安装或无法读取) 时跳过检查
     [ -z "$current_ver" ] && return 0
     [ -z "$target_ver" ] && return 0
@@ -152,9 +155,22 @@ setup_code() {
         if [ ! -d ".git" ]; then
             warn "$INSTALL_DIR 存在但不是 git 仓库，重新克隆"
             cd ..
+            # 数据保护 (v0.4.1): 非 git 仓库重建前先移出 data/, 重建后恢复 —
+            # 绝不静默删除用户数据
+            _data_bak=""
+            if [ -d "$INSTALL_DIR/data" ] && [ -n "$(ls -A "$INSTALL_DIR/data" 2>/dev/null)" ]; then
+                _data_bak="${INSTALL_DIR}.data-$(date +%Y%m%d-%H%M%S)"
+                warn "检测到数据目录, 先备份到 $_data_bak (重建后自动恢复)"
+                mv "$INSTALL_DIR/data" "$_data_bak"
+            fi
             rm -rf "$INSTALL_DIR"
             git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
             cd "$INSTALL_DIR"
+            if [ -n "$_data_bak" ]; then
+                mkdir -p data
+                mv "$_data_bak" "$INSTALL_DIR/data"
+                info "数据目录已恢复到 $INSTALL_DIR/data"
+            fi
         fi
 
         # 拉取最新代码 (支持代理)
@@ -162,11 +178,21 @@ setup_code() {
             git remote set-url origin "$REPO_URL"
         fi
         git fetch origin "$BRANCH"
+        if [ -n "$MNEMOSYNC_VERSION" ]; then
+            # 锁定版本: 拉取指定 tag
+            git fetch origin tag "$MNEMOSYNC_VERSION"
+        fi
         # 版本降级检测 (只能升不能降)
         check_not_downgrade
-        # 正确切换本地分支名 + 硬重置到目标分支
-        git checkout -B "$BRANCH" "origin/$BRANCH"
-        git reset --hard "origin/$BRANCH"
+        if [ -n "$MNEMOSYNC_VERSION" ]; then
+            # 检出指定版本 tag (pinned 本地分支)
+            git checkout -B "pin/$MNEMOSYNC_VERSION" "$MNEMOSYNC_VERSION"
+            git reset --hard "$MNEMOSYNC_VERSION"
+        else
+            # 正确切换本地分支名 + 硬重置到目标分支
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            git reset --hard "origin/$BRANCH"
+        fi
     else
         info "下载 Mnemosync..."
         git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
@@ -218,6 +244,11 @@ setup_ui() {
     if [ -f "ui/dist/index.html" ]; then
         info "更新管理面板..."
         rm -rf ui/dist
+    fi
+
+    # 锁定版本时, UI 用对应版本的 release tag
+    if [ -n "$MNEMOSYNC_VERSION" ]; then
+        RELEASE_TAG="$MNEMOSYNC_VERSION"
     fi
 
     # 尝试从 release 拉取 ui-dist.tar.gz (latest 或指定 RELEASE_TAG)

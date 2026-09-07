@@ -9,6 +9,7 @@ the package ``__init__``.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Request
@@ -20,6 +21,7 @@ from src.persistence.conversation_store import SqliteConversationStore
 from src.persistence.idempotency_store import SqliteIdempotencyStore
 from src.persistence.identity_store import SqliteIdentityStore
 from src.persistence.persona_store import SqlitePersonaStore
+from src.persistence.prompt_cache_store import PromptCacheStore
 
 if TYPE_CHECKING:
     from src.infra.debug_bus import DebugEventBus
@@ -90,6 +92,18 @@ def _get_persona_store(http_request: Request) -> SqlitePersonaStore | None:
     """从 AppState 取 SqlitePersonaStore (可能为 None)."""
     from src.api.deps import _state
     return _state(http_request).persona_store
+
+
+def _get_prompt_cache_store(http_request: Request) -> PromptCacheStore | None:
+    """从 AppState 取 PromptCacheStore (可能为 None)."""
+    from src.api.deps import _state
+    return _state(http_request).prompt_cache_store
+
+
+def _get_prompt_clean_semaphore(http_request: Request) -> asyncio.Semaphore | None:
+    """从 AppState 取全局清洗并发信号量 (可能为 None)."""
+    from src.api.deps import _state
+    return _state(http_request).prompt_clean_semaphore
 
 
 def _build_graph_config(http_request: Request) -> dict[str, Any]:

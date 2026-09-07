@@ -15,7 +15,8 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import lru_cache
 from types import TracebackType
 from typing import Any, cast
 
@@ -25,8 +26,86 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpe
 from .connection_pool import ConnectionPool
 from .debug_hook import get_debug_bus
 from .debug_utils import emit_upstream_debug as _emit_debug  # noqa: F401
+from .model_capabilities import known_capability_for
+from .models_dev import fetch_models_dev_index, lookup_models_dev
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ModelDetail:
+    """上游 /v1/models 单条模型: id + 尽力解析的能力声明.
+
+    能力字段来自服务商在模型列表里携带的扩展字段 (非 OpenAI 标准),
+    常见键名见 _extract_model_capability; 缺失时回落默认 (text / None).
+    """
+
+    id: str
+    context_length: int | None = None
+    output_limit: int | None = None
+    supports_tools: bool = False   # 工具调用 (function calling)
+    input_modalities: list[str] = field(default_factory=lambda: ["text"])
+    output_modalities: list[str] = field(default_factory=lambda: ["text"])
+
+
+def _parse_tool_support(raw: dict[str, Any]) -> bool:
+    """尽力解析上游是否声明支持工具调用.
+
+    支持 bool/int/str, 或 list (如 OpenRouter supported_parameters 含 "tools").
+    """
+    for key in ("supports_tools", "tool_calling", "server_side_tool_use", "tool_call"):
+        v = raw.get(key)
+        if v is None:
+            continue
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        if isinstance(v, str):
+            return v.strip().lower() in ("true", "1", "yes")
+        if isinstance(v, list):
+            return any(str(x).strip().lower() in ("tools", "tool_call") for x in v)
+        return False
+    # OpenRouter: supported_parameters 是 list, 含 "tools" 即支持
+    params = raw.get("supported_parameters")
+    if isinstance(params, list):
+        return any(str(x).strip().lower() in ("tools", "tool_call") for x in params)
+    return False
+
+
+def _extract_model_capability(
+    raw: dict[str, Any],
+    *names: str,
+) -> Any | None:
+    """从模型条目 dict 里按候选键名尽力取值 (int 或 list).
+
+    支持点路径 (如 architecture.input_modalities, 兼容 OpenRouter).
+    """
+    for name in names:
+        # 点路径逐段下钻
+        node: Any = raw
+        ok = True
+        for part in name.split("."):
+            if isinstance(node, dict) and part in node:
+                node = node[part]
+            else:
+                ok = False
+                break
+        v = node if ok else None
+        if v is None:
+            continue
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, int):
+            return max(0, v)
+        if isinstance(v, (float, str)):
+            try:
+                return max(0, int(float(str(v).replace(",", ""))))
+            except ValueError:
+                continue
+        if isinstance(v, list):
+            return v
+    return None
 
 
 def _log_upstream(direction: str, base_url: str, data: Any, status: int | None = None) -> None:
@@ -50,12 +129,73 @@ def _log_upstream(direction: str, base_url: str, data: Any, status: int | None =
     )
 
 
+# 429 错误的配额类关键词: 命中表示余额/配额问题, 等待无用, 应 fallback 换候选
+_QUOTA_KEYWORDS = (
+    "insufficient_quota", "quota_exceeded", "quota", "billing", "payment",
+    "insufficient_credits", "insufficient_balance", "insufficient balance",
+    "purchase a plan", "api key expired", "forbidden",
+)
+# 429 错误的限流类关键词: 命中表示并发/速率限制, 等待有效
+_RATE_KEYWORDS = (
+    "rate_limit", "rate limit", "too_many_requests", "too many requests",
+    "overloaded", "throttl", "temporarily unavailable",
+)
+
+
+@lru_cache(maxsize=256)
+def classify_429(message: str) -> str:
+    """分类 429 错误.
+
+    结构化提取优先 (error.code / error.type, 递归找), 找不到则全文关键词兜底.
+    相同错误文本只解析一次 (lru_cache), 服务商固定错误模板下零重复开销.
+    Returns:
+        "quota" (余额不足, 应 fallback) | "rate" (限流, 应重试) | "unknown"
+    """
+    # 结构化提取 error.code / error.type
+    try:
+        import json
+        parsed = json.loads(message)
+        for value in _walk_error_codes(parsed):
+            lowered = str(value).lower()
+            if any(k in lowered for k in _RATE_KEYWORDS):
+                return "rate"
+            if any(k in lowered for k in _QUOTA_KEYWORDS):
+                return "quota"
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 全文关键词兜底: 先查限流 (宁可重试不误换候选), 再查配额
+    lowered = message.lower()
+    if any(k in lowered for k in _RATE_KEYWORDS):
+        return "rate"
+    if any(k in lowered for k in _QUOTA_KEYWORDS):
+        return "quota"
+    return "unknown"
+
+
+def _walk_error_codes(obj: Any) -> list[Any]:
+    """递归遍历 dict 提取 error.code / error.type 类字段的值."""
+    results: list[Any] = []
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if isinstance(key, str) and key in ("code", "type") and isinstance(value, str):
+                results.append(value)
+            else:
+                results.extend(_walk_error_codes(value))
+    elif isinstance(obj, list):
+        for item in obj:
+            results.extend(_walk_error_codes(item))
+    return results
+
+
 class UpstreamError(Exception):
     """上游服务错误."""
 
     def __init__(self, status_code: int | None = None, message: str = ""):
         self.status_code = status_code
         self.message = message
+        # 429 分类: "quota" / "rate" / "unknown"
+        self.category: str | None = classify_429(message) if status_code == 429 else None
         super().__init__(f"Upstream error {status_code}: {message}")
 
 
@@ -413,13 +553,71 @@ class Forwarder:
     # ============ 模型列表 ============
 
     async def list_models(self) -> list[str]:
-        """列出服务商可用模型. 使用 openai SDK."""
+        """列出服务商可用模型 id. 使用 openai SDK."""
+        details = await self.list_model_details()
+        return [d.id for d in details]
+
+    async def list_model_details(self) -> list[ModelDetail]:
+        """列出服务商可用模型并尽力解析能力声明.
+
+        /v1/models 每条 model 对象除 id 外可能携带服务商扩展字段
+        (context_length / max_output_tokens / input_modalities 等), 这里把它们
+        映射到 ModelDetail; 缺失回落默认 (text / None). 未识别字段忽略.
+        """
         client = self._get_openai_client()
         try:
             models = await client.models.list()
-            return [m.id for m in models.data]
         except APIStatusError as e:
             raise UpstreamError(e.status_code, e.response.text) from e
+
+        # 能力兜底链: 上游声明 → models.dev 实时目录 (失败静默 None) → 内置静态表
+        dev_index = await fetch_models_dev_index()
+
+        out: list[ModelDetail] = []
+        for m in models.data:
+            raw: dict[str, Any] = {}
+            for key in ("id", "object", "created", "owned_by"):
+                v = getattr(m, key, None)
+                if v is not None:
+                    raw[key] = v
+            extra = getattr(m, "model_extra", None) or {}
+            raw.update(extra)  # SDK 未声明但上游返回的扩展字段
+            mid = str(raw.get("id") or "")
+            if not mid:
+                continue
+            cl = _extract_model_capability(
+                raw, "context_length", "max_context_length",
+                "max_context_window", "context_window", "model_max_length",
+            )
+            ol = _extract_model_capability(
+                raw, "max_output_tokens", "output_limit", "output_token_limit",
+                "max_tokens",
+            )
+            st = _parse_tool_support(raw)
+            im = _extract_model_capability(raw, "input_modalities", "modalities", "architecture.input_modalities")
+            om = _extract_model_capability(raw, "output_modalities", "architecture.output_modalities")
+            input_mods = [str(x) for x in im] if isinstance(im, list) else ["text"]
+            output_mods = [str(x) for x in om] if isinstance(om, list) else ["text"]
+            # 上游未声明能力时, models.dev 实时目录与内置静态表依次兜底
+            known = lookup_models_dev(dev_index, mid) or known_capability_for(mid)
+            if known is not None:
+                if not isinstance(cl, (int, float)) and known.context_length is not None:
+                    cl = known.context_length
+                if not isinstance(ol, (int, float)) and known.output_limit is not None:
+                    ol = known.output_limit
+                if not st and known.supports_tools:
+                    st = True
+                if input_mods == ["text"] and known.input_modalities != ("text",):
+                    input_mods = list(known.input_modalities)
+            out.append(ModelDetail(
+                id=mid,
+                context_length=int(cl) if isinstance(cl, (int, float)) else None,
+                output_limit=int(ol) if isinstance(ol, (int, float)) else None,
+                supports_tools=st,
+                input_modalities=input_mods,
+                output_modalities=output_mods,
+            ))
+        return out
 
     # ============ 生命周期 ============
 

@@ -1,6 +1,6 @@
 # 记忆系统设计 | Memory System Design
 
-> **文档版本**: v0.3.4
+> **文档版本**: v0.4.1
 > **创建时间**: 2026-03-29
 > **最后更新**: 2026-08-01
 > **状态**: 与代码同步
@@ -91,7 +91,7 @@ CREATE INDEX idx_conv_space_seq ON conversation_turns(space_id, committed_sequen
 
 **空间事件流 (v0.3.0)**: 群聊/多用户场景按 `space_id` 分区 — 每个空间内轮次在提交时分配 `committed_sequence` (空间内 MAX+1, 同事务分配), 事件时间早于空间内最新已提交时间时标记 `late_arrival`。无 `space_id` 的私聊/非归属轮次不分配序号, 仍按 `ts` 定序。装填上下文时 `space_id` 非空只读本空间流水 (`list_for_space`), 避免其他空间对话泄入。
 
-### 写入 (forward.py)
+### 写入 (forward 包)
 
 流式与非流式路径都在主对话完成后写两条:
 
@@ -393,7 +393,7 @@ reranker 精排后:
 | `entry.source_user == 自己的 effective_user_id` | 可见 (自己桶的记忆, 任何可见性) |
 | `entry.space_id == 当前 space_id` 且非 SOURCE_RESTRICTED | 空间成员可见 (群聊共享记忆) |
 | `FRIENDS_ONLY` (非来源用户) | 需要 friend / intimate 关系 |
-| `CONFIDENTIAL` (非来源用户) | 需要 `trust_level >= 0.7` |
+| `CONFIDENTIAL` (非来源用户) | 需要 `favor >= 0.8` (v0.4.1 起; 阈值仅适用人格自生产内容, 用户内容只走 `custom_policies` 授权) |
 | `custom_policies` 含 `deny:user:<id>` / `deny:actor:<id>` | 一票否决 |
 | `custom_policies` 含 `allow:*` 规则 | 构成白名单, 不在名单内不可见 |
 | 其余 (SOURCE_RESTRICTED 且非来源用户) | 不可见 |
@@ -410,7 +410,7 @@ reranker 精排后:
 
 ### 5.1 合并策略
 
-发送给上游模型的上下文由 `forward.py` 装填, 不再由主对话 Agent 内部拼装:
+发送给上游模型的上下文由 forward 包装填, 不再由主对话 Agent 内部拼装:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -617,14 +617,15 @@ CREATE INDEX idx_created_at ON memory_entries(created_at DESC);
 CREATE INDEX idx_mem_space ON memory_entries(space_id);  -- v0.3.0
 ```
 
-**关系表 (v0.2.10 起 3 个 nullable 列; NULL = 沿用 TOML 基线; v0.3.0 user_id 列存 effective_user_id)**
+**关系表 (v0.4.1: 单一好感度 favor; v0.2.10 起 3 个 nullable 列; NULL = 沿用 TOML 基线; v0.3.0 user_id 列存 effective_user_id)**
 
 ```sql
 CREATE TABLE relationships (
     persona_id           TEXT NOT NULL,
     user_id              TEXT NOT NULL,                  -- v0.3.0: effective_user_id (记忆与关系隔离边界)
-    intimacy             REAL NOT NULL DEFAULT 0.0,   -- 0.0 ~ 1.0
-    trust                REAL NOT NULL DEFAULT 0.0,
+    favor                REAL NOT NULL DEFAULT 0.0,   -- v0.4.1: 单一好感度 -1.0~1.0 (允许为负表达厌恶)
+    intimacy             REAL NOT NULL DEFAULT 0.0,   -- ★ 旧列 (≤ v0.4.0), 保留不再写入, 计划 v0.5 移除
+    trust                REAL NOT NULL DEFAULT 0.0,   -- ★ 旧列, 同上
     stage                TEXT NOT NULL DEFAULT 'stranger',
     memory_count         INTEGER NOT NULL DEFAULT 0,
     last_interaction     TIMESTAMP,
@@ -704,7 +705,7 @@ CREATE INDEX idx_audit_user ON relationship_audit_log(persona_id, user_id, id DE
 |------|--------|---------|-------|
 | `POST /panel/admin/memory/prune` | forgotten / expired / `priority < threshold` 的 NORMAL 记忆 | **PERMANENT 全部保留**; 关系 / 短期 / 向量库不动 | 日常瘦身, 只清衰减掉的普通记忆 |
 | `POST /panel/admin/memory/reindex` (`prune=true` 可选) | 重建 Chroma collection (换嵌入模型时); prune=true 时顺带按上一列规则清理 | 同上, PERMANENT 一律保留 | 更换嵌入模型 / 修复向量库损坏 |
-| `POST /panel/admin/persona/reset` (**v0.2.7**) | **memory_entries 全部** (含 PERMANENT) + **relationships 全部** (亲密度 / 信任度) + **conversation_turns 全部** + Chroma collection | API Key / 服务商 / 模型绑定 / 提示词覆盖 / 管理员 / http_logs / config.local.toml | 想让 Mnemosync 回到"新装"的人格状态 (数据脏了 / 换测试场景 / 想重头开始一段关系) |
+| `POST /panel/admin/persona/reset` (**v0.2.7**) | **memory_entries 全部** (含 PERMANENT) + **relationships 全部** (好感度 / 称呼) + **conversation_turns 全部** + Chroma collection | API Key / 服务商 / 模型绑定 / 提示词覆盖 / 管理员 / http_logs / config.local.toml | 想让 Mnemosync 回到"新装"的人格状态 (数据脏了 / 换测试场景 / 想重头开始一段关系) |
 
 ### Persona Reset 语义要点
 
@@ -733,6 +734,7 @@ CREATE INDEX idx_audit_user ON relationship_audit_log(persona_id, user_id, id DE
 | v0.2.9 | 2026-07-19 | 关系基线抽入 TOML `[persona.relation]` (`persona_addressing` / `user_addressing` / `context`), memory / relationship 两个 Agent prompt 通过占位符消费 |
 | v0.2.10 | 2026-07-19 | **关系称呼动态演化**: `relationships` 表加 3 个 nullable 列 (同名字段); 新增 `relationship_audit_log` 表 (字段级 diff, source=agent/manual); 关系分析 Agent 获得 `update_addressing` tool (自证 `reason` ≥ 10 字, `persona_id`/`user_id` 由 factory 闭包绑定不可越权); `nodes.py._resolve_addressing` 优先读表, NULL 回退 TOML 基线; `PUT /panel/admin/relationship` + `GET /panel/admin/relationship/audit` 提供人工 override 与历史回溯 |
 | v0.3.0 | 2026-07-26 | **多用户受众化**: `MemoryEntry.space_id` 字段; `source_user` / `relationships.user_id` 语义改为 effective_user_id (不再有 "default" 兜底); 检索两级受众过滤 (§4.4: `$or` 粗筛 + `is_visible` 精筛); `list_permanent` 放宽并过滤; 短期流水按 space_id 分区 (`committed_sequence` / `late_arrival` / `list_for_space`); 幂等缓存保护记忆不被重复写入 (详见 [identity.md](identity.md)) |
+| v0.4.0 | 2026-08 | 多模态: 图片消息 content parts 在 `dispatch.py` 规范化时保留, 模型不支持视觉时由 Vision Agent 转述为文字再入短期历史 (记忆内容本身无变更) |
 
 ---
 

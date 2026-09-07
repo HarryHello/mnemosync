@@ -28,6 +28,23 @@ from src.infra.llm_service.models import LLMServiceProvider, ModelType, Resolved
 from src.infra.llm_service.store import LLMServiceStore
 
 
+async def _bind(store, role, sid, model, *, priority=None, context_length=None,
+                embedding_dim=None, send_dimensions=None,
+                input_modalities=None, output_modalities=None):
+    """测试 helper: 先注册模型到注册表, 再按 model_id 绑定 (v0.4.1 语义)."""
+    from src.infra.llm_service.models import ModelRegistryEntry
+    entry = ModelRegistryEntry.create(
+        sid, model,
+        context_length=context_length,
+        embedding_dim=embedding_dim,
+        send_dimensions=bool(send_dimensions),
+        input_modalities=input_modalities,
+        output_modalities=output_modalities,
+    )
+    await store.save_model_registry(entry)
+    return await store.add_role_binding(role, entry.id, priority=priority)
+
+
 @pytest.fixture
 async def resolver(tmp_path):
     """预置三个服务, 三个 main 候选."""
@@ -37,7 +54,7 @@ async def resolver(tmp_path):
         await store.save_service(
             LLMServiceProvider.create(f"svc-{letter}", f"https://{letter}.example/v1", f"sk-{letter}")
         )
-        await store.add_role_binding(ModelType.MAIN, f"svc-{letter}", f"model-{letter}")
+        await _bind(store, ModelType.MAIN, f"svc-{letter}", f"model-{letter}")
     return RoleResolver(store)
 
 
@@ -240,7 +257,7 @@ async def test_embed_uses_first_candidate_no_fallback(tmp_path):
     store = LLMServiceStore(str(tmp_path / "e.db"))
     await store.init_db()
     await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
-    await store.add_role_binding(ModelType.EMBEDDING, "a", "embed-1")
+    await _bind(store, ModelType.EMBEDDING, "a", "embed-1")
     multi = MultiForwarder(RoleResolver(store))
 
     async def side_effect(*, model, **_):
@@ -257,7 +274,7 @@ async def test_embed_no_fallback_on_error(tmp_path):
     store = LLMServiceStore(str(tmp_path / "e.db"))
     await store.init_db()
     await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
-    await store.add_role_binding(ModelType.EMBEDDING, "a", "embed-1")
+    await _bind(store, ModelType.EMBEDDING, "a", "embed-1")
     multi = MultiForwarder(RoleResolver(store))
 
     with patch.object(
@@ -277,7 +294,7 @@ async def test_embed_does_not_send_dimensions_by_default(tmp_path):
     store = LLMServiceStore(str(tmp_path / "e.db"))
     await store.init_db()
     await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
-    await store.add_role_binding(
+    await _bind(store,
         ModelType.EMBEDDING, "a", "bge-m3", embedding_dim=1024
     )
     multi = MultiForwarder(RoleResolver(store))
@@ -301,7 +318,7 @@ async def test_embed_sends_dimensions_when_flag_true(tmp_path):
     store = LLMServiceStore(str(tmp_path / "e.db"))
     await store.init_db()
     await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
-    await store.add_role_binding(
+    await _bind(store,
         ModelType.EMBEDDING, "a", "text-embedding-v3",
         embedding_dim=1024, send_dimensions=True,
     )
@@ -326,7 +343,7 @@ async def test_embed_explicit_dimensions_overrides_binding(tmp_path):
     store = LLMServiceStore(str(tmp_path / "e.db"))
     await store.init_db()
     await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
-    await store.add_role_binding(
+    await _bind(store,
         ModelType.EMBEDDING, "a", "bge-m3",
         embedding_dim=1024, send_dimensions=False,
     )
@@ -348,8 +365,8 @@ async def test_rerank_falls_back(tmp_path):
     await store.init_db()
     await store.save_service(LLMServiceProvider.create("a", "https://a", "sk-a"))
     await store.save_service(LLMServiceProvider.create("b", "https://b", "sk-b"))
-    await store.add_role_binding(ModelType.RERANK, "a", "rerank-1")
-    await store.add_role_binding(ModelType.RERANK, "b", "rerank-2")
+    await _bind(store, ModelType.RERANK, "a", "rerank-1")
+    await _bind(store, ModelType.RERANK, "b", "rerank-2")
     multi = MultiForwarder(RoleResolver(store))
 
     async def side_effect(*, model, **_):

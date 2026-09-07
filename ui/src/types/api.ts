@@ -180,8 +180,8 @@ export interface InteractionListResponse {
 
 export interface RelationshipIdentityAccount {
   actor_id: string
-  frontend: string
-  external_key: string
+  frontend: string | null
+  external_key: string | null
   display_name: string | null
 }
 
@@ -195,9 +195,8 @@ export interface Relationship {
   persona_id: string
   user_id: string
   identity: RelationshipIdentity | null
-  intimacy: number
-  trust: number
-  relationship_type: string | null
+  favor: number
+  relationship_type: string
   notes: string | null
   updated_at: string
   persona_addressing: string
@@ -207,18 +206,17 @@ export interface Relationship {
 
 export interface RelationshipAuditEntry {
   id: number
-  persona_id: string
-  user_id: string
   changed_at: string
   source: 'agent' | 'manual'
   field_name: 'persona_addressing' | 'user_addressing' | 'context'
   old_value: string | null
   new_value: string | null
-  reason: string
+  reason: string | null
 }
 
 export interface RelationshipAuditListResponse {
   items: RelationshipAuditEntry[]
+  total: number
 }
 
 export interface RelationshipUpdateBody {
@@ -227,6 +225,7 @@ export interface RelationshipUpdateBody {
   context?: string | null
   reason: string
   user_id?: string
+  actor_id?: string
 }
 
 /** v0.3.0: 多用户关系列表 (分页 + 排序). */
@@ -331,8 +330,17 @@ export interface UpstreamServiceUpdateBody {
   api_format?: string
 }
 
+export interface UpstreamModelDetail {
+  id: string
+  context_length: number | null
+  output_limit: number | null
+  supports_tools: boolean
+  input_modalities: string[]
+  output_modalities: string[]
+}
+
 export interface UpstreamAvailableModels {
-  models: string[]
+  models: UpstreamModelDetail[]
 }
 
 // ============================================================================
@@ -344,6 +352,8 @@ export interface RoleBindingItem {
   priority: number
   service_id: string
   model: string
+  model_id?: string | null
+  display_name?: string | null
   created_at: string
   context_length: number | null
   embedding_dim: number | null
@@ -357,34 +367,96 @@ export interface RoleBindingListResponse {
 }
 
 export interface RoleBindingAddBody {
+  /** v0.4.1: 从模型注册表引用 (id = "{service_id}:{model}"), 能力随注册表 */
   role: UpstreamModelType
-  service_id: string
-  model: string
+  model_id: string
   priority?: number | null
-  context_length?: number | null
-  embedding_dim?: number | null
-  send_dimensions?: boolean
-  input_modalities?: string[]
-  output_modalities?: string[]
 }
 
 /**
- * v0.2.13: PATCH /model-bindings/{role}/{priority}.
- * 语义: 键缺失 = 不改; 值为 null (仅 context_length / embedding_dim) = 清空;
- * service_id / model 若下发则必须非空。
+ * v0.4.1: PATCH /model-bindings/{role}/{priority}.
+ * 语义: model_id 省略 = 不改; 换模型时 service_id/model/model_id 联动更新.
  */
 export interface RoleBindingUpdateBody {
-  service_id?: string
-  model?: string
-  context_length?: number | null
-  embedding_dim?: number | null
-  send_dimensions?: boolean
-  input_modalities?: string[]
-  output_modalities?: string[]
+  model_id?: string
 }
 
 export interface RoleBindingReorderBody {
   order: [string, string][]
+}
+
+// ============================================================================
+// Model registry (v0.4.1: 模型一等实体, RFC model-registry)
+// ============================================================================
+
+export interface ModelRegistryItem {
+  id: string
+  service_id: string
+  model: string
+  display_name: string | null
+  input_modalities: string[]
+  output_modalities: string[]
+  context_length: number | null
+  output_limit: number | null
+  supports_tools: boolean
+  embedding_dim: number | null
+  send_dimensions: boolean
+  concurrency: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ModelRegistryCreateBody {
+  service_id: string
+  model: string
+  display_name?: string | null
+  input_modalities?: string[]
+  output_modalities?: string[]
+  context_length?: number | null
+  output_limit?: number | null
+  supports_tools?: boolean
+  embedding_dim?: number | null
+  send_dimensions?: boolean
+  concurrency?: number
+  enabled?: boolean
+}
+
+export interface ModelRegistryUpdateBody {
+  display_name?: string | null
+  clear_display_name?: boolean
+  input_modalities?: string[]
+  output_modalities?: string[]
+  context_length?: number | null
+  clear_context_length?: boolean
+  output_limit?: number | null
+  clear_output_limit?: boolean
+  supports_tools?: boolean
+  embedding_dim?: number | null
+  clear_embedding_dim?: boolean
+  send_dimensions?: boolean
+  concurrency?: number
+  enabled?: boolean
+}
+
+export interface ModelImportItem {
+  model: string
+  display_name?: string | null
+  context_length?: number | null
+  output_limit?: number | null
+  supports_tools?: boolean
+  input_modalities?: string[]
+  output_modalities?: string[]
+}
+
+export interface ModelImportBody {
+  service_id: string
+  models: ModelImportItem[]
+}
+
+export interface ModelImportResponse {
+  added: number
+  skipped: number
 }
 
 // v0.2.4: 探测 / 重建 / 清理

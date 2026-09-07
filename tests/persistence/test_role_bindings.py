@@ -15,6 +15,23 @@ from src.infra.llm_service.models import LLMServiceProvider, ModelType
 from src.infra.llm_service.store import LLMServiceStore
 
 
+async def _bind(store, role, sid, model, *, priority=None, context_length=None,
+                embedding_dim=None, send_dimensions=None,
+                input_modalities=None, output_modalities=None):
+    """测试 helper: 先注册模型到注册表, 再按 model_id 绑定 (v0.4.1 语义)."""
+    from src.infra.llm_service.models import ModelRegistryEntry
+    entry = ModelRegistryEntry.create(
+        sid, model,
+        context_length=context_length,
+        embedding_dim=embedding_dim,
+        send_dimensions=bool(send_dimensions),
+        input_modalities=input_modalities,
+        output_modalities=output_modalities,
+    )
+    await store.save_model_registry(entry)
+    return await store.add_role_binding(role, entry.id, priority=priority)
+
+
 @pytest.fixture
 async def store(tmp_path):
     s = LLMServiceStore(str(tmp_path / "llm.db"))
@@ -28,8 +45,8 @@ async def store(tmp_path):
 # ─── 基本 CRUD ────────────────────────────────────────────
 
 async def test_add_binding_defaults_to_next_priority(store):
-    b1 = await store.add_role_binding(ModelType.MAIN, "svc-a", "qwen-max")
-    b2 = await store.add_role_binding(ModelType.MAIN, "svc-b", "claude-3.5")
+    b1 = await _bind(store, ModelType.MAIN, "svc-a", "qwen-max")
+    b2 = await _bind(store, ModelType.MAIN, "svc-b", "claude-3.5")
     assert b1.priority == 0
     assert b2.priority == 1
     listed = await store.list_role_bindings(ModelType.MAIN)
@@ -38,10 +55,10 @@ async def test_add_binding_defaults_to_next_priority(store):
 
 
 async def test_add_binding_with_explicit_priority_makes_room(store):
-    await store.add_role_binding(ModelType.MAIN, "svc-a", "qwen-max")
-    await store.add_role_binding(ModelType.MAIN, "svc-b", "claude-3.5")
+    await _bind(store, ModelType.MAIN, "svc-a", "qwen-max")
+    await _bind(store, ModelType.MAIN, "svc-b", "claude-3.5")
     # 插到最前面, 现有两条 priority += 1
-    inserted = await store.add_role_binding(
+    inserted = await _bind(store,
         ModelType.MAIN, "svc-a", "qwen-plus", priority=0
     )
     assert inserted.priority == 0
@@ -52,13 +69,13 @@ async def test_add_binding_with_explicit_priority_makes_room(store):
 
 async def test_add_binding_rejects_unknown_service(store):
     with pytest.raises(ValueError, match="不存在"):
-        await store.add_role_binding(ModelType.MAIN, "svc-ghost", "x")
+        await _bind(store, ModelType.MAIN, "svc-ghost", "x")
 
 
 async def test_delete_binding_compacts_priorities(store):
-    await store.add_role_binding(ModelType.ASSIST, "svc-a", "a")
-    await store.add_role_binding(ModelType.ASSIST, "svc-b", "b")
-    await store.add_role_binding(ModelType.ASSIST, "svc-a", "c")
+    await _bind(store, ModelType.ASSIST, "svc-a", "a")
+    await _bind(store, ModelType.ASSIST, "svc-b", "b")
+    await _bind(store, ModelType.ASSIST, "svc-a", "c")
     ok = await store.delete_role_binding(ModelType.ASSIST, 1)
     assert ok is True
     listed = await store.list_role_bindings(ModelType.ASSIST)
@@ -71,9 +88,9 @@ async def test_delete_missing_returns_false(store):
 
 
 async def test_reorder_bindings(store):
-    await store.add_role_binding(ModelType.MAIN, "svc-a", "a")
-    await store.add_role_binding(ModelType.MAIN, "svc-b", "b")
-    await store.add_role_binding(ModelType.MAIN, "svc-a", "c")
+    await _bind(store, ModelType.MAIN, "svc-a", "a")
+    await _bind(store, ModelType.MAIN, "svc-b", "b")
+    await _bind(store, ModelType.MAIN, "svc-a", "c")
     result = await store.reorder_role_bindings(
         ModelType.MAIN,
         [("svc-b", "b"), ("svc-a", "c"), ("svc-a", "a")],
@@ -86,14 +103,14 @@ async def test_reorder_bindings(store):
 
 
 async def test_reorder_mismatch_raises(store):
-    await store.add_role_binding(ModelType.MAIN, "svc-a", "a")
+    await _bind(store, ModelType.MAIN, "svc-a", "a")
     with pytest.raises(ValueError, match="不匹配"):
         await store.reorder_role_bindings(ModelType.MAIN, [("svc-a", "wrong-model")])
 
 
 async def test_service_deletion_cascades_bindings(store):
-    await store.add_role_binding(ModelType.MAIN, "svc-a", "qwen-max")
-    await store.add_role_binding(ModelType.MAIN, "svc-b", "claude")
+    await _bind(store, ModelType.MAIN, "svc-a", "qwen-max")
+    await _bind(store, ModelType.MAIN, "svc-b", "claude")
     await store.delete_service("svc-a")
     listed = await store.list_role_bindings(ModelType.MAIN)
     assert [b.service_id for b in listed] == ["svc-b"]
@@ -102,8 +119,8 @@ async def test_service_deletion_cascades_bindings(store):
 # ─── resolve_role ────────────────────────────────────────
 
 async def test_resolve_role_returns_decrypted_candidates(store):
-    await store.add_role_binding(ModelType.RERANK, "svc-a", "rerank-v3")
-    await store.add_role_binding(ModelType.RERANK, "svc-b", "rerank-v2")
+    await _bind(store, ModelType.RERANK, "svc-a", "rerank-v3")
+    await _bind(store, ModelType.RERANK, "svc-b", "rerank-v2")
     resolved = await store.resolve_role(ModelType.RERANK)
     assert len(resolved) == 2
     assert resolved[0].service_id == "svc-a"
@@ -115,18 +132,18 @@ async def test_resolve_role_returns_decrypted_candidates(store):
 
 async def test_embedding_role_is_single_binding(store):
     """嵌入角色只允许一条绑定, 重复添加应报错."""
-    b = await store.add_role_binding(ModelType.EMBEDDING, "svc-a", "embed-v3")
+    b = await _bind(store, ModelType.EMBEDDING, "svc-a", "embed-v3")
     assert b.priority == 0
     with pytest.raises(ValueError, match="嵌入模型只允许一条绑定"):
-        await store.add_role_binding(ModelType.EMBEDDING, "svc-b", "embed-v2")
+        await _bind(store, ModelType.EMBEDDING, "svc-b", "embed-v2")
     # 删除后可再添
     await store.delete_role_binding(ModelType.EMBEDDING, 0)
-    b2 = await store.add_role_binding(ModelType.EMBEDDING, "svc-b", "embed-v2")
+    b2 = await _bind(store, ModelType.EMBEDDING, "svc-b", "embed-v2")
     assert b2.priority == 0
 
 
 async def test_embedding_reorder_rejected(store):
-    await store.add_role_binding(ModelType.EMBEDDING, "svc-a", "embed-v3")
+    await _bind(store, ModelType.EMBEDDING, "svc-a", "embed-v3")
     with pytest.raises(ValueError, match="嵌入角色只允许一条绑定"):
         await store.reorder_role_bindings(
             ModelType.EMBEDDING, [("svc-a", "embed-v3")]
@@ -135,11 +152,11 @@ async def test_embedding_reorder_rejected(store):
 
 async def test_role_binding_metadata_persistence(store):
     """context_length / embedding_dim 字段可存可读."""
-    await store.add_role_binding(
+    await _bind(store,
         ModelType.MAIN, "svc-a", "qwen-max",
         context_length=131072,
     )
-    await store.add_role_binding(
+    await _bind(store,
         ModelType.EMBEDDING, "svc-b", "embed-v3",
         embedding_dim=1024,
     )
@@ -156,7 +173,7 @@ async def test_role_binding_metadata_persistence(store):
 
 async def test_send_dimensions_defaults_false(store):
     """v0.2.8: send_dimensions 未指定时默认 False, 不透传上游."""
-    await store.add_role_binding(
+    await _bind(store,
         ModelType.EMBEDDING, "svc-a", "bge-m3", embedding_dim=1024
     )
     listed = await store.list_role_bindings(ModelType.EMBEDDING)
@@ -168,7 +185,7 @@ async def test_send_dimensions_defaults_false(store):
 
 async def test_send_dimensions_persistence_true(store):
     """显式 send_dimensions=True 持久化 + resolve 带过来."""
-    await store.add_role_binding(
+    await _bind(store,
         ModelType.EMBEDDING, "svc-a", "text-embedding-v3",
         embedding_dim=1024, send_dimensions=True,
     )
@@ -226,14 +243,14 @@ async def test_resolve_empty_role(store):
 # ─── RoleResolver 缓存 ────────────────────────────────────
 
 async def test_resolver_caches_and_invalidates(store):
-    await store.add_role_binding(ModelType.MAIN, "svc-a", "m1")
+    await _bind(store, ModelType.MAIN, "svc-a", "m1")
     resolver = RoleResolver(store)
     first = await resolver.for_role(ModelType.MAIN)
     assert [c.model for c in first] == ["m1"]
     v1 = resolver.version
 
     # 直接改 DB, 不 invalidate → 缓存仍返回旧结果
-    await store.add_role_binding(ModelType.MAIN, "svc-b", "m2")
+    await _bind(store, ModelType.MAIN, "svc-b", "m2")
     still_cached = await resolver.for_role(ModelType.MAIN)
     assert [c.model for c in still_cached] == ["m1"]
 
@@ -252,8 +269,8 @@ async def test_resolver_empty_role_raises(store):
 
 
 async def test_resolver_first_returns_top_priority(store):
-    await store.add_role_binding(ModelType.MAIN, "svc-a", "primary")
-    await store.add_role_binding(ModelType.MAIN, "svc-b", "backup")
+    await _bind(store, ModelType.MAIN, "svc-a", "primary")
+    await _bind(store, ModelType.MAIN, "svc-b", "backup")
     resolver = RoleResolver(store)
     top = await resolver.first(ModelType.MAIN)
     assert top.model == "primary"

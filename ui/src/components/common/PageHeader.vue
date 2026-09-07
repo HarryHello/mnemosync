@@ -21,16 +21,16 @@ defineProps<{
 
 <style lang="scss" scoped>
 .page-header {
-  margin-bottom: $space-5;
   padding-bottom: $space-4;
+  margin-bottom: $space-5;
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .page-header-row {
   display: flex;
+  gap: $space-4;
   align-items: center;
   justify-content: space-between;
-  gap: $space-4;
 
   :deep(.page-title) {
     margin-bottom: 0;
@@ -39,14 +39,14 @@ defineProps<{
 
 .page-header-actions {
   display: flex;
-  align-items: center;
-  gap: $space-2;
   flex-shrink: 0;
+  gap: $space-2;
+  align-items: center;
 }
 
 :deep(.page-subtitle) {
+  max-width: 720px;
   margin-top: 6px;
   margin-bottom: 0;
-  max-width: 720px;
 }
 </style>

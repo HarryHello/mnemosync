@@ -24,8 +24,11 @@ from src.api.routes.admin_conversation import router as conversation_router
 from src.api.routes.admin_core import router as core_router
 from src.api.routes.admin_identity import router as identity_router
 from src.api.routes.admin_memories import router as memories_router
+from src.api.routes.admin_models import router as models_router
+from src.api.routes.admin_mood_matrix import router as mood_matrix_router
 from src.api.routes.admin_notifications import router as notifications_router
 from src.api.routes.admin_persona import router as persona_router
+from src.api.routes.admin_prompt_cleaning import router as prompt_cleaning_router
 from src.api.routes.admin_prompts import router as prompts_router
 from src.api.routes.admin_restart import router as restart_router
 from src.api.routes.admin_upstream import router as upstream_router
@@ -42,9 +45,12 @@ router.include_router(core_router)
 router.include_router(memories_router)
 router.include_router(prompts_router)
 router.include_router(upstream_router)
+router.include_router(models_router)
 router.include_router(conversation_router)
 router.include_router(notifications_router)
 router.include_router(identity_router)
 router.include_router(persona_router)
 router.include_router(agent_runs_router)
 router.include_router(restart_router)
+router.include_router(prompt_cleaning_router)
+router.include_router(mood_matrix_router)

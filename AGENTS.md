@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Mnemosync** (v0.4.0) 是一个基于 **LangGraph** 多 Agent 编排的跨平台人格记忆同步代理服务器。它在网络层拦截 OpenAI 兼容请求，把所有前端的对话汇聚成一条连续流后再转发给上游 LLM，同时维护长期记忆、关系演化、多用户身份识别与幂等重放。v0.4 起支持多模态视觉输入、Anthropic Messages 与 OpenAI Responses API 双向兼容。
+**Mnemosync** (v0.4.1) 是一个基于 **LangGraph** 多 Agent 编排的跨平台人格记忆同步代理服务器。它在网络层拦截 OpenAI 兼容请求，把所有前端的对话汇聚成一条连续流后再转发给上游 LLM，同时维护长期记忆、关系演化、多用户身份识别与幂等重放。v0.4 起支持多模态视觉输入、Anthropic Messages 与 OpenAI Responses API 双向兼容。
 
 核心哲学：**服务器持有真相** —— 人格由服务器权威持有，对话流水永不丢失，跨前端连续对话。
 
@@ -96,7 +96,7 @@ mnemosync/
 │   │   │       └── *.py        # builder 函数
 │   │   ├── graph/              # LangGraph 编排
 │   │   │   ├── builder.py      # build_graph() — 5 节点 StateGraph
-│   │   │   ├── nodes.py        # 各节点实现
+│   │   │   ├── nodes/          # 各节点实现 (_parse_request/_main_dialogue/...)
 │   │   │   └── state.py        # AgentState TypedDict
 │   │   ├── models/             # 角色 → 候选解析
 │   │   │   └── resolver.py     # RoleResolver
@@ -265,6 +265,8 @@ docker compose down               # 停止
 ## LangGraph Graph Topology
 
 ```
+[API 层三路并行预处理: 清洗 ∥ 情绪+mood ∥ Vision] (v0.4.1)
+                       ↓
 parse_request → [proxy_thinking?] → main_dialogue
                                      ↓ (并行)
                               relationship_analysis + memory_analysis → END
@@ -274,7 +276,7 @@ parse_request → [proxy_thinking?] → main_dialogue
 1. **parse_request** — 消息提取 + 用户标识解析 (轻量, 无 LLM)
 2. **proxy_thinking** — 可选代理思考 Agent (为不具备原生推理的模型补齐 CoT)
 3. **main_dialogue** — 主对话 Agent: 加载记忆 + 拼装上下文 + 调用 MAIN 角色 LLM
-4. **relationship_analysis** — 关系分析 Agent: 计算亲密度/信任度增量
+4. **relationship_analysis** — 关系分析 Agent: 计算好感度增量 (favor_delta, 可负, 慢热快冷)
 5. **memory_analysis** — 记忆分析 Agent: 提取候选记忆 + 确定性衰减
 
 节点之间通过 `AgentState` (TypedDict) 通信。共享 store 通过 `config["configurable"]` 传入。

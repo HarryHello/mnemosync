@@ -168,13 +168,13 @@ async function onRefresh() {
 <style lang="scss" scoped>
 .drawer-header {
   display: flex;
-  align-items: baseline;
   gap: $space-2;
+  align-items: baseline;
 }
 
 .title {
-  font-weight: 600;
   font-size: 15px;
+  font-weight: 600;
 }
 
 .unread-hint {
@@ -186,8 +186,8 @@ async function onRefresh() {
   display: flex;
   gap: $space-2;
   padding-bottom: $space-2;
-  border-bottom: 1px solid var(--el-border-color-lighter);
   margin-bottom: $space-2;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .drawer-body {
@@ -195,12 +195,12 @@ async function onRefresh() {
 }
 
 .notif-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
   display: flex;
   flex-direction: column;
   gap: $space-2;
+  padding: 0;
+  margin: 0;
+  list-style: none;
 }
 
 .notif-item {
@@ -208,8 +208,8 @@ async function onRefresh() {
   padding: $space-2 $space-3;
   padding-right: 150px; /* 让出右上角时间戳的空间 */
   padding-bottom: 36px; /* 让出右下角已读按钮的空间 */
-  border-radius: $radius-sm;
   background: var(--el-fill-color-lighter);
+  border-radius: $radius-sm;
   transition: background 0.15s ease;
 
   &:hover {
@@ -217,9 +217,9 @@ async function onRefresh() {
   }
 
   &.is-read {
+    padding-bottom: $space-2; /* 已读时不再有按钮, 恢复紧凑 */
     color: var(--el-text-color-placeholder);
     background: var(--el-fill-color-blank);
-    padding-bottom: $space-2; /* 已读时不再有按钮, 恢复紧凑 */
 
     .title-line,
     .message,
@@ -230,26 +230,26 @@ async function onRefresh() {
     }
 
     :deep(.el-tag) {
-      filter: grayscale(0.7);
       opacity: 0.7;
+      filter: grayscale(0.7);
     }
   }
 }
 
 .row-top {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
 
 .dot {
+  flex: 0 0 auto;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
   background: var(--el-color-primary);
-  flex: 0 0 auto;
+  border-radius: 50%;
 }
 
 .cat {
@@ -274,30 +274,30 @@ async function onRefresh() {
 
 .title-line {
   margin-top: $space-1;
+  font-size: 13px;
   font-weight: 600;
   color: var(--el-text-color-primary);
-  font-size: 13px;
 }
 
 .message {
   margin-top: 2px;
   font-size: 12px;
   color: var(--el-text-color-regular);
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .meta {
-  margin-top: $space-1;
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
   display: flex;
   flex-wrap: wrap;
   gap: $space-2;
+  margin-top: $space-1;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
 }
 
 .meta-pair b {
-  font-weight: 600;
   margin-right: 2px;
+  font-weight: 600;
 }
 </style>

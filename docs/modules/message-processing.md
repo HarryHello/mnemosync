@@ -1,6 +1,6 @@
 # 消息处理流程 | Message Processing Flow
 
-> **系统版本**: v0.3.4
+> **系统版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
 > **最后更新**: 2026-08-01
@@ -10,7 +10,7 @@
 
 ## 1. 概述
 
-从前端请求到达 `/v1/chat/completions`, 到用户收到回复、后台完成记忆入库的完整轨迹。所有实际编排在 [src/api/routes/forward.py](../../src/api/routes/forward.py) 与 [src/core/graph/](../../src/core/graph/) 中。
+从前端请求到达 `/v1/chat/completions`, 到用户收到回复、后台完成记忆入库的完整轨迹。所有实际编排在 [forward 包](../../src/api/routes/forward/__init__.py) 与 [src/core/graph/](../../src/core/graph/) 中。
 
 ### 1.1 三段式生命周期
 
@@ -30,7 +30,7 @@
 Client ──► POST /v1/chat/completions
               │
               ▼
-       [forward.py]
+       [forward 包]
        _verify_api_key → 身份解析 _resolve_identity_context (v0.3.0)
          │                   │
          │  (无策略/解析失败 → 非归属模式: actor_id=None, 不读写私有记忆)
@@ -47,7 +47,7 @@ Client ──► POST /v1/chat/completions
        ┌──────┴──────┐
        ▼             ▼
   非流式          流式 (生产主路径)
-  graph.ainvoke   直接在 forward.py 内:
+  graph.ainvoke   直接在 forward 包内:
        │             1. 加载永久记忆 (SQLite, space_id 分区)
        │             2. 语义检索 (Chroma + rerank, RetrievalContext 受众过滤)
        │             3. 加载关系状态 (persona_id, source_user)
@@ -69,13 +69,13 @@ Client ──► POST /v1/chat/completions
 
 **关键差异**:
 - 非流式: `graph.ainvoke(initial_state)` 跑完整个图, 记忆加载/装填在 `main_dialogue_node` 内部完成
-- 流式: 记忆加载 + 短期记忆装填 + 流式转发直接内联在 `forward.py._handle_stream`; 主对话完成后同步写 `conversation_turns` 两条 (user + assistant), 再把 collected_chunks 交给后台图跑关系/记忆分析
+- 流式: 记忆加载 + 短期记忆装填 + 流式转发直接内联在 `forward/stream.py` (`_handle_stream`); 主对话完成后同步写 `conversation_turns` 两条 (user + assistant), 再把 collected_chunks 交给后台图跑关系/记忆分析
 
 ---
 
 ## 3. 阶段 1: 接收与预处理
 
-**位置**: [forward.py `create_chat_completion`](../../src/api/routes/forward.py)
+**位置**: [forward/__init__.py `create_chat_completion`](../../src/api/routes/forward/__init__.py)
 
 ```
 1. API Key 验证 (_verify_api_key): Authorization: Bearer sk-<key>
@@ -96,21 +96,26 @@ Client ──► POST /v1/chat/completions
    → 每个 ResolvedCandidate 携带 base_url / api_key / model / context_length / embedding_dim
 6. 消息序列化: request.messages → messages_dict
    ⚠️ 只取最后一条 user 消息作为 new_user_content, 客户端携带的历史全部忽略 (v0.2.6)
-7. 加载服务器人格 (settings.persona) — 服务器权威
-8. 客户端 system 消息走 prompt_cleaning Agent 剥离人格描述, 保留功能性指令
-9. 构建 initial_state:
+7. **多格式入口 (v0.4)**: `/v1/chat/completions` (OpenAI) / `/v1/messages` (Anthropic) / `/v1/responses` (Responses) — 后两者由 adapter 转成内部 OpenAI 格式再走同一管线, 响应再转回调用方格式
+8. **绑定指令拦截 (v0.4)**: 用户消息命中绑定指令 ("绑定") → `_handle_identity_binding` 返回 `BindContext` → 构建精简 state (跳过记忆/关系/代理推理) → 走 LLM 自然回复, 兼容流式/非流式
+9. **多模态图片 (v0.4)**: 目标模型 `input_modalities` 含 `image` → 保留 image content parts 直接透传; 否则 Vision Description Agent 转述为文字并入 user 输入 (v0.4.1 起为并行块的一路)
+10. 加载服务器人格 (settings.persona) — 服务器权威
+11. **并行预处理 (v0.4.1, `dispatch._run_parallel_preprocess`)**: 提示词清洗 ∥ 情绪分析+mood ∥ (Vision 转写) 三路 `asyncio.gather` 并发 — 三者输入在请求早期就绪、互不依赖, 融入 TTFT 的只有最慢一路; 代理推理**不入**并行 (它是主模型的思考, 串行于主对话之前); 主候选在此块内一次解析, 供 Vision 图片支持判断 + 复用为 main_model
+12. 构建 initial_state:
    {
      new_user_content, source_user, actor_id,
      persona, persona_name, persona_id="default",
      main_candidate, embedding_candidate, rerank_candidate,
      proxy_thinking_enabled: 由 reasoning_control 决策,
+     emotion_analysis / mood_state,       # v0.4.1 并行预处理预注入 (图内兜底)
+     _vision_user_content,                # v0.4.1 Vision 转写结果 (请求级附加键)
      stream_mode: bool,
      source_frontend, space_id, channel_type,
      external_event_id, api_key_id,
    }
 ```
 
-**⚠️ 服务器优先 (server-first) 人格**: Mnemosync 的人格由服务器 `[persona]` 段权威定义。客户端 system 消息不被信任为人格定义, 而是走 `prompt_cleaning` Agent (单次 ASSIST 模型重写) 剥离角色扮演描述、保留功能约束 (工具约束/格式要求/response_format 等)。详见 [architecture.md](../architecture.md) §2 与 [dev-decisions.md](../dev-decisions.md) v0.2.1。
+**⚠️ 服务器优先 (server-first) 人格**: Mnemosync 的人格由服务器 `[persona]` 段权威定义。客户端 system 消息不被信任为人格定义, 而是走 `prompt_cleaning` 模块化清洗 (v0.4.1: markdown 标题拆模块并发, 见 [agents.md](agents.md) §6) 剥离角色扮演描述、保留功能约束 (工具约束/格式要求/response_format 等)。详见 [architecture.md](../architecture.md) §2 与 [dev-decisions.md](../dev-decisions.md) v0.2.1。
 
 **⚠️ 忽略客户端历史 (v0.2.6)**: 每次请求只有**最后一条 user 消息**参与本轮生成; 上下文的历史部分完全由服务端 `conversation_turns` 提供。原因: 不能依赖客户端传对——AstrBot 群聊场景每轮只传当前一句, 有的客户端每轮传完整历史, 用户还可能"清空对话"。见 [dev-decisions.md 跨前端短期记忆](../dev-decisions.md)。
 
@@ -124,7 +129,7 @@ Client ──► POST /v1/chat/completions
 
 ### 4.1 流式路径 (生产主路径)
 
-**位置**: [forward.py `_handle_stream`](../../src/api/routes/forward.py)
+**位置**: [forward/stream.py `_handle_stream`](../../src/api/routes/forward/stream.py)
 
 ```
 1. 加载永久记忆
@@ -180,7 +185,7 @@ Client ──► POST /v1/chat/completions
 
 ### 4.2 非流式路径
 
-**位置**: [forward.py `_handle_non_stream`](../../src/api/routes/forward.py)
+**位置**: [forward/nonstream.py `_handle_non_stream`](../../src/api/routes/forward/nonstream.py)
 
 ```
 final_state = await graph.ainvoke(initial_state)
@@ -220,7 +225,7 @@ relationship_analysis   memory_analysis (ReAct)
 
 **记忆分析** (ReAct, max_iterations=4): 用 `vector_search` 工具, 输出 `{new_memories, decay_evaluations}` (v0.3.0 起 `decay_evaluations` 恒空, 衰减由确定性公式处理)。写入由节点内的 `MemoryLifecycle` 顺手完成——**没有独立的 vector_index 节点**。非归属模式 (source_user 为空) 时节点直接返回空结果。
 
-**关系分析** (ReAct, max_iterations=2): 用 `update_addressing` 工具, 输出 `{intimacy_delta, trust_delta, new_relationship_type}`。非归属模式时节点直接返回空结果。
+**关系分析** (ReAct, max_iterations=2): 用 `update_addressing` 工具, 输出 `{favor_delta, new_relationship_type, mood_anchor}` (v0.4.1 起单 `favor_delta` 可负, 旧 `intimacy_delta/trust_delta` 契约废弃)。非归属模式时节点直接返回空结果。
 
 详见 [agents.md](agents.md) §3/§5。
 
@@ -279,3 +284,4 @@ relationship_analysis   memory_analysis (ReAct)
 | v0.2.1 | 2026-07-16 | 纠正人格来源: 从"提取客户端 system 消息"改为"服务器加载人格" (server-first); 修正代理推理启用方式描述 |
 | v0.2.6 | 2026-07-18 | 数据流补充服务端 `conversation_turns` 装填与回写; 客户端历史被忽略, 仅取最后一条 user; source_frontend 从 api_key.note 派生; ResolvedCandidate 传 context_length 给双窗算法 |
 | v0.3.0 | 2026-07-26 | 新增身份解析与幂等预检步骤; source_user 改为从 identity_ctx.effective_user_id 派生 (非归属模式为 None, 不再硬编码 "default"); initial_state 新增 actor_id/space_id/channel_type/persona_id/external_event_id/api_key_id; 记忆检索接入 RetrievalContext 受众过滤; 短期记忆装填与流水回写接入 space_id 分区 |
+| v0.4.1 | 2026-08-14 | 阶段 1 接入三路并行预处理 (清洗 ∥ 情绪+mood ∥ Vision); initial_state 预注入 emotion_analysis / mood_state / _vision_user_content; 关系分析契约改为单 favor_delta + mood_anchor |

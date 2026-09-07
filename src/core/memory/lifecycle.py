@@ -258,18 +258,21 @@ class MemoryLifecycle:
         self,
         persona_id: str,
         user_id: str,
-        intimacy_delta: float,
-        trust_delta: float,
+        favor_delta: float,
         new_type: str | None,
         notes: str | None,
     ) -> Relationship:
-        """应用关系分析 Agent 的结果."""
+        """应用关系分析 Agent 的结果 (v0.4.1: 单一好感度增量)."""
         if self.relationship_store is None:
             raise RuntimeError("relationship_store 未配置")
         rel = await self.relationship_store.get_relationship(persona_id, user_id)
         if rel is None:
             rel = Relationship.create(persona_id, user_id)
-        rel.apply_delta(intimacy_delta, trust_delta, new_type=new_type, notes=notes)
+        rel.apply_delta(favor_delta, new_type=new_type, notes=notes)
+        # v0.4.1: 类型是阶段标签投影 — Agent 未显式指定时按 favor 数值推导
+        if new_type is None:
+            from src.core.memory.models import relationship_type_from_favor
+            rel.type = relationship_type_from_favor(rel.favor)
         await self.relationship_store.save_relationship(rel)
         return rel
 

@@ -19,6 +19,8 @@ async def _run_memory_graph(
     try:
         stream_result = parse_sse_stream_full(stream_chunks)
         response_text = stream_result.text or ""
+        # T3: 显式跳过主对话 LLM (预填 response 不再作为隐式约定)
+        initial_state["skip_main_dialogue"] = True
         initial_state["response"] = response_text
         initial_state["response_chunks"] = stream_chunks
         if stream_result.finish_reason:

@@ -54,6 +54,7 @@ class AgentState(TypedDict, total=False):
 
     # === 情绪分析（main_dialogue 计算, 供 memory_analysis + relationship_analysis 共享） ===
     emotion_analysis: dict[str, Any]           # 预计算的情绪分析结果, 含 emotion/intensity/category/keywords/summary
+    mood_state: dict[str, Any] | None          # v0.4.1: 全局 mood 状态 (valence/tier/cause), API 层并行预处理预注入
 
     # === 主对话输出（main_dialogue 写入） ===
     response: str                           # 最终用户可见文本; 纯工具调用时为空串

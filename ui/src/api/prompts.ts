@@ -46,3 +46,29 @@ export async function getPromptHistory(
     `/admin/prompts/${encodeURIComponent(name)}/history`,
   )
 }
+
+// ── 情绪矩阵 ────────────────────────────────────────────────
+
+export interface MoodMatrixCell {
+  id: string
+  text: string
+  overridden: boolean
+}
+
+export interface MoodMatrixResponse {
+  favor_tiers: { id: string; label: string }[]
+  mood_labels: { id: string; label: string }[]
+  cells: MoodMatrixCell[]
+}
+
+export async function getMoodMatrix(): Promise<MoodMatrixResponse> {
+  return apiGet<MoodMatrixResponse>('/admin/mood-matrix')
+}
+
+export async function putMoodMatrixCell(cellId: string, text: string): Promise<void> {
+  await apiPut(`/admin/mood-matrix/${encodeURIComponent(cellId)}`, { text })
+}
+
+export async function deleteMoodMatrixCell(cellId: string): Promise<void> {
+  await apiDelete(`/admin/mood-matrix/${encodeURIComponent(cellId)}`)
+}

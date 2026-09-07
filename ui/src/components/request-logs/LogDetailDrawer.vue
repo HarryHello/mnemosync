@@ -103,16 +103,15 @@ function pretty(v: unknown): string {
 }
 
 .code-block {
-  background: var(--el-fill-color-light);
-  border-radius: $radius-sm;
+  max-height: 320px;
   padding: $space-3;
+  margin: 0;
+  overflow: auto;
   font-size: 12px;
   line-height: 1.5;
-  overflow-x: auto;
-  white-space: pre-wrap;
   word-break: break-all;
-  max-height: 320px;
-  overflow-y: auto;
-  margin: 0;
+  white-space: pre-wrap;
+  background: var(--el-fill-color-light);
+  border-radius: $radius-sm;
 }
 </style>

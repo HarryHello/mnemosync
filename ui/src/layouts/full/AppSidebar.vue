@@ -174,29 +174,29 @@ function handleUserCommand(cmd: string) {
 
 <style lang="scss" scoped>
 .app-sidebar {
-  width: $sidebar-width;
-  min-height: 100vh;
   display: flex;
   flex-direction: column;
+  width: $sidebar-width;
+  min-height: 100vh;
   background: var(--el-menu-bg-color);
   border-right: 1px solid var(--el-border-color-light);
 }
 
 .brand {
-  height: $header-height;
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
+  height: $header-height;
   padding: 0 $space-4;
-  border-bottom: 1px solid var(--el-border-color);
-  font-weight: 700;
   font-size: 15px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--el-border-color);
 }
 
 .brand-mark {
+  display: block;
   width: 30px;
   height: 30px;
-  display: block;
   object-fit: contain;
   background: transparent;
 }
@@ -207,8 +207,8 @@ function handleUserCommand(cmd: string) {
 
 .menu {
   flex: 1;
-  border-right: 0;
   padding: $space-2 0;
+  border-right: 0;
 }
 
 .menu :deep(.el-menu-item) {
@@ -235,11 +235,11 @@ function handleUserCommand(cmd: string) {
 }
 
 .footer {
-  padding: $space-2 $space-3 $space-3;
-  border-top: 1px solid var(--el-border-color);
   display: flex;
   flex-direction: column;
   gap: $space-1;
+  padding: $space-2 $space-3 $space-3;
+  border-top: 1px solid var(--el-border-color);
 }
 
 .footer-top {
@@ -254,8 +254,8 @@ function handleUserCommand(cmd: string) {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: $radius-round;
   color: var(--el-text-color-secondary);
+  border-radius: $radius-round;
   transition: all 0.2s;
 
   &:hover {
@@ -266,13 +266,13 @@ function handleUserCommand(cmd: string) {
 
 .user-trigger {
   display: inline-flex;
-  align-items: center;
   gap: $space-2;
-  cursor: pointer;
-  padding: $space-2 $space-2;
-  border-radius: $radius-md;
+  align-items: center;
   min-width: 0;
+  padding: $space-2 $space-2;
+  cursor: pointer;
   border: 1px solid transparent;
+  border-radius: $radius-md;
 
   &:hover {
     background: rgba(66, 133, 244, 0.08);
@@ -281,10 +281,10 @@ function handleUserCommand(cmd: string) {
 }
 
 .avatar {
-  background: $brand-primary;
-  color: #fff;
-  font-weight: 600;
   flex: 0 0 auto;
+  font-weight: 600;
+  color: #fff;
+  background: $brand-primary;
 }
 
 .avatar-badge {
@@ -293,36 +293,36 @@ function handleUserCommand(cmd: string) {
 }
 
 .avatar-badge :deep(.el-badge__content) {
-  font-size: 10px;
-  height: 16px;
-  line-height: 16px;
-  padding: 0 4px;
   min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 16px;
 }
 
 .user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 13px;
   color: var(--el-text-color-primary);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .version {
+  padding: 2px 6px;
+  margin-left: $space-2;
   font-size: 10px;
   color: var(--el-text-color-secondary);
   text-align: center;
-  margin-left: $space-2;
   background: rgba(66, 133, 244, 0.08);
   border-radius: 999px;
-  padding: 2px 6px;
 }
 </style>
 
 <style lang="scss">
 .sidebar-user-popper {
-  border-radius: $radius-lg !important;
   border: 1px solid transparent !important;
+  border-radius: $radius-lg !important;
   box-shadow: var(--el-box-shadow) !important;
 }
 
@@ -341,8 +341,8 @@ function handleUserCommand(cmd: string) {
 }
 
 .sidebar-user-popper .dropdown-badge {
-  margin-left: auto;
   padding-left: 8px;
+  margin-left: auto;
 }
 
 .sidebar-user-popper .dropdown-badge .el-badge__content {

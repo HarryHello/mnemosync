@@ -272,14 +272,13 @@ class TestApplyRelationshipUpdate:
         )
         rel = await lc.apply_relationship_update(
             persona_id="persona_1", user_id="user_1",
-            intimacy_delta=0.3, trust_delta=0.2,
+            favor_delta=0.3,
             new_type="acquaintance", notes="first meeting",
         )
         assert rel.persona_id == "persona_1"
         assert rel.user_id == "user_1"
         assert rel.type == "acquaintance"
-        assert 0.29 < rel.intimacy_score < 0.31
-        assert 0.19 < rel.trust_level < 0.21
+        assert 0.29 < rel.favor < 0.31
 
     @pytest.mark.asyncio
     async def test_update_existing_relationship(
@@ -296,10 +295,10 @@ class TestApplyRelationshipUpdate:
             relationship_store=relationship_store,
         )
         await lc.apply_relationship_update(
-            "p1", "u1", 0.1, 0.1, "acquaintance", "note1",
+            "p1", "u1", 0.1, "acquaintance", "note1",
         )
         rel = await lc.apply_relationship_update(
-            "p1", "u1", 0.2, 0.3, "friend", "note2",
+            "p1", "u1", 0.2, "friend", "note2",
         )
         assert rel.type == "friend"
         assert rel.interaction_count == 2

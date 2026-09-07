@@ -1,6 +1,11 @@
 /**Upstream API: LLM 服务商 + 模型绑定 + 维度探测. */
 
 import type {
+  ModelImportBody,
+  ModelImportResponse,
+  ModelRegistryCreateBody,
+  ModelRegistryItem,
+  ModelRegistryUpdateBody,
   ProbeDimensionBody,
   ProbeDimensionResponse,
   RoleBindingAddBody,
@@ -48,6 +53,43 @@ export async function listUpstreamAvailableModels(
   return apiGet<UpstreamAvailableModels>(
     `/admin/upstream/services/${encodeURIComponent(id)}/available-models`,
   )
+}
+
+// ============================================================================
+// Model registry (v0.4.1)
+// ============================================================================
+
+export async function listRegistryModels(
+  serviceId?: string,
+): Promise<ModelRegistryItem[]> {
+  const q = serviceId ? `?service_id=${encodeURIComponent(serviceId)}` : ''
+  return apiGet<ModelRegistryItem[]>(`/admin/models${q}`)
+}
+
+export async function createRegistryModel(
+  body: ModelRegistryCreateBody,
+): Promise<ModelRegistryItem> {
+  return apiPost<ModelRegistryItem>('/admin/models', body)
+}
+
+export async function updateRegistryModel(
+  id: string,
+  body: ModelRegistryUpdateBody,
+): Promise<ModelRegistryItem> {
+  return apiPatch<ModelRegistryItem>(
+    `/admin/models/${encodeURIComponent(id)}`,
+    body,
+  )
+}
+
+export async function deleteRegistryModel(id: string): Promise<void> {
+  await apiDelete(`/admin/models/${encodeURIComponent(id)}`)
+}
+
+export async function importRegistryModels(
+  body: ModelImportBody,
+): Promise<ModelImportResponse> {
+  return apiPost<ModelImportResponse>('/admin/models:import', body)
 }
 
 // ============================================================================

@@ -27,9 +27,14 @@ from src.core.memory.models import Visibility
 if TYPE_CHECKING:
     from src.core.memory.models import MemoryEntry, Relationship
 
-# 关系门槛
+# 关系门槛 (v0.4.1: 亲密度/信任度统一为好感度 favor)
 FRIEND_TYPES = ("friend", "intimate")
-CONFIDENTIAL_TRUST_THRESHOLD = 0.7
+# CONFIDENTIAL 门控: 旧 trust_level >= 0.7 → favor >= 0.8 (RFC §2.5)
+# 隐私不变量: 用户内容绝不因关系阈值放行 (仅 custom_policies 授权);
+# favor 阈值只适用于人格自生产内容 (当前无此内容, 门控保持未启用).
+# 已知技术债: 目前无 CONFIDENTIAL 记忆写入方 (分析 Agent 不产 visibility),
+# 属已审计死代码 — 待人格日程/自生产内容功能落地时启用, 在此之前勿删判定分支.
+CONFIDENTIAL_FAVOR_THRESHOLD = 0.8
 
 
 @dataclass(frozen=True)
@@ -80,7 +85,7 @@ class AudienceFilter:
         if entry.visibility == Visibility.FRIENDS_ONLY:
             return rel is not None and rel.type in FRIEND_TYPES
         if entry.visibility == Visibility.CONFIDENTIAL:
-            return rel is not None and rel.trust_level >= CONFIDENTIAL_TRUST_THRESHOLD
+            return rel is not None and rel.favor >= CONFIDENTIAL_FAVOR_THRESHOLD
 
         # 7. SOURCE_RESTRICTED 且非来源用户: 不可见
         return False

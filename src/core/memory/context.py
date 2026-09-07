@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.core.memory.models import MemoryEntry, Relationship, Visibility
+from src.core.memory.models import (
+    RELATIONSHIP_STAGE_LABELS,
+    MemoryEntry,
+    Relationship,
+    Visibility,
+)
 from src.core.memory.trigger_reason import (
     TriggerReason,
     format_trigger_reason,
@@ -63,15 +68,50 @@ def format_retrieved_memories(
     return _format_memories(entries, "（暂无相关记忆）", channel_type)
 
 
-def format_relationship(rel: Relationship | None) -> str:
-    """格式化关系状态为 prompt 文本."""
+def format_relationship(rel: Relationship | None, include_score: bool = True) -> str:
+    """格式化关系状态为 prompt 文本.
+
+    v0.4.1: 亲密度/信任度统一为好感度.
+    - include_score=True (关系分析 Agent 基线): 输出数值, 供 Agent 计算 delta.
+    - include_score=False (主对话注入): 只输出阶段描述, 不注入连续数值
+      (防模型"演数值"; 枚举标签经 RELATIONSHIP_STAGE_LABELS 转为自然语言).
+    - v0.4.1: 称呼注入 — 人格对用户的称呼 (user_addressing) 与人格自称
+      (persona_addressing), None 回退 TOML 基线; 中性默认值 ("你"/"我") 不注入.
+    """
     if rel is None:
         return "新用户（尚未建立关系）"
-    return (
-        f"关系类型: {rel.type}（亲密度 {rel.intimacy_score:.2f}/1.0, "
-        f"信任度 {rel.trust_level:.2f}/1.0, 互动 {rel.interaction_count} 次）"
-        + (f"\n备注: {rel.notes}" if rel.notes else "")
-    )
+    stage = RELATIONSHIP_STAGE_LABELS.get(rel.type, rel.type)
+    if include_score:
+        head = f"关系类型: {rel.type}（好感度 {rel.favor:.2f}, 互动 {rel.interaction_count} 次）"
+    else:
+        head = f"与对方的关系：{stage}（互动 {rel.interaction_count} 次）"
+    parts = [head]
+    addressing = _format_addressing(rel)
+    if addressing:
+        parts.append(addressing)
+    if rel.notes:
+        parts.append(f"备注: {rel.notes}")
+    return "\n".join(parts)
+
+
+def _format_addressing(rel: Relationship) -> str:
+    """人格对用户的称呼 + 人格自称 (v0.4.1).
+
+    None 回退 TOML 基线 (settings.persona.relation); 中性默认值
+    (user_addressing="你" / persona_addressing="我") 不注入 — system 本身就是
+    第二人称, 注入 "你叫他：你" 反而是噪音.
+    """
+    from src.core.config import get_settings
+
+    base = get_settings().persona.relation
+    user_addr = (getattr(rel, "user_addressing", None) or "").strip() or base.user_addressing
+    persona_addr = (getattr(rel, "persona_addressing", None) or "").strip() or base.persona_addressing
+    bits: list[str] = []
+    if user_addr and user_addr not in ("你",):
+        bits.append(f"你叫他：{user_addr}")
+    if persona_addr and persona_addr not in ("我",):
+        bits.append(f"他叫你：{persona_addr}")
+    return "；".join(bits)
 
 
 def _proxy_thinking_section(proxy_thinking_result: str | None) -> str:
@@ -187,6 +227,7 @@ def render_main_dialogue_system(
     persona_definition: Any | None = None,
     space_id: str | None = None,
     lorebook_entries: list[Any] | None = None,
+    mood_state_section: str = "",
 ) -> str:
     """渲染主对话 system 段；user_name 仅保留为旧调用方的显示名兜底."""
     frame = get_prompt_store().load("main_dialogue_frame")
@@ -209,7 +250,7 @@ def render_main_dialogue_system(
         .replace("__ACTIVE_PARTICIPANTS__", _participants_label(active_participants, speaker))
         .replace("__TRIGGER_REASON__", format_trigger_reason(reason))
         .replace("__TOOL_CAPABILITY_HINT__", _tool_capability_hint(tools))
-        .replace("__RELATIONSHIP__", format_relationship(relationship))
+        .replace("__RELATIONSHIP__", format_relationship(relationship, include_score=False))
         .replace(
             "__PERMANENT_MEMORIES__",
             format_permanent_memories(permanent_memories, channel_type),
@@ -219,6 +260,7 @@ def render_main_dialogue_system(
             format_retrieved_memories(retrieved_memories, channel_type),
         )
         .replace("__LOREBOK_ENTRIES__", lorebook_section)
+        .replace("__MOOD_STATE__", mood_state_section or "（暂无特别的状态信息）")
         .replace("__PROXY_THINKING_SECTION__", _proxy_thinking_section(proxy_thinking_result))
     )
 
@@ -242,6 +284,7 @@ def build_main_dialogue_messages(
     persona_definition: Any | None = None,
     space_id: str | None = None,
     lorebook_entries: list[Any] | None = None,
+    mood_state_section: str = "",
 ) -> list[dict[str, Any]]:
     """拼装主对话 Agent 的完整 messages.
 
@@ -282,6 +325,7 @@ def build_main_dialogue_messages(
         persona_definition=persona_definition,
         space_id=space_id,
         lorebook_entries=lorebook_entries,
+        mood_state_section=mood_state_section,
     )
 
     messages: list[dict[str, Any]] = [

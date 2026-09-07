@@ -8,12 +8,6 @@ import {
   updateRelationship,
 } from '@/api/client'
 import { formatDate } from '@/utils/format'
-import {
-  RELATIONSHIP_LEVEL_EXCELLENT,
-  RELATIONSHIP_LEVEL_HIGH,
-  RELATIONSHIP_LEVEL_MEDIUM,
-  RELATIONSHIP_LEVEL_LOW,
-} from '@/utils/constants'
 import type {
   ListRelationshipsParams,
 } from '@/api/client'
@@ -33,7 +27,7 @@ const listLoading = ref(false)
 const listTotal = ref(0)
 const listPage = ref(1)
 const listPageSize = ref(20)
-const listSortBy = ref('intimacy_score')
+const listSortBy = ref('favor')
 const listSortOrder = ref('desc')
 
 // ─── 详情状态 ────────────────────────────────
@@ -57,42 +51,44 @@ const selectedIdentityName = computed(() => {
   return identity?.name || account?.display_name || account?.external_key || rel.value?.user_id || '未知用户'
 })
 
-const intimacyPct = computed(() =>
-  rel.value ? Math.round(clamp01(rel.value.intimacy) * 100) : 0,
-)
-const trustPct = computed(() =>
-  rel.value ? Math.round(clamp01(rel.value.trust) * 100) : 0,
+const favorScore = computed(() =>
+  rel.value ? Math.round(clamp(rel.value.favor, -1, 1) * 100) : 0,
 )
 
-function clamp01(v: number): number {
+function clamp(v: number, min: number, max: number): number {
   if (Number.isNaN(v)) return 0
-  return Math.max(0, Math.min(1, v))
+  return Math.max(min, Math.min(max, v))
 }
 
 function levelText(v: number): string {
-  const p = clamp01(v)
-  if (p >= RELATIONSHIP_LEVEL_EXCELLENT) return '极高'
-  if (p >= RELATIONSHIP_LEVEL_HIGH) return '高'
-  if (p >= RELATIONSHIP_LEVEL_MEDIUM) return '中等'
-  if (p >= RELATIONSHIP_LEVEL_LOW) return '低'
-  return '陌生'
+  const fav = clamp(v, -1, 1)
+  if (fav >= 0.8) return '亲密'
+  if (fav >= 0.5) return '友好'
+  if (fav >= 0.2) return '熟悉'
+  if (fav >= -0.1) return '普通'
+  if (fav >= -0.5) return '冷淡'
+  return '敌对'
 }
 
 type TagType = 'primary' | 'success' | 'warning' | 'danger' | 'info'
 function levelType(v: number): TagType {
-  const p = clamp01(v)
-  if (p >= RELATIONSHIP_LEVEL_HIGH) return 'success'
-  if (p >= RELATIONSHIP_LEVEL_MEDIUM) return 'primary'
-  if (p >= RELATIONSHIP_LEVEL_LOW) return 'warning'
+  const fav = clamp(v, -1, 1)
+  if (fav >= 0.8) return 'success'
+  if (fav >= 0.5) return 'primary'
+  if (fav >= 0.2) return 'success'
+  if (fav >= -0.1) return 'info'
+  if (fav >= -0.5) return 'warning'
   return 'danger'
 }
 
 type ProgressStatus = '' | 'success' | 'warning' | 'exception'
 function levelStatus(v: number): ProgressStatus {
-  const p = clamp01(v)
-  if (p >= RELATIONSHIP_LEVEL_HIGH) return 'success'
-  if (p >= RELATIONSHIP_LEVEL_MEDIUM) return ''
-  if (p >= RELATIONSHIP_LEVEL_LOW) return 'warning'
+  const fav = clamp(v, -1, 1)
+  if (fav >= 0.8) return 'success'
+  if (fav >= 0.5) return ''
+  if (fav >= 0.2) return ''
+  if (fav >= -0.1) return 'warning'
+  if (fav >= -0.5) return 'warning'
   return 'exception'
 }
 
@@ -295,40 +291,20 @@ watch(() => props.active, (active) => {
         <el-card class="metric">
           <template #header>
             <div class="metric-head">
-              <span>亲密度</span>
-              <el-tag size="small" :type="levelType(rel.intimacy)">
-                {{ levelText(rel.intimacy) }}
+              <span>好感度</span>
+              <el-tag size="small" :type="levelType(rel.favor)">
+                {{ levelText(rel.favor) }}
               </el-tag>
             </div>
           </template>
-          <div class="metric-value mono">{{ rel.intimacy.toFixed(3) }}</div>
+          <div class="metric-value mono">{{ favorScore }}</div>
           <el-progress
-            :percentage="intimacyPct"
+            :percentage="(favorScore + 100) / 2"
             :stroke-width="10"
-            :status="levelStatus(rel.intimacy)"
+            :status="levelStatus(rel.favor)"
           />
           <div class="metric-hint">
-            与用户互动的亲密程度, 由对话行为与情感极性驱动累积。
-          </div>
-        </el-card>
-
-        <el-card class="metric">
-          <template #header>
-            <div class="metric-head">
-              <span>信任度</span>
-              <el-tag size="small" :type="levelType(rel.trust)">
-                {{ levelText(rel.trust) }}
-              </el-tag>
-            </div>
-          </template>
-          <div class="metric-value mono">{{ rel.trust.toFixed(3) }}</div>
-          <el-progress
-            :percentage="trustPct"
-            :stroke-width="10"
-            :status="levelStatus(rel.trust)"
-          />
-          <div class="metric-hint">
-            信任等级影响记忆可见性 (CONFIDENTIAL / FRIENDS_ONLY 门槛)。
+            与用户的综合亲近程度, 由对话行为与情感极性驱动, 可为负。
           </div>
         </el-card>
 
@@ -440,8 +416,8 @@ watch(() => props.active, (active) => {
 <style lang="scss" scoped>
 .detail-toolbar {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
   margin-bottom: $space-4;
 }
 
@@ -453,9 +429,9 @@ watch(() => props.active, (active) => {
 
 .account-item {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
   gap: $space-2;
+  align-items: center;
 }
 
 .mb {
@@ -486,23 +462,23 @@ watch(() => props.active, (active) => {
 
 .addressing-head {
   display: flex;
+  gap: $space-2;
   align-items: center;
   justify-content: space-between;
-  gap: $space-2;
 }
 
 .metric-value {
+  margin-bottom: $space-2;
   font-size: 28px;
   font-weight: 600;
   color: var(--el-text-color-primary);
-  margin-bottom: $space-2;
 }
 
 .metric-hint {
   margin-top: $space-2;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .muted {
@@ -511,7 +487,7 @@ watch(() => props.active, (active) => {
 
 .notes,
 .context {
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
-  word-break: break-word;
 }
 </style>

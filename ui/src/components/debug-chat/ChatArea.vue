@@ -125,83 +125,94 @@ function clearConversation() {
 }
 
 .section-label {
+  margin-bottom: 4px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-bottom: 4px;
 }
 
 .messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: $space-2;
-  background: var(--el-fill-color-lighter);
-  border-radius: $radius-sm;
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: $space-2;
+  padding: $space-2;
+  overflow-y: auto;
+  background: var(--el-fill-color-lighter);
+  border-radius: $radius-sm;
 }
 
 .msg {
+  flex-shrink: 0;
   padding: $space-2 $space-3;
-  border-radius: $radius-sm;
   background: var(--el-bg-color);
   border: 1px solid transparent;
-  flex-shrink: 0;
+  border-radius: $radius-sm;
 
   &.role-user {
-    background: var(--el-color-primary-light-7);
-    max-width: 80%;
     align-self: flex-end;
+    max-width: 80%;
+    background: var(--el-color-primary-light-7);
   }
 
   &.role-assistant {
-    background: var(--el-color-success-light-7);
-    max-width: 80%;
     align-self: flex-start;
+    max-width: 80%;
+    background: var(--el-color-success-light-7);
   }
 
   &.role-system {
-    border-color: var(--el-color-warning-light-7);
-    max-width: 80%;
     align-self: center;
+    max-width: 80%;
+    border-color: var(--el-color-warning-light-7);
   }
 }
 
 .msg-role {
-  font-size: 11px;
-  text-transform: uppercase;
-  color: var(--el-text-color-secondary);
   margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  text-transform: uppercase;
 }
 
-.msg-content { white-space: pre-wrap; word-break: break-word; }
+.msg-content {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
 .composer {
   display: flex;
+  flex-shrink: 0;
   flex-direction: column;
   gap: $space-2;
-  flex-shrink: 0;
 }
+
 .composer-bottom {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
 }
+
 .debug-switch {
   display: flex;
-  align-items: center;
   gap: $space-1;
+  align-items: center;
 }
+
 .switch-label {
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
-.composer-btns { display: flex; justify-content: flex-end; gap: $space-2; }
+
+.composer-btns {
+  display: flex;
+  gap: $space-2;
+  justify-content: flex-end;
+}
 
 .empty {
-  color: var(--el-text-color-secondary);
-  padding: $space-4;
-  text-align: center;
   flex-shrink: 0;
+  padding: $space-4;
+  color: var(--el-text-color-secondary);
+  text-align: center;
 }
 </style>

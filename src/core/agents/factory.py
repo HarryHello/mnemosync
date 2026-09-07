@@ -318,12 +318,12 @@ async def run_memory_analysis(
 
 @dataclass
 class RelationshipAnalysisOutput:
-    intimacy_delta: float
-    trust_delta: float
+    favor_delta: float  # v0.4.1: 单一好感度增量 (可负)
     new_relationship_type: str | None
     notes: str
     reasoning: str
     raw_output: str
+    mood_anchor: str | None = None  # v0.4.1: 显著负面时的脱敏情绪锚点 (EPHEMERAL 记忆)
 
 
 async def run_relationship_analysis(
@@ -341,10 +341,12 @@ async def run_relationship_analysis(
     current_speaker: str = "未知参与者",
     channel_type: str | None = None,
 ) -> RelationshipAnalysisOutput:
-    """关系分析 Agent: CoT, 调用 emotion_analyzer 后输出亲密度增量.
+    """关系分析 Agent: CoT, 输出好感度增量 (v0.4.1: 单 favor_delta, 可负).
 
     persona_name / persona_addressing / user_addressing / relation_context: v0.2.9 起
     透传给 prompt, 让 Agent 用兄妹/主仆等关系基线判断信号, 不再默认助手-用户.
+    v0.4.1: 情绪由 graph 层预计算注入 (__EMOTION_ANALYSIS__), 不再自行调用工具;
+    输出契约含 mood_anchor (显著负面时的脱敏情绪锚点).
     """
     user_prompt = build_relationship_analysis_prompt(
         current_relationship=current_relationship, conversation=conversation,
@@ -366,19 +368,21 @@ async def run_relationship_analysis(
             )
         if not result.succeeded:
             logger.warning("关系分析失败: %s", result.error)
-            return RelationshipAnalysisOutput(intimacy_delta=0.0, trust_delta=0.0, new_relationship_type=None, notes="", reasoning=result.error or "", raw_output="")
+            return RelationshipAnalysisOutput(favor_delta=0.0, new_relationship_type=None, notes="", reasoning=result.error or "", raw_output="")
         parsed = _extract_json(result.output) or {}
+        # v0.4.1: 单 favor_delta; 兼容旧 prompt 的 intimacy_delta 输出
+        favor_delta = float(parsed.get("favor_delta", parsed.get("intimacy_delta", 0.0)))
         return RelationshipAnalysisOutput(
-            intimacy_delta=float(parsed.get("intimacy_delta", 0.0)),
-            trust_delta=float(parsed.get("trust_delta", 0.0)),
+            favor_delta=favor_delta,
             new_relationship_type=parsed.get("new_relationship_type"),
             notes=parsed.get("notes", ""),
             reasoning=parsed.get("reasoning", ""),
             raw_output=result.output,
+            mood_anchor=parsed.get("mood_anchor"),
         )
     except Exception as e:
         logger.warning("关系分析异常: %s", e)
-        return RelationshipAnalysisOutput(intimacy_delta=0.0, trust_delta=0.0, new_relationship_type=None, notes="", reasoning=str(e), raw_output="")
+        return RelationshipAnalysisOutput(favor_delta=0.0, new_relationship_type=None, notes="", reasoning=str(e), raw_output="")
 
 
 @dataclass

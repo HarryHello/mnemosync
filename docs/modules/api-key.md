@@ -1,6 +1,6 @@
 # API Key 管理模块
 
-> **模块版本**: v0.3.4
+> **模块版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-29
 > **最后更新**: 2026-08-01
@@ -160,7 +160,7 @@ key_prefix = raw_key[:12]
 Authorization: Bearer sk-xK9mN2pL5qR8sT1vW4yZ7aB0cD3eF6gH
 ```
 
-验证在 [forward.py `_verify_api_key`](../../src/api/routes/forward.py) 完成, 在 `create_chat_completion` 顶部**已启用**:
+验证在 [forward 包 `_verify_api_key`](../../src/api/routes/forward/__init__.py) 完成, 在 `create_chat_completion` 顶部**已启用**:
 
 ```
 1. 从 Authorization 提取 raw_key
@@ -234,9 +234,9 @@ Key 数据库路径固定为 `data/api_keys.db`。当前版本不支持通过环
 
 ---
 
-## 9. 未来: 多人格
+## 9. 多人格与 API Key
 
-数据模型已预留升级路径, 需时可加 `persona_id` 字段将 Key 绑定到人格。v0.3.0 已实现的是**单人格多用户** (Key 经 `strategy_id` 绑定身份策略), 多人格仍未实现。
+v0.3.0 实现的是**单人格多用户** (Key 经 `strategy_id` 绑定身份策略)。v0.3.4 起支持**多人格 profile** (personas 表 + 切换 API), 但 API Key 仍不直接绑定到整个人格——人格切换是服务器级操作。数据模型预留了 `persona_id` 字段, 需要时可把 Key 绑定到指定人格。
 
 ---
 

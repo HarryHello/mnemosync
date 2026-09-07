@@ -1,6 +1,6 @@
 # 认证 API 文档
 
-> **系统版本**: v0.3.4
+> **系统版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **最后更新**: 2026-08-01
 
@@ -185,7 +185,8 @@ curl http://localhost:16125/auth/me \
 | `mnemosync stop` | 停止服务 (Docker 模式) |
 | `mnemosync login` | 进入交互式 CLI |
 | `mnemosync ask <msg>` | 命令行直连主对话 (调试) |
-| `mnemosync upgrade` | 升级 Mnemosync |
+| `mnemosync upgrade [--branch] [--version]` | 委托远程 install.sh 升级 (v0.4.1 支持指定版本) |
+| `mnemosync versions` | 列出可用版本及发布描述 (v0.4.1) |
 | `mnemosync help` | 帮助 |
 
 **API Key / 用户管理不在顶层命令**——通过 `mnemosync login` 进入交互式 shell 后使用: `generate-key`, `list-keys`, `revoke-key`, `list-users`, `change-password` 等。见 [CLI 文档](modules/cli.md)。

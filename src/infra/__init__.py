@@ -13,7 +13,10 @@ from .forwarder import (
     UpstreamTimeout,
     parse_sse_stream,
 )
-from .vector_store import VectorStore
+
+# NOTE (循环导入修复): 移除 VectorStore eager re-export — 它依赖 src.core.memory.models,
+# 而 src.core.memory -> lifecycle -> src.core.models.resolver -> src.infra, 会造成 import 环.
+# 调用方请直接: from src.infra.vector_store import VectorStore
 
 __all__ = [
     "Forwarder",
@@ -22,7 +25,6 @@ __all__ = [
     "UpstreamError",
     "UpstreamTimeout",
     "parse_sse_stream",
-    "VectorStore",
     "extract_latest_user_message",
     "extract_all_user_messages",
     "extract_new_messages",

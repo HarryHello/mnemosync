@@ -1,6 +1,6 @@
 # 内部工具与身份绑定 | Internal Tools & Identity Binding
 
-> **模块版本**: v0.3.4
+> **模块版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-07-28
 > **最后更新**: 2026-08-01
@@ -63,7 +63,7 @@ class InternalToolRegistry:
 请求到达 (带 tools)
   │
   ▼
-forward.py: 合并内部 tools + 客户端 tools
+forward 包: 合并内部 tools + 客户端 tools
   │  tools = client_tools + registry.to_openai_tools()
   │
   ▼

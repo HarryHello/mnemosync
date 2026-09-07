@@ -19,7 +19,7 @@ const visible = computed({
   set: (value) => emit('update:modelValue', value),
 })
 
-const form = reactive({ note: '', strategy_id: '' })
+const form = reactive({ note: '', strategy_id: 'api_key_bound' })
 const formRef = ref<FormInstance | null>(null)
 const rules: FormRules = {
   note: [{ required: true, message: '请填写用途备注', trigger: 'blur' }],
@@ -32,7 +32,8 @@ watch(
   (value) => {
     if (!value) return
     form.note = ''
-    form.strategy_id = ''
+    // 默认选择内建策略「Key 即身份」, 无需在身份管理页创建策略
+    form.strategy_id = 'api_key_bound'
     void nextTick(() => formRef.value?.clearValidate())
   },
 )
@@ -62,6 +63,7 @@ async function submit() {
           clearable
           style="width: 100%"
         >
+          <el-option label="Key 即身份 (api_key_bound)" value="api_key_bound" />
           <el-option
             v-for="s in activeStrategies"
             :key="s.id"
@@ -73,10 +75,13 @@ async function submit() {
           <template v-if="!form.strategy_id">
             不归属模式: 该 Key 的请求不建立身份, 不读写任何用户的私有记忆。
           </template>
+          <template v-else-if="form.strategy_id === 'api_key_bound'">
+            Key 即身份: 该 Key 即视为一个独立用户, 标识使用本 Key 的备注, 无需创建策略。
+          </template>
           <template v-else>
             绑定后, 该 Key 的请求按所选策略解析参与者身份。
           </template>
-          策略可在<a href="/identity">「关系状态/身份管理」</a>页创建。
+          自定义策略可在<a href="/identity">「关系状态/身份管理」</a>页创建。
         </p>
       </el-form-item>
     </el-form>
@@ -91,7 +96,7 @@ async function submit() {
 .strategy-hint {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
   line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 </style>

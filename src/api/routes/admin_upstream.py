@@ -82,8 +82,19 @@ class UpstreamModelBody(BaseModel):
     model: str
 
 
+class UpstreamModelDetail(BaseModel):
+    """上游 /v1/models 单条 (id + 尽力解析的能力声明)."""
+
+    id: str
+    context_length: int | None = None
+    output_limit: int | None = None
+    supports_tools: bool = False
+    input_modalities: list[str] = ["text"]
+    output_modalities: list[str] = ["text"]
+
+
 class UpstreamModelListResponse(BaseModel):
-    models: list[str]
+    models: list[UpstreamModelDetail]
 
 
 # ============================================================================
@@ -124,6 +135,8 @@ def _binding_to_item(b: RoleBinding) -> RoleBindingItem:
         priority=b.priority,
         service_id=b.service_id,
         model=b.model,
+        model_id=b.model_id,
+        display_name=b.display_name,
         created_at=b.created_at.isoformat(),
         context_length=b.context_length,
         embedding_dim=b.embedding_dim,
@@ -270,15 +283,25 @@ async def list_upstream_available_models(
     service_id: str,
     store: LLMServiceStore = Depends(get_llm_service_store),
 ) -> UpstreamModelListResponse:
-    """调用上游 /v1/models 获取该服务商可用模型列表 (用于下拉选择)."""
+    """调用上游 /v1/models 获取该服务商可用模型 (含能力解析, v0.4.1)."""
     service = await store.get_service(service_id)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     try:
         config = ForwarderConfig(base_url=service.base_url, api_key=service.api_key)
         async with Forwarder(config) as forwarder:
-            models = await forwarder.list_models()
-        return UpstreamModelListResponse(models=list(models))
+            details = await forwarder.list_model_details()
+        return UpstreamModelListResponse(models=[
+            UpstreamModelDetail(
+                id=d.id,
+                context_length=d.context_length,
+                output_limit=d.output_limit,
+                supports_tools=d.supports_tools,
+                input_modalities=d.input_modalities,
+                output_modalities=d.output_modalities,
+            )
+            for d in details
+        ])
     except UpstreamTimeout as e:
         raise HTTPException(status_code=504, detail=f"上游超时: {e}")
     except UpstreamError as e:
@@ -309,24 +332,19 @@ async def add_model_binding(
     store: LLMServiceStore = Depends(get_llm_service_store),
     resolver: RoleResolver = Depends(get_resolver),
 ) -> RoleBindingItem:
-    """追加一条角色绑定. priority 省略排到末尾, 指定时后续条目自动让位.
+    """追加一条角色绑定 (v0.4.1: 从模型注册表引用).
 
-    嵌入角色只允许一条绑定, 重复添加返回 409 (需先删除现有绑定).
+    priority 省略排到末尾, 指定时后续条目自动让位. 嵌入角色只允许一条绑定,
+    重复添加返回 409 (需先删除现有绑定). 模型不存在/已禁用返回 400.
     """
     role_enum = _parse_role(body.role)
-    if not body.service_id.strip() or not body.model.strip():
-        raise HTTPException(status_code=400, detail="service_id / model 不可为空")
+    if not body.model_id.strip():
+        raise HTTPException(status_code=400, detail="model_id 不可为空")
     try:
         binding = await store.add_role_binding(
             role_enum,
-            body.service_id.strip(),
-            body.model.strip(),
+            body.model_id.strip(),
             priority=body.priority,
-            context_length=body.context_length,
-            embedding_dim=body.embedding_dim,
-            send_dimensions=body.send_dimensions,
-            input_modalities=body.input_modalities,
-            output_modalities=body.output_modalities,
         )
     except ValueError as e:
         msg = str(e)
@@ -361,45 +379,20 @@ async def update_model_binding(
     store: LLMServiceStore = Depends(get_llm_service_store),
     resolver: RoleResolver = Depends(get_resolver),
 ) -> RoleBindingItem:
-    """就地更新一条绑定的可编辑字段.
+    """就地更新一条绑定 (v0.4.1: 仅支持更换模型).
 
     - role / priority 由 URL 定位, 不可改; 调整顺序请走 reorder
-    - 只有请求体里显式出现的字段会被覆盖 (exclude_unset)
-    - context_length / embedding_dim 显式传 null 表示清空
-    - service_id / model 非法或为空字符串会被拒绝
+    - 能力字段随模型注册表, 不再逐绑定编辑
     """
     role_enum = _parse_role(role)
     provided = body.model_dump(exclude_unset=True)
 
     kwargs: dict[str, Any] = {}
-    if "service_id" in provided:
-        sid = provided["service_id"]
-        if sid is None or not sid.strip():
-            raise HTTPException(status_code=400, detail="service_id 不可为空")
-        kwargs["service_id"] = sid.strip()
-    if "model" in provided:
-        m = provided["model"]
-        if m is None or not m.strip():
-            raise HTTPException(status_code=400, detail="model 不可为空")
-        kwargs["model"] = m.strip()
-    if "context_length" in provided:
-        cl = provided["context_length"]
-        if cl is None:
-            kwargs["clear_context_length"] = True
-        else:
-            kwargs["context_length"] = cl
-    if "embedding_dim" in provided:
-        ed = provided["embedding_dim"]
-        if ed is None:
-            kwargs["clear_embedding_dim"] = True
-        else:
-            kwargs["embedding_dim"] = ed
-    if "send_dimensions" in provided:
-        kwargs["send_dimensions"] = bool(provided["send_dimensions"])
-    if "input_modalities" in provided:
-        kwargs["input_modalities"] = provided["input_modalities"]
-    if "output_modalities" in provided:
-        kwargs["output_modalities"] = provided["output_modalities"]
+    if "model_id" in provided:
+        mid = provided["model_id"]
+        if mid is None or not mid.strip():
+            raise HTTPException(status_code=400, detail="model_id 不可为空")
+        kwargs["model_id"] = mid.strip()
 
     if not kwargs:
         raise HTTPException(status_code=400, detail="没有可更新的字段")

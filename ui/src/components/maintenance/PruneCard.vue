@@ -81,9 +81,9 @@ defineEmits<{
 
 <style lang="scss" scoped>
 .equal-card {
-  width: 100%;
   display: flex;
   flex-direction: column;
+  width: 100%;
 
   :deep(.el-card__body) {
     flex: 1;
@@ -92,8 +92,8 @@ defineEmits<{
 
 .sec-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
 }
 
 .sec-title {
@@ -101,23 +101,23 @@ defineEmits<{
 }
 
 .hint {
+  margin-left: $space-2;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-left: $space-2;
 }
 
 .chip-row {
   display: flex;
-  gap: $space-2;
   flex-wrap: wrap;
+  gap: $space-2;
 }
 
 .meta-chip {
+  padding: 2px 8px;
   font-family: 'JetBrains Mono', Menlo, monospace;
   font-size: 11px;
-  padding: 2px 8px;
-  border-radius: $radius-sm;
-  background: var(--el-fill-color);
   color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
+  border-radius: $radius-sm;
 }
 </style>

@@ -60,8 +60,7 @@ def test_relationship_missing_returns_default_stranger(app: FastAPI) -> None:
     body = resp.json()
     assert body["persona_id"] == "default"
     assert body["user_id"] == "test-user"
-    assert body["intimacy"] == 0.0
-    assert body["trust"] == 0.0
+    assert body["favor"] == 0.0
     assert body["relationship_type"] == "stranger"
     assert body["updated_at"] == ""  # 前端据此显示 "尚未建立" 提示
 
@@ -71,8 +70,7 @@ async def test_relationship_returns_stored_row_when_present(app: FastAPI) -> Non
     relationship_store: SqliteRelationshipStore = app.state.relationship_store
 
     rel = Relationship.create("default", "test-user")
-    rel.intimacy_score = 0.42
-    rel.trust_level = 0.31
+    rel.favor = 0.42
     rel.type = "acquaintance"
     rel.last_active = datetime(2026, 7, 18, 10, 0, 0, tzinfo=UTC)
     await relationship_store.save_relationship(rel)
@@ -81,8 +79,7 @@ async def test_relationship_returns_stored_row_when_present(app: FastAPI) -> Non
     resp = client.get("/panel/admin/relationship?user_id=test-user")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["intimacy"] == pytest.approx(0.42)
-    assert body["trust"] == pytest.approx(0.31)
+    assert body["favor"] == pytest.approx(0.42)
     assert body["relationship_type"] == "acquaintance"
     assert body["updated_at"] != ""
 
@@ -94,8 +91,7 @@ def test_relationship_missing_for_unknown_user(app: FastAPI) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["user_id"] == "someone-new"
-    assert body["intimacy"] == 0.0
-    assert body["trust"] == 0.0
+    assert body["favor"] == 0.0
     assert body["relationship_type"] == "stranger"
 
 
@@ -198,7 +194,7 @@ async def test_relationship_resolves_actor_to_group(app: FastAPI) -> None:
 
     # 在组 (effective_user_id) 上写关系
     rel = Relationship.create("default", group.id)
-    rel.intimacy_score = 0.55
+    rel.favor = 0.55
     rel.type = "friend"
     await relationship_store.save_relationship(rel)
 
@@ -209,7 +205,7 @@ async def test_relationship_resolves_actor_to_group(app: FastAPI) -> None:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["user_id"] == group.id
-        assert body["intimacy"] == pytest.approx(0.55)
+        assert body["favor"] == pytest.approx(0.55)
         assert body["relationship_type"] == "friend"
 
 
@@ -276,9 +272,9 @@ def test_list_relationships_empty(app: FastAPI) -> None:
 async def test_list_relationships_returns_all(app: FastAPI) -> None:
     """写入多条 → 全部返回, 默认按亲密度降序."""
     store: SqliteRelationshipStore = app.state.relationship_store
-    for _i, (uid, intimacy) in enumerate([("alice", 0.42), ("bob", 0.91), ("carol", 0.15)]):
+    for _i, (uid, favor) in enumerate([("alice", 0.42), ("bob", 0.91), ("carol", 0.15)]):
         rel = Relationship.create("default", uid)
-        rel.intimacy_score = intimacy
+        rel.favor = favor
         await store.save_relationship(rel)
 
     client = TestClient(app)
@@ -345,7 +341,7 @@ async def test_list_relationships_pagination(app: FastAPI) -> None:
     store: SqliteRelationshipStore = app.state.relationship_store
     for i in range(5):
         rel = Relationship.create("default", f"user_{i}")
-        rel.intimacy_score = round(i * 0.1, 3)
+        rel.favor = round(i * 0.1, 3)
         await store.save_relationship(rel)
 
     client = TestClient(app)
@@ -374,13 +370,13 @@ async def test_list_relationships_pagination(app: FastAPI) -> None:
 
 
 async def test_list_relationships_invalid_sort_falls_back(app: FastAPI) -> None:
-    """非法 sort_by 退回 intimacy_score 降序."""
+    """非法 sort_by 退回 favor 降序."""
     store: SqliteRelationshipStore = app.state.relationship_store
     rel = Relationship.create("default", "alice")
-    rel.intimacy_score = 0.5
+    rel.favor = 0.5
     await store.save_relationship(rel)
     rel2 = Relationship.create("default", "bob")
-    rel2.intimacy_score = 0.9
+    rel2.favor = 0.9
     await store.save_relationship(rel2)
 
     client = TestClient(app)
@@ -392,12 +388,12 @@ async def test_list_relationships_invalid_sort_falls_back(app: FastAPI) -> None:
     assert body["items"][1]["user_id"] == "alice"
 
 
-async def test_list_relationships_trust_sort(app: FastAPI) -> None:
-    """按 trust_level 升序."""
+async def test_list_relationships_legacy_trust_sort_alias(app: FastAPI) -> None:
+    """兼容旧键 trust_level 排序 → 映射为 favor 升序."""
     store: SqliteRelationshipStore = app.state.relationship_store
-    for uid, trust in [("alice", 0.3), ("bob", 0.9), ("carol", 0.1)]:
+    for uid, favor in [("alice", 0.3), ("bob", 0.9), ("carol", 0.1)]:
         rel = Relationship.create("default", uid)
-        rel.trust_level = trust
+        rel.favor = favor
         await store.save_relationship(rel)
 
     client = TestClient(app)

@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { listPrompts, resetPrompt } from '@/api/client'
 import type { PromptSummary } from '@/types/api'
+import TabHeader from '@/components/common/TabHeader.vue'
 
 const emit = defineEmits<{
   edit: [name: string]
@@ -67,15 +68,12 @@ defineExpose({ refresh })
 
 <template>
   <div>
-    <div class="tab-head">
-      <div>
-        <h3 class="tab-title">提示词管理</h3>
-        <p class="tab-subtitle">
-          管理系统内建的 Agent 提示词。修改后的版本存于 <span class="mono">data/prompts/</span>,
-          随时可重置为默认。
-        </p>
-      </div>
-      <div class="head-actions">
+    <TabHeader title="提示词管理">
+      <template #subtitle>
+        管理系统内建的 Agent 提示词。修改后的版本存于 <span class="mono">data/prompts/</span>,
+        随时可重置为默认。
+      </template>
+      <template #actions>
         <el-input v-model="query" placeholder="搜索名称或描述" clearable class="search">
           <template #prefix>
             <el-icon><Search /></el-icon>
@@ -85,8 +83,8 @@ defineExpose({ refresh })
           <el-icon><Refresh /></el-icon>
           <span>刷新</span>
         </el-button>
-      </div>
-    </div>
+      </template>
+    </TabHeader>
 
     <el-card>
       <el-table
@@ -149,33 +147,6 @@ defineExpose({ refresh })
 </template>
 
 <style lang="scss" scoped>
-.tab-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: $space-4;
-  margin-bottom: $space-4;
-
-}
-
-.tab-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0 0 $space-1;
-}
-
-.tab-subtitle {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  margin: 0;
-}
-
-.head-actions {
-  display: flex;
-  gap: $space-2;
-  align-items: center;
-}
-
 .search {
   width: 240px;
 }

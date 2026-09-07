@@ -34,9 +34,9 @@ defineProps<{
 <style lang="scss" scoped>
 .role-head {
   display: flex;
+  gap: $space-2;
   align-items: center;
   justify-content: space-between;
-  gap: $space-2;
 }
 
 .role-head-actions {
@@ -45,19 +45,19 @@ defineProps<{
 }
 
 .role-title {
-  font-weight: 600;
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
+  font-weight: 600;
 }
 
 .role-badge {
+  padding: 2px 8px;
   font-size: 12px;
   font-weight: 400;
   color: var(--el-text-color-secondary);
-  padding: 2px 8px;
-  border-radius: $radius-sm;
   background: var(--el-fill-color);
+  border-radius: $radius-sm;
 }
 
 .role-badge-warn {
@@ -66,8 +66,8 @@ defineProps<{
 }
 
 .role-desc {
+  margin-top: $space-1;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-top: $space-1;
 }
 </style>

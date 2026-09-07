@@ -16,9 +16,11 @@ const secretDialog = ref(false)
 const newKey = ref<ApiKeyCreateResponse | null>(null)
 const strategies = ref<IdentityStrategy[]>([])
 
-const strategyNames = computed(() =>
-  Object.fromEntries(strategies.value.map((s) => [s.id, s.name])),
-)
+const strategyNames = computed(() => ({
+  // 内建策略 (无需 identity_strategies 表记录)
+  api_key_bound: 'Key 即身份',
+  ...Object.fromEntries(strategies.value.map((s) => [s.id, s.name])),
+}))
 
 async function refresh() {
   loading.value = true

@@ -202,6 +202,8 @@ def test_same_second_backups_do_not_collide(store: PromptStore) -> None:
 def test_list_returns_all_registry_entries(store: PromptStore) -> None:
     infos = store.list()
     assert {info.name for info in infos} == set(PROMPT_REGISTRY)
+    # mood_matrix 已脱离 registry (每格一文件, 专属 grid 编辑)
+    assert "mood_matrix" not in PROMPT_REGISTRY
     # 默认无覆盖
     assert all(not info.overridden for info in infos)
 

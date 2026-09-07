@@ -34,7 +34,9 @@ def test_panel_app_builds() -> None:
     paths = [getattr(r, "path", None) for r in app.routes]
     assert "/panel/{path:path}" in paths
     assert "/v1/{path:path}" in paths
-    assert "/{full_path:path}" in paths
+    # SPA 兜底路由仅在构建了前端 (ui/dist) 时挂载; CI 未构建前端时跳过该断言
+    if (Path(__file__).resolve().parent.parent.parent / "ui" / "dist" / "index.html").exists():
+        assert "/{full_path:path}" in paths
 
 
 def test_proxy_v1_to_backend(client: TestClient) -> None:

@@ -1,6 +1,6 @@
 # 配置文档 | Configuration
 
-> **系统版本**: v0.3.4
+> **系统版本**: v0.4.1
 > **文档状态**: 与代码同步
 > **创建时间**: 2026-03-24
 > **最后更新**: 2026-08-01
@@ -105,6 +105,7 @@ context            = "..."
 | `checkpoint_backend` | `memory` | LangGraph checkpoint 后端 (`memory` / `sqlite`); v0.2.6 起 checkpoint 仅作单请求内节点共享 state 用, 不再承担跨请求短期记忆 |
 | `proxy_thinking_default` | false | 代理推理的**兜底**开关: 请求无 `reasoning_effort` 等提示、主模型也没原生推理时, 是否强制启用 |
 | `proxy_thinking_native_reasoning_models` | 见下 | 视为具备原生推理的模型前缀白名单 (命中即 skip 代理推理) |
+| `prompt_clean_max_concurrency` | 20 | (v0.4.1) 提示词清洗全局并发上限 (所有进行中模块清洗的并发总额); 低配额 key 可调小 |
 
 **默认前缀白名单**:
 ```
@@ -125,6 +126,34 @@ context            = "..."
 | `port` | 16125 | 监听端口 |
 | `log_level` | `info` | 日志级别 |
 
+### 3.6 [relationship_alpha] (v0.4.1 好感度演进预设)
+
+好感度不对称更新的演进参数。人格通过 `relationship_alpha` 预设 id 引用（面板不做自定义），直接改本文件即可，服务读取时生效。
+
+不对称更新公式: `favor += (delta >= 0 ? alpha_up : alpha_down) × delta`。慢热快冷: `alpha_up` 小（信任建立慢），`alpha_down` 大（冒犯掉得快）。
+
+内置预设（可覆盖或追加，未知 id 回退 `normal`）:
+
+| id | label | alpha_up | alpha_down |
+|------|------|------|------|
+| `normal` | 普通 | 0.2 | 0.5 |
+| `sensitive` | 高敏感 | 0.5 | 0.8 |
+| `rational` | 理性 | 0.1 | 0.3 |
+| `gullible` | 轻信 | 0.5 | 0.4 |
+| `guarded` | 戒备 | 0.1 | 0.8 |
+
+自定义预设写法:
+
+```toml
+[[relationship_alpha.presets]]
+id = "custom"
+label = "自定义"
+alpha_up = 0.3
+alpha_down = 0.6
+```
+
+解析失败 / 字段缺失的条目跳过，全部无效时回退内置默认。
+
 ---
 
 ## 4. 环境变量 (有限支持)
@@ -137,6 +166,8 @@ context            = "..."
 | `MNEMOSYNC_DEBUG=1` | 打开 Forwarder 的上游请求/响应日志 + http_logs.db 落库 |
 
 无 `.env` 支持——不要指望通过 `.env` 或 `MEMORY_DB_PATH` 之类的环境变量覆盖 config 段。
+
+> **安装/升级相关环境变量** (`MNEMOSYNC_BRANCH` / `MNEMOSYNC_VERSION` / `MNEMOSYNC_RELEASE_TAG` / `MNEMOSYNC_INSTALL_DIR` / `MNEMOSYNC_DIR`) 属 install.sh 范畴, 见 [deployment.md §8.1](deployment.md#81-一键升级-推荐)。
 
 ---
 

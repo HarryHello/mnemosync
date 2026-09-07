@@ -271,14 +271,14 @@ function fmtDate(s: string | null): string {
 .path-header,
 .time-header {
   display: flex;
-  align-items: center;
   gap: $space-1;
+  align-items: center;
 }
 
 .filter-icon {
-  cursor: pointer;
   font-size: 14px;
   color: var(--el-text-color-secondary);
+  cursor: pointer;
 
   &:hover {
     color: var(--el-color-primary);
@@ -303,20 +303,20 @@ function fmtDate(s: string | null): string {
 
 .time-filter-item {
   display: flex;
-  align-items: center;
   gap: $space-2;
+  align-items: center;
 }
 
 .time-filter-label {
+  min-width: 60px;
   font-size: 14px;
   color: var(--el-text-color-secondary);
-  min-width: 60px;
 }
 
 .time-filter-actions {
   display: flex;
-  justify-content: flex-end;
   gap: $space-2;
+  justify-content: flex-end;
   margin-top: $space-1;
 }
 

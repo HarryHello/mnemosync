@@ -61,14 +61,16 @@ class RelationshipResponse(BaseModel):
     persona_id: str
     user_id: str
     identity: RelationshipIdentity | None = None
-    intimacy: float
-    trust: float
+    favor: float  # v0.4.1: 好感度 (-1.0 ~ 1.0, 面板显示映射为 -100~100)
     relationship_type: str
     notes: str | None = None
     updated_at: str
     persona_addressing: str = ""
     user_addressing: str = ""
     context: str = ""
+    # 旧字段保留为兼容别名 (迁移期面板可读, 新 UI 用 favor)
+    intimacy: float | None = None
+    trust: float | None = None
 
 
 class RelationshipUpdateBody(BaseModel):
@@ -193,8 +195,7 @@ def _relationship_to_response(
             persona_id=_persona_id(),
             user_id=target,
             identity=identity,
-            intimacy=0.0,
-            trust=0.0,
+            favor=0.0,
             relationship_type="stranger",
             notes=None,
             updated_at="",
@@ -206,8 +207,7 @@ def _relationship_to_response(
         persona_id=rel.persona_id,
         user_id=rel.user_id,
         identity=identity,
-        intimacy=rel.intimacy_score,
-        trust=rel.trust_level,
+        favor=rel.favor,
         relationship_type=rel.type,
         notes=rel.notes,
         updated_at=rel.last_active.isoformat() if rel.last_active else "",

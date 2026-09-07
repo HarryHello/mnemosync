@@ -113,6 +113,19 @@ class PromptStore:
         body, _ = self._strip_frontmatter(self._read_raw(path))
         return body
 
+    def load_override(self, name: str) -> str | None:
+        """读取覆盖层 (不存在返回 None). 剥离 frontmatter. 无缓存.
+
+        v0.4.1: 供 mood_matrix 等"合并覆盖"类配置使用 — 覆盖文件可只写
+        部分格子, 读取时 defaults 打底 + override 合并.
+        """
+        self._spec(name)
+        override = self._override_path(name)
+        if not override.is_file():
+            return None
+        body, _ = self._strip_frontmatter(self._read_raw(override))
+        return body
+
     def load(self, name: str) -> str:
         """override > default. 剥离 frontmatter. 无缓存."""
         self._spec(name)

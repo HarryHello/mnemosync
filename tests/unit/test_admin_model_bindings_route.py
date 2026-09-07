@@ -1,10 +1,11 @@
-"""Admin /model-bindings REST 路由测试.
+"""Admin /model-bindings REST 路由测试 (v0.4.1: model_id 注册表引用语义).
 
 覆盖:
 - 鉴权前置: 未登录 → 401
 - CRUD: list / add / reorder / delete
-- 无效 role → 400
-- 缺失 binding → 404
+- 无效 role → 400; 模型不存在/已禁用 → 400
+- 能力字段随注册表 (绑定不再逐条声明)
+- PATCH 换模型 (model_id) + resolver.invalidate()
 - 每次 mutation 触发 resolver.invalidate()
 """
 
@@ -20,7 +21,7 @@ from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import get_current_user
 from src.api.state import AppState
 from src.core.models.resolver import RoleResolver
-from src.infra.llm_service.models import LLMServiceProvider, ModelType
+from src.infra.llm_service.models import LLMServiceProvider, ModelRegistryEntry, ModelType
 from src.infra.llm_service.store import LLMServiceStore
 from src.persistence.auth_store import User
 
@@ -37,6 +38,18 @@ async def store(tmp_path: Path) -> AsyncIterator[LLMServiceStore]:
             service_id=svc_id, base_url="https://x", api_key="k",
         )
         await s.save_service(svc)
+    # 预置模型注册表
+    entries = [
+        ModelRegistryEntry.create("s1", "m1", context_length=131072),
+        ModelRegistryEntry.create("s1", "m1b"),
+        ModelRegistryEntry.create("s1", "e1", embedding_dim=1024),
+        ModelRegistryEntry.create("s1", "disabled", enabled=False),
+        ModelRegistryEntry.create("s2", "m2"),
+        ModelRegistryEntry.create("s2", "m2b"),
+        ModelRegistryEntry.create("s2", "e2"),
+    ]
+    for e in entries:
+        await s.save_model_registry(e)
     yield s
 
 
@@ -92,19 +105,19 @@ def test_add_list_and_reorder(app: FastAPI) -> None:
     assert resp.status_code == 200
     assert resp.json()["items"] == []
 
-    # add 两条
-    for sid, model in [("s1", "m1"), ("s2", "m2")]:
+    # add 两条 (model_id 引用)
+    for mid in ["s1:m1", "s2:m2"]:
         resp = client.post(
             "/panel/admin/model-bindings",
-            json={"role": "main", "service_id": sid, "model": model},
+            json={"role": "main", "model_id": mid},
         )
         assert resp.status_code == 200, resp.text
 
     resp = client.get("/panel/admin/model-bindings?role=main")
     items = resp.json()["items"]
-    assert [(i["priority"], i["service_id"], i["model"]) for i in items] == [
-        (0, "s1", "m1"),
-        (1, "s2", "m2"),
+    assert [(i["priority"], i["service_id"], i["model"], i["model_id"]) for i in items] == [
+        (0, "s1", "m1", "s1:m1"),
+        (1, "s2", "m2", "s2:m2"),
     ]
 
     # reorder: 把 s2/m2 提到 0
@@ -121,9 +134,29 @@ def test_add_invalid_role_400(app: FastAPI) -> None:
     client = TestClient(app)
     resp = client.post(
         "/panel/admin/model-bindings",
-        json={"role": "bogus", "service_id": "s1", "model": "m"},
+        json={"role": "bogus", "model_id": "s1:m1"},
     )
     assert resp.status_code == 400
+
+
+def test_add_missing_model_400(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/model-bindings",
+        json={"role": "main", "model_id": "s1:does-not-exist"},
+    )
+    assert resp.status_code == 400
+    assert "不存在" in resp.json()["detail"]
+
+
+def test_add_disabled_model_400(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/model-bindings",
+        json={"role": "main", "model_id": "s1:disabled"},
+    )
+    assert resp.status_code == 400
+    assert "禁用" in resp.json()["detail"]
 
 
 def test_delete_missing_returns_404(app: FastAPI) -> None:
@@ -134,10 +167,10 @@ def test_delete_missing_returns_404(app: FastAPI) -> None:
 
 async def test_delete_shifts_priorities_and_invalidates_cache(app: FastAPI) -> None:
     client = TestClient(app)
-    for sid, model in [("s1", "m1"), ("s2", "m2")]:
+    for mid in ["s1:m1", "s2:m2"]:
         client.post(
             "/panel/admin/model-bindings",
-            json={"role": "main", "service_id": sid, "model": model},
+            json={"role": "main", "model_id": mid},
         )
 
     # 预热 resolver 缓存
@@ -159,15 +192,15 @@ async def test_delete_shifts_priorities_and_invalidates_cache(app: FastAPI) -> N
 
 def test_add_with_priority_shifts_existing(app: FastAPI) -> None:
     client = TestClient(app)
-    for sid, model in [("s1", "m1"), ("s2", "m2")]:
+    for mid in ["s1:m1", "s2:m2"]:
         client.post(
             "/panel/admin/model-bindings",
-            json={"role": "assist", "service_id": sid, "model": model},
+            json={"role": "assist", "model_id": mid},
         )
     # 插入到 priority 0 → 原 s1/s2 各后移一位
     resp = client.post(
         "/panel/admin/model-bindings",
-        json={"role": "assist", "service_id": "s2", "model": "m2b", "priority": 0},
+        json={"role": "assist", "model_id": "s2:m2b", "priority": 0},
     )
     assert resp.status_code == 200
     items = client.get("/panel/admin/model-bindings?role=assist").json()["items"]
@@ -182,7 +215,7 @@ def test_reorder_mismatch_returns_400(app: FastAPI) -> None:
     client = TestClient(app)
     client.post(
         "/panel/admin/model-bindings",
-        json={"role": "main", "service_id": "s1", "model": "m1"},
+        json={"role": "main", "model_id": "s1:m1"},
     )
     resp = client.put(
         "/panel/admin/model-bindings/main/reorder",
@@ -195,42 +228,34 @@ def test_add_second_embedding_returns_409(app: FastAPI) -> None:
     client = TestClient(app)
     resp = client.post(
         "/panel/admin/model-bindings",
-        json={"role": "embedding", "service_id": "s1", "model": "e1"},
+        json={"role": "embedding", "model_id": "s1:e1"},
     )
     assert resp.status_code == 200, resp.text
 
     resp = client.post(
         "/panel/admin/model-bindings",
-        json={"role": "embedding", "service_id": "s2", "model": "e2"},
+        json={"role": "embedding", "model_id": "s2:e2"},
     )
     assert resp.status_code == 409
     assert "嵌入模型只允许一条绑定" in resp.json()["detail"]
 
 
-def test_add_with_metadata_fields(app: FastAPI) -> None:
+def test_capabilities_follow_registry(app: FastAPI) -> None:
+    """能力字段随模型注册表: 绑定响应携带注册表声明的 context_length / embedding_dim."""
     client = TestClient(app)
     resp = client.post(
         "/panel/admin/model-bindings",
-        json={
-            "role": "main",
-            "service_id": "s1",
-            "model": "m1",
-            "context_length": 131072,
-        },
+        json={"role": "main", "model_id": "s1:m1"},
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["context_length"] == 131072
-    assert body["embedding_dim"] is None
+    assert body["context_length"] == 131072  # 注册表声明
+    assert body["model_id"] == "s1:m1"
+    assert body["display_name"] is None
 
     resp = client.post(
         "/panel/admin/model-bindings",
-        json={
-            "role": "embedding",
-            "service_id": "s1",
-            "model": "e1",
-            "embedding_dim": 1024,
-        },
+        json={"role": "embedding", "model_id": "s1:e1"},
     )
     assert resp.status_code == 200
     assert resp.json()["embedding_dim"] == 1024
@@ -265,17 +290,12 @@ def test_probe_dimension_unknown_service_404(app: FastAPI) -> None:
     assert resp.status_code == 404
 
 
-async def test_patch_updates_editable_fields_and_invalidates_cache(app: FastAPI) -> None:
-    """PATCH 更新 service_id / model / metadata; resolver 缓存应被 invalidate."""
+async def test_patch_swaps_model_and_invalidates_cache(app: FastAPI) -> None:
+    """PATCH model_id 换模型; service_id/model/model_id 联动; resolver 缓存 invalidate."""
     client = TestClient(app)
     resp = client.post(
         "/panel/admin/model-bindings",
-        json={
-            "role": "main",
-            "service_id": "s1",
-            "model": "m1",
-            "context_length": 8192,
-        },
+        json={"role": "main", "model_id": "s1:m1"},
     )
     assert resp.status_code == 200
 
@@ -285,86 +305,41 @@ async def test_patch_updates_editable_fields_and_invalidates_cache(app: FastAPI)
 
     resp = client.patch(
         "/panel/admin/model-bindings/main/0",
-        json={
-            "service_id": "s2",
-            "model": "m1b",
-            "context_length": 32768,
-        },
+        json={"model_id": "s2:m2b"},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["role"] == "main"
     assert body["priority"] == 0
     assert body["service_id"] == "s2"
-    assert body["model"] == "m1b"
-    assert body["context_length"] == 32768
+    assert body["model"] == "m2b"
+    assert body["model_id"] == "s2:m2b"
 
     assert resolver.version > initial_version
 
 
-def test_patch_clears_nullable_fields(app: FastAPI) -> None:
-    """显式传 null 应清空 context_length / embedding_dim."""
+async def test_patch_embedding_swap_allowed(app: FastAPI) -> None:
+    """嵌入单绑定可通过 PATCH 换模型 (保持单条不变)."""
     client = TestClient(app)
     client.post(
         "/panel/admin/model-bindings",
-        json={
-            "role": "embedding",
-            "service_id": "s1",
-            "model": "e1",
-            "embedding_dim": 1024,
-        },
+        json={"role": "embedding", "model_id": "s1:e1"},
     )
     resp = client.patch(
         "/panel/admin/model-bindings/embedding/0",
-        json={"embedding_dim": None},
+        json={"model_id": "s2:e2"},
     )
-    assert resp.status_code == 200
-    assert resp.json()["embedding_dim"] is None
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["model_id"] == "s2:e2"
+    items = client.get("/panel/admin/model-bindings?role=embedding").json()["items"]
+    assert len(items) == 1
 
 
-def test_patch_missing_binding_returns_404(app: FastAPI) -> None:
+def test_patch_empty_model_id_400(app: FastAPI) -> None:
     client = TestClient(app)
-    resp = client.patch(
-        "/panel/admin/model-bindings/main/9",
-        json={"model": "x"},
-    )
-    assert resp.status_code == 404
-
-
-def test_patch_unknown_service_returns_400(app: FastAPI) -> None:
-    client = TestClient(app)
-    client.post(
-        "/panel/admin/model-bindings",
-        json={"role": "main", "service_id": "s1", "model": "m1"},
-    )
     resp = client.patch(
         "/panel/admin/model-bindings/main/0",
-        json={"service_id": "does-not-exist"},
-    )
-    assert resp.status_code == 400
-
-
-def test_patch_empty_body_returns_400(app: FastAPI) -> None:
-    client = TestClient(app)
-    client.post(
-        "/panel/admin/model-bindings",
-        json={"role": "main", "service_id": "s1", "model": "m1"},
-    )
-    resp = client.patch(
-        "/panel/admin/model-bindings/main/0",
-        json={},
-    )
-    assert resp.status_code == 400
-
-
-def test_patch_blank_model_returns_400(app: FastAPI) -> None:
-    client = TestClient(app)
-    client.post(
-        "/panel/admin/model-bindings",
-        json={"role": "main", "service_id": "s1", "model": "m1"},
-    )
-    resp = client.patch(
-        "/panel/admin/model-bindings/main/0",
-        json={"model": "   "},
+        json={"model_id": ""},
     )
     assert resp.status_code == 400

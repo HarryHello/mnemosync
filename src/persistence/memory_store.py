@@ -75,7 +75,13 @@ class SqliteMemoryStore(SqliteStore):
         await MigrationRunner([
             ("001_add_space_id", add_column_if_missing("memory_entries", "space_id", "TEXT")),
             ("005_add_superseded_by", add_column_if_missing("memory_entries", "superseded_by", "TEXT")),
+            ("006_add_subject_actor_id", add_column_if_missing("memory_entries", "subject_actor_id", "TEXT")),
         ]).apply(db)
+
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subject_actor "
+            "ON memory_entries(subject_actor_id) WHERE subject_actor_id IS NOT NULL"
+        )
 
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_superseded_by "
@@ -99,8 +105,8 @@ class SqliteMemoryStore(SqliteStore):
                 (id, content, role, source_user, memory_type, importance, decay_rate,
                  priority, access_count, is_forgotten, visibility, custom_policies,
                  emotional_tags, related_memories, created_at, last_accessed, expires_at,
-                 space_id, superseded_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 space_id, superseded_by, subject_actor_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.id,
@@ -122,6 +128,7 @@ class SqliteMemoryStore(SqliteStore):
                     _dt(entry.expires_at),
                     entry.space_id,
                     entry.superseded_by,
+                    entry.subject_actor_id,
                 ),
             )
             await db.commit()
@@ -269,6 +276,29 @@ class SqliteMemoryStore(SqliteStore):
                 (priority, 1 if is_forgotten else 0, entry_id),
             )
             await db.commit()
+
+    async def list_ephemeral_by_subject(
+        self, subject_actor_id: str, limit: int = 1
+    ) -> list[MemoryEntry]:
+        """拉取人格对指定对象的最新情绪锚点 (v0.4.1, RFC §6.2).
+
+        确定性加载: 不依赖向量检索 (对象日常消息与锚点语义不相似).
+        只返回未遗忘 / 未被替代 / 未过期的 EPHEMERAL 记忆, 时间序取最新.
+        """
+        async with self._conn() as db:
+            async with db.execute(
+                """
+                SELECT * FROM memory_entries
+                WHERE subject_actor_id = ? AND memory_type = 'ephemeral'
+                  AND is_forgotten = 0 AND superseded_by IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (subject_actor_id, datetime.now(UTC).isoformat(), limit),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        return [self._row_to_entry(r) for r in rows]
 
     async def mark_superseded(self, old_id: str, new_id: str) -> bool:
         """标记一条记忆被新记忆替代 (软替代, 不物理删除).
@@ -497,4 +527,5 @@ class SqliteMemoryStore(SqliteStore):
             expires_at=_parse_dt(row[16]),
             space_id=row[17] if len(row) > 17 else None,
             superseded_by=row[18] if len(row) > 18 else None,
+            subject_actor_id=row[19] if len(row) > 19 else None,
         )

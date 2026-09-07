@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from fastapi import APIRouter, Request
@@ -20,7 +22,8 @@ from src.api.schemas.forward import ChatCompletionRequest
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1")
+# 无 prefix — 由父 router (forward/__init__.py, prefix="/v1") 拼接, 否则会变成 /v1/v1/responses
+router = APIRouter()
 
 
 # ── 请求/响应 Schema ──────────────────────────────────────────
@@ -99,11 +102,27 @@ def _convert_responses_to_chat(body: ResponsesRequest) -> dict[str, Any]:
                 if isinstance(item.content, str):
                     messages.append({"role": "assistant", "content": item.content})
 
+            elif item.type == "function_call":
+                # Responses function_call item → OpenAI assistant.tool_calls
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": item.call_id or "",
+                        "type": "function",
+                        "function": {
+                            "name": item.name or "",
+                            "arguments": item.arguments or "{}",
+                        },
+                    }],
+                })
+
             elif item.type == "function_call_output":
+                output = item.output or ""
                 messages.append({
                     "role": "tool",
                     "tool_call_id": item.call_id or "",
-                    "content": item.output or "",
+                    "content": output if isinstance(output, str) else json.dumps(output, ensure_ascii=False),
                 })
 
     # tools 转换
@@ -146,6 +165,16 @@ def _convert_chat_to_responses(
     message = choice.get("message", {})
     output: list[dict[str, Any]] = []
 
+    # 推理 (代理推理 reasoning_content → Responses reasoning item)
+    reasoning = message.get("reasoning_content")
+    if reasoning:
+        output.append({
+            "type": "reasoning",
+            "id": f"rs_{uuid.uuid4().hex[:24]}",
+            "summary": [{"type": "summary_text", "text": reasoning}],
+            "content": [{"type": "reasoning_text", "text": reasoning}],
+        })
+
     # 文本内容
     text = message.get("content", "")
     if text:
@@ -175,6 +204,7 @@ def _convert_chat_to_responses(
     return {
         "id": f"resp_{uuid.uuid4().hex[:24]}",
         "object": "response",
+        "created_at": int(time.time()),
         "model": openai_response.get("model", ""),
         "output": output,
         "usage": {
@@ -189,12 +219,44 @@ def _convert_chat_to_responses(
 # ── 流式转换 ──────────────────────────────────────────────────
 
 
+@dataclass
+class _ResponsesStreamState:
+    """跨 chunk 的流式状态: 记录已发的 item/part, 保证事件顺序符合协议.
+
+    AI SDK (Cherry Studio) 用 zod 严格校验事件结构:
+      - output_item.done 必须带完整 item (message 需含 content, function_call 需含 arguments)
+      - response.completed 的 response 必须带 usage (input_tokens/output_tokens)
+    """
+
+    item_id: str = ""
+    message_item_added: bool = False
+    content_part_added: bool = False
+    text_done: bool = False
+    message_item_done: bool = False
+    output_index: int = 0
+    content_index: int = 0
+    collected_text: list[str] = field(default_factory=list)
+    # function_call 追踪 (output_index → item)
+    function_calls: dict[int, dict[str, Any]] = field(default_factory=dict)
+    tool_args: dict[int, str] = field(default_factory=dict)
+
+
 def _convert_chat_chunk_to_responses(
     chunk: dict[str, Any],
     response_id: str,
+    state: _ResponsesStreamState | None = None,
 ) -> list[dict[str, Any]]:
-    """将 Chat Completions SSE chunk 转换为 Responses API 事件列表."""
+    """将 Chat Completions SSE chunk 转换为 Responses API 事件列表.
+
+    Responses API 流式协议要求按序发:
+      output_item.added (message) → content_part.added (output_text)
+      → output_text.delta → output_text.done → output_item.done → completed
+    缺 output_item.added / content_part.added 时, 客户端无法建立 part 索引,
+    会报 "text part ... not found". 因此转换需要跨 chunk 状态 (state).
+    """
     events: list[dict[str, Any]] = []
+    if state is None:
+        state = _ResponsesStreamState()
     choices = chunk.get("choices", [])
     if not choices:
         return events
@@ -203,48 +265,127 @@ def _convert_chat_chunk_to_responses(
     delta = choice.get("delta", {})
     finish_reason = choice.get("finish_reason")
 
-    # 文本 delta
+    # 文本输出
     content = delta.get("content")
     if content:
+        if not state.message_item_added:
+            state.item_id = f"msg_{response_id}"
+            state.output_index = 0
+            events.append({
+                "type": "response.output_item.added",
+                "output_index": state.output_index,
+                "item": {
+                    "type": "message",
+                    "id": state.item_id,
+                    "status": "in_progress",
+                    "content": [],
+                },
+            })
+            state.message_item_added = True
+        if not state.content_part_added:
+            events.append({
+                "type": "response.content_part.added",
+                "item_id": state.item_id,
+                "output_index": state.output_index,
+                "content_index": state.content_index,
+                "part": {"type": "output_text", "text": "", "annotations": []},
+            })
+            state.content_part_added = True
+        state.collected_text.append(content)
         events.append({
             "type": "response.output_text.delta",
-            "item_id": f"msg_{response_id}",
-            "output_index": 0,
-            "content_index": 0,
+            "item_id": state.item_id,
+            "output_index": state.output_index,
+            "content_index": state.content_index,
             "delta": content,
         })
 
-    # 工具调用 delta
-    tool_calls = delta.get("tool_calls", [])
+    # 工具调用 delta (注意: 键存在但值为 null 时 .get 默认值不生效, 需 or [])
+    tool_calls = delta.get("tool_calls") or []
     for tc in tool_calls:
         func = tc.get("function", {})
+        idx = tc.get("index", 0) if isinstance(tc.get("index"), int) else state.output_index
         if func.get("name"):
-            events.append({
-                "type": "response.output_item.added",
-                "output_index": len(events),
-                "item": {
+            existing = state.function_calls.get(idx)
+            if existing is None:
+                item: dict[str, Any] = {
                     "type": "function_call",
                     "id": f"fc_{uuid.uuid4().hex[:24]}",
                     "call_id": tc.get("id", ""),
                     "name": func["name"],
                     "arguments": "",
                     "status": "in_progress",
-                },
-            })
+                }
+                state.function_calls[idx] = item
+                events.append({
+                    "type": "response.output_item.added",
+                    "output_index": idx,
+                    "item": item,
+                })
+            else:
+                # 工具名跨帧分片, 需累积 ("get_" + "weather" → "get_weather")
+                existing["name"] += func["name"]
         if func.get("arguments"):
+            state.tool_args[idx] = state.tool_args.get(idx, "") + func["arguments"]
             events.append({
                 "type": "response.function_call_arguments.delta",
-                "output_index": len(events) - 1,
+                "output_index": idx,
                 "delta": func["arguments"],
             })
 
-    # finish_reason → completed
+    # finish_reason → 收尾事件序列
     if finish_reason:
+        # 文本 item 收尾: output_text.done → output_item.done (带完整 message item)
+        if state.message_item_added and not state.text_done:
+            full_text = "".join(state.collected_text)
+            events.append({
+                "type": "response.output_text.done",
+                "item_id": state.item_id,
+                "output_index": state.output_index,
+                "content_index": state.content_index,
+                "text": full_text,
+            })
+            state.text_done = True
+        if state.message_item_added and not state.message_item_done:
+            events.append({
+                "type": "response.output_item.done",
+                "output_index": state.output_index,
+                "item": {
+                    "type": "message",
+                    "id": state.item_id,
+                    "status": "completed",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "".join(state.collected_text),
+                        "annotations": [],
+                    }],
+                },
+            })
+            state.message_item_done = True
+
+        # function_call item 收尾 (带完整 arguments)
+        for idx, item in state.function_calls.items():
+            events.append({
+                "type": "response.output_item.done",
+                "output_index": idx,
+                "item": {
+                    **item,
+                    "arguments": state.tool_args.get(idx, ""),
+                    "status": "completed",
+                },
+            })
+
         events.append({
             "type": "response.completed",
             "response": {
                 "id": response_id,
                 "status": "completed",
+                # AI SDK zod 校验必填 usage
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                },
             },
         })
 
@@ -303,10 +444,28 @@ async def _handle_responses_stream(
         return StreamingResponse(_single_event(), media_type="text/event-stream")
 
     response_id = f"resp_{uuid.uuid4().hex[:24]}"
+    model = getattr(body, "model", None) or "mnemosync-any"
 
     async def responses_stream() -> AsyncGenerator[bytes, None]:
-        # response.created
-        yield f"data: {json.dumps({'type': 'response.created', 'response': {'id': response_id, 'status': 'in_progress'}})}\n\n".encode()
+        import time as _time
+
+        # 跨 chunk 的流式状态 (保证 output_item.added / content_part.added 先于 delta)
+        state = _ResponsesStreamState()
+        # 流结束时若上游没给 finish_reason (异常中断), 补完成事件
+        completed = False
+
+        # AI SDK zod 校验: response.created / response.in_progress 的 response
+        # 必须含 id + created_at(number) + model(string)
+        created_at = int(_time.time())
+        base_resp = {
+            "id": response_id,
+            "object": "response",
+            "created_at": created_at,
+            "model": model,
+            "status": "in_progress",
+        }
+        yield f"data: {json.dumps({'type': 'response.created', 'response': base_resp})}\n\n".encode()
+        yield f"data: {json.dumps({'type': 'response.in_progress', 'response': base_resp})}\n\n".encode()
 
         async for chunk_bytes in openai_response.body_iterator:
             chunk_str = cast(bytes, chunk_bytes).decode("utf-8", errors="ignore").strip()
@@ -321,8 +480,27 @@ async def _handle_responses_stream(
             except json.JSONDecodeError:
                 continue
 
-            events = _convert_chat_chunk_to_responses(chunk, response_id)
+            events = _convert_chat_chunk_to_responses(chunk, response_id, state)
             for event in events:
+                if event.get("type") == "response.completed":
+                    # 补全 completed 的 response 对象 (zod 校验 usage 必填)
+                    event["response"]["created_at"] = created_at
+                    event["response"]["model"] = model
+                    event["response"]["object"] = "response"
+                    completed = True
+                yield f"data: {json.dumps(event)}\n\n".encode()
+
+        # 上游异常中断 (无 finish_reason): 补收尾事件, 避免客户端挂起
+        if not completed:
+            tail = _convert_chat_chunk_to_responses(
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+                response_id, state,
+            )
+            for event in tail:
+                if event.get("type") == "response.completed":
+                    event["response"]["created_at"] = created_at
+                    event["response"]["model"] = model
+                    event["response"]["object"] = "response"
                 yield f"data: {json.dumps(event)}\n\n".encode()
 
     return StreamingResponse(responses_stream(), media_type="text/event-stream")
