@@ -13,6 +13,18 @@ import pytest
 from src.infra.forwarder.forwarder import Forwarder, ForwarderConfig, ModelDetail
 
 
+@pytest.fixture(autouse=True)
+def _no_models_dev(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认关闭 models.dev 实时目录 (测试离线); 专项测试见 test_models_dev.py."""
+
+    async def _none() -> None:
+        return None
+
+    monkeypatch.setattr(
+        "src.infra.forwarder.forwarder.fetch_models_dev_index", _none
+    )
+
+
 def _model(**kw: object) -> SimpleNamespace:
     """构造 openai SDK Model 桩: 已知字段 + model_extra 扩展字段."""
     base = {"id": "m1", "object": "model", "created": 1, "owned_by": "x"}

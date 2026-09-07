@@ -27,6 +27,7 @@ from .connection_pool import ConnectionPool
 from .debug_hook import get_debug_bus
 from .debug_utils import emit_upstream_debug as _emit_debug  # noqa: F401
 from .model_capabilities import known_capability_for
+from .models_dev import fetch_models_dev_index, lookup_models_dev
 
 logger = logging.getLogger(__name__)
 
@@ -569,6 +570,9 @@ class Forwarder:
         except APIStatusError as e:
             raise UpstreamError(e.status_code, e.response.text) from e
 
+        # 能力兜底链: 上游声明 → models.dev 实时目录 (失败静默 None) → 内置静态表
+        dev_index = await fetch_models_dev_index()
+
         out: list[ModelDetail] = []
         for m in models.data:
             raw: dict[str, Any] = {}
@@ -594,8 +598,8 @@ class Forwarder:
             om = _extract_model_capability(raw, "output_modalities", "architecture.output_modalities")
             input_mods = [str(x) for x in im] if isinstance(im, list) else ["text"]
             output_mods = [str(x) for x in om] if isinstance(om, list) else ["text"]
-            # 上游未声明能力时, 用内置知名模型表兜底 (如 DeepSeek 的 /v1/models 只有 id)
-            known = known_capability_for(mid)
+            # 上游未声明能力时, models.dev 实时目录与内置静态表依次兜底
+            known = lookup_models_dev(dev_index, mid) or known_capability_for(mid)
             if known is not None:
                 if not isinstance(cl, (int, float)) and known.context_length is not None:
                     cl = known.context_length

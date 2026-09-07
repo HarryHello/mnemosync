@@ -1,11 +1,11 @@
-"""内置知名模型能力表 (v0.4.1 兜底).
+"""内置知名模型能力表 (v0.4.1 最终兜底).
 
 上游 /v1/models 对多数服务商只返回 {id, object, owned_by} (DeepSeek 官方文档确认),
-不带 context_length / max_output_tokens 等扩展字段. 此表在**上游未声明**时按
-模型名兜底回填, 让"拉取后自动填能力"在主流模型上生效; 用户可在注册后手动改.
+不带 context_length / max_output_tokens 等扩展字段. 能力兜底链:
+上游声明 → models.dev 实时目录 (models_dev.py, 覆盖新模型) → 本表.
+本表只收录有把握的条目 (离线可用、无网络依赖); 用户可在注册后手动改.
 
-规则: 精确 id 优先, 再按最长前缀匹配 (如 deepseek- / qwen-). 仅收录有把握的条目;
-不确定的模型不硬编 (回落上游声明/默认).
+规则: 精确 id 优先, 再按最长前缀匹配 (如 deepseek- / qwen-).
 """
 
 from __future__ import annotations
