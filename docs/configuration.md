@@ -126,6 +126,34 @@ context            = "..."
 | `port` | 16125 | 监听端口 |
 | `log_level` | `info` | 日志级别 |
 
+### 3.6 [relationship_alpha] (v0.4.1 好感度演进预设)
+
+好感度不对称更新的演进参数。人格通过 `relationship_alpha` 预设 id 引用（面板不做自定义），直接改本文件即可，服务读取时生效。
+
+不对称更新公式: `favor += (delta >= 0 ? alpha_up : alpha_down) × delta`。慢热快冷: `alpha_up` 小（信任建立慢），`alpha_down` 大（冒犯掉得快）。
+
+内置预设（可覆盖或追加，未知 id 回退 `normal`）:
+
+| id | label | alpha_up | alpha_down |
+|------|------|------|------|
+| `normal` | 普通 | 0.2 | 0.5 |
+| `sensitive` | 高敏感 | 0.5 | 0.8 |
+| `rational` | 理性 | 0.1 | 0.3 |
+| `gullible` | 轻信 | 0.5 | 0.4 |
+| `guarded` | 戒备 | 0.1 | 0.8 |
+
+自定义预设写法:
+
+```toml
+[[relationship_alpha.presets]]
+id = "custom"
+label = "自定义"
+alpha_up = 0.3
+alpha_down = 0.6
+```
+
+解析失败 / 字段缺失的条目跳过，全部无效时回退内置默认。
+
 ---
 
 ## 4. 环境变量 (有限支持)

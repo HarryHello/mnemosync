@@ -705,7 +705,7 @@ CREATE INDEX idx_audit_user ON relationship_audit_log(persona_id, user_id, id DE
 |------|--------|---------|-------|
 | `POST /panel/admin/memory/prune` | forgotten / expired / `priority < threshold` 的 NORMAL 记忆 | **PERMANENT 全部保留**; 关系 / 短期 / 向量库不动 | 日常瘦身, 只清衰减掉的普通记忆 |
 | `POST /panel/admin/memory/reindex` (`prune=true` 可选) | 重建 Chroma collection (换嵌入模型时); prune=true 时顺带按上一列规则清理 | 同上, PERMANENT 一律保留 | 更换嵌入模型 / 修复向量库损坏 |
-| `POST /panel/admin/persona/reset` (**v0.2.7**) | **memory_entries 全部** (含 PERMANENT) + **relationships 全部** (亲密度 / 信任度) + **conversation_turns 全部** + Chroma collection | API Key / 服务商 / 模型绑定 / 提示词覆盖 / 管理员 / http_logs / config.local.toml | 想让 Mnemosync 回到"新装"的人格状态 (数据脏了 / 换测试场景 / 想重头开始一段关系) |
+| `POST /panel/admin/persona/reset` (**v0.2.7**) | **memory_entries 全部** (含 PERMANENT) + **relationships 全部** (好感度 / 称呼) + **conversation_turns 全部** + Chroma collection | API Key / 服务商 / 模型绑定 / 提示词覆盖 / 管理员 / http_logs / config.local.toml | 想让 Mnemosync 回到"新装"的人格状态 (数据脏了 / 换测试场景 / 想重头开始一段关系) |
 
 ### Persona Reset 语义要点
 
