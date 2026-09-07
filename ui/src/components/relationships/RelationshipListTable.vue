@@ -27,15 +27,20 @@ const emit = defineEmits<{
 type TagType = 'info' | 'primary' | 'success' | 'warning' | 'danger'
 
 function typeTag(t: string | null): { label: string; type: TagType } {
+  // 档位与措辞对齐后端 RELATIONSHIP_STAGE_LABELS (models.py) 与详情面板 levelText
   switch (t) {
     case 'intimate':
-      return { label: '亲密', type: 'danger' }
+      return { label: '亲密', type: 'success' }
     case 'friend':
-      return { label: '朋友', type: 'success' }
+      return { label: '友好', type: 'primary' }
     case 'acquaintance':
-      return { label: '熟人', type: 'primary' }
+      return { label: '熟悉', type: 'success' }
     case 'stranger':
-      return { label: '陌生', type: 'info' }
+      return { label: '普通', type: 'info' }
+    case 'cold':
+      return { label: '冷淡', type: 'warning' }
+    case 'hostile':
+      return { label: '敌对', type: 'danger' }
     default:
       return { label: t ?? '—', type: 'info' }
   }

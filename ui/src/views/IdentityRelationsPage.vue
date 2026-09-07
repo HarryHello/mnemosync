@@ -52,7 +52,7 @@ function onSubTabChange(tab: string | number) {
       <el-tab-pane label="关系状态" name="relationships">
         <TabHeader
           title="关系状态"
-          subtitle="当前人格与各用户的亲密度、信任度及称呼演化记录。每位用户的关系独立维护，可在运行期自然演化。"
+          subtitle="当前人格与各用户的好感度及称呼演化记录。每位用户的关系独立维护，可在运行期自然演化。"
         />
         <RelationshipTab :active="activeTab === 'relationships'" />
       </el-tab-pane>

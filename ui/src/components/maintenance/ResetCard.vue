@@ -24,7 +24,7 @@ defineEmits<{
     </template>
 
     <p class="reset-desc">
-      清空所有长期记忆 (含 PERMANENT) / 关系 (亲密度 · 信任度) / 短期对话流水 / 向量库,
+      清空所有长期记忆 (含 PERMANENT) / 关系 (好感度) / 短期对话流水 / 向量库,
       回到"新装"语义。<b>不会</b>动 API Key / 服务商 / 提示词 / 模型绑定 / 管理员账户。
       删除后不可恢复; 与 Reindex 互斥 (进行中会 409)。
     </p>
