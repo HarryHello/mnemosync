@@ -284,6 +284,31 @@ def test_get_relationship_alpha_fallback_normal():
     assert get_relationship_alpha("sensitive").alpha_down == 0.8
 
 
+def test_load_settings_passes_relationship_alpha(tmp_path, monkeypatch):
+    """回归 (v0.4.1): load_settings 曾在最终 Settings 漏传 relationship_alpha,
+    config.local.toml 里的自定义预设被解析后静默丢弃."""
+    import src.core.config as config_mod
+
+    cfg = tmp_path / "config.local.toml"
+    cfg.write_text(
+        "[relationship_alpha]\n"
+        "[[relationship_alpha.presets]]\n"
+        'id = "custom"\n'
+        'label = "自定义"\n'
+        "alpha_up = 0.3\n"
+        "alpha_down = 0.6\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_mod, "LOCAL_CONFIG_PATH", cfg)
+    _reset_settings()
+    try:
+        alphas = config_mod.load_settings().relationship_alpha
+        assert alphas["custom"].alpha_up == 0.3
+        assert alphas["custom"].alpha_down == 0.6
+    finally:
+        _reset_settings()
+
+
 # ─── 4. 锚点写路径触发条件 ──────────────────────────────────────────
 
 async def test_anchor_written_when_strong_negative(tmp_path):

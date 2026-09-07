@@ -475,6 +475,7 @@ def load_settings() -> Settings:
         memory=settings.memory,
         graph=settings.graph,
         runtime=settings.runtime,
+        relationship_alpha=settings.relationship_alpha,
     )
 
 
