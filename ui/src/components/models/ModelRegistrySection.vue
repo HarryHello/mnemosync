@@ -510,12 +510,12 @@ watch(
         </div>
       </div>
       <el-table :data="models" size="small" border>
-        <el-table-column prop="model" label="模型名" min-width="140">
+        <el-table-column prop="model" label="模型名" min-width="140" show-overflow-tooltip>
           <template #default="{ row }: { row: ModelRegistryItem }">
             <span class="mono">{{ row.model }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="display_name" label="显示名" min-width="150">
+        <el-table-column prop="display_name" label="显示名" min-width="150" show-overflow-tooltip>
           <template #default="{ row }: { row: ModelRegistryItem }">
             {{ row.display_name || '—' }}
           </template>
@@ -528,7 +528,7 @@ watch(
             <span v-if="row.embedding_dim" class="caps muted">· {{ row.embedding_dim }}d</span>
           </template>
         </el-table-column>
-        <el-table-column label="并发" width="150">
+        <el-table-column label="并发" width="110">
           <template #default="{ row }: { row: ModelRegistryItem }">
             <el-input-number
               :model-value="row.concurrency"
@@ -540,7 +540,7 @@ watch(
             />
           </template>
         </el-table-column>
-        <el-table-column label="启用" width="80">
+        <el-table-column label="启用" width="70" align="center">
           <template #default="{ row }: { row: ModelRegistryItem }">
             <el-switch
               :model-value="row.enabled"
@@ -548,7 +548,7 @@ watch(
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="110" fixed="right">
           <template #default="{ row }: { row: ModelRegistryItem }">
             <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
             <el-button link type="danger" size="small" @click="removeModel(row)">删除</el-button>
