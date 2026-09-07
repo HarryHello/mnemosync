@@ -247,27 +247,53 @@ async function setConcurrency(item: ModelRegistryItem, value: number) {
   }
 }
 
-async function editLimits(item: ModelRegistryItem) {
-  // 简单行内能力编辑: 输入/输出上限
+function openEdit(item: ModelRegistryItem) {
+  // 编辑对话框: 显示名 / 上限 / 并发 / 能力 一次改完
+  editForm.id = item.id
+  editForm.model = item.model
+  editForm.display_name = item.display_name || ''
+  editForm.input_limit = formatTokenLimit(item.context_length)
+  editForm.output_limit = formatTokenLimit(item.output_limit)
+  editForm.concurrency = item.concurrency
+  editForm.capabilities = [
+    ...(item.input_modalities?.length ? item.input_modalities : ['text']),
+    ...(item.supports_tools ? ['tools'] : []),
+  ]
+  editVisible.value = true
+}
+
+async function saveEdit() {
+  const il = parseTokenLimit(editForm.input_limit)
+  const ol = parseTokenLimit(editForm.output_limit)
+  if (editForm.input_limit.trim() && il === null) {
+    ElMessage.warning('输入上限格式无效 (如 128K / 8M / 131072)')
+    return
+  }
+  if (editForm.output_limit.trim() && ol === null) {
+    ElMessage.warning('输出上限格式无效 (如 8K / 0.5M)')
+    return
+  }
+  const mods = editForm.capabilities.filter((c) => c !== 'tools')
+  saving.value = true
   try {
-    const { value: res } = await ElMessageBox.prompt(
-      '输入上限与输出上限 (K/M, 逗号分隔; 空保留原值)\n当前: '
-        + formatTokenLimit(item.context_length) + ' / ' + formatTokenLimit(item.output_limit),
-      '编辑 \u201c' + (item.display_name || item.model) + '\u201d 上限',
-      {
-        inputValue: formatTokenLimit(item.context_length) + ',' + formatTokenLimit(item.output_limit),
-        inputPlaceholder: '如 128K,8K',
-      },
-    )
-    const [il, ol] = res.split(/[,，]/).map((s) => s.trim())
-    await updateRegistryModel(item.id, {
-      context_length: il ? parseTokenLimit(il) : null,
-      output_limit: ol ? parseTokenLimit(ol) : null,
+    await updateRegistryModel(editForm.id, {
+      // 留空显示名 → 后端 clear, 回落默认 {service}/{model}
+      display_name: editForm.display_name.trim(),
+      // 留空上限 → null → 后端清除
+      context_length: il,
+      output_limit: ol,
+      concurrency: editForm.concurrency,
+      // 模态至少保留 text; tools 归属 supports_tools
+      input_modalities: mods.length ? mods : ['text'],
+      supports_tools: editForm.capabilities.includes('tools'),
     })
     ElMessage.success('已更新')
+    editVisible.value = false
     await reload()
-  } catch {
-    /* 取消 */
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    saving.value = false
   }
 }
 
@@ -322,6 +348,18 @@ async function importFromUpstream() {
 }
 
 const isCreateMode = () => !props.serviceId
+
+// ── 编辑对话框 ──────────────────────────────────────────────────────────────
+const editVisible = ref(false)
+const editForm = reactive({
+  id: '',
+  model: '',
+  display_name: '',
+  input_limit: '',
+  output_limit: '',
+  concurrency: DEFAULT_CONCURRENCY,
+  capabilities: ['text'] as string[],
+})
 
 onMounted(() => {
   if (props.serviceId) reload()
@@ -490,13 +528,14 @@ watch(
             <span v-if="row.embedding_dim" class="caps muted">· {{ row.embedding_dim }}d</span>
           </template>
         </el-table-column>
-        <el-table-column label="并发" width="120">
+        <el-table-column label="并发" width="150">
           <template #default="{ row }: { row: ModelRegistryItem }">
             <el-input-number
               :model-value="row.concurrency"
               :min="0"
               size="small"
               controls-position="right"
+              style="width: 100%"
               @change="(v: number) => setConcurrency(row, v)"
             />
           </template>
@@ -511,12 +550,45 @@ watch(
         </el-table-column>
         <el-table-column label="操作" width="120">
           <template #default="{ row }: { row: ModelRegistryItem }">
-            <el-button link type="primary" size="small" @click="editLimits(row)">上限</el-button>
+            <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
             <el-button link type="danger" size="small" @click="removeModel(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
       <el-empty v-if="!models.length" description="该服务尚未注册模型" :image-size="60" />
+
+      <!-- 编辑对话框: 显示名 / 上限 / 并发 / 能力 -->
+      <el-dialog v-model="editVisible" title="编辑模型" width="440px">
+        <el-form label-width="90px" size="small">
+          <el-form-item label="模型名">
+            <span class="mono">{{ editForm.model }}</span>
+          </el-form-item>
+          <el-form-item label="显示名">
+            <el-input v-model="editForm.display_name" placeholder="默认 服务商/模型 (留空恢复默认)" />
+          </el-form-item>
+          <el-form-item label="输入上限">
+            <el-input v-model="editForm.input_limit" placeholder="如 128K / 1M / 131072, 留空清除" />
+          </el-form-item>
+          <el-form-item label="输出上限">
+            <el-input v-model="editForm.output_limit" placeholder="如 8K / 0.5M, 留空清除" />
+          </el-form-item>
+          <el-form-item label="并发">
+            <el-input-number v-model="editForm.concurrency" :min="0" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="能力">
+            <el-select v-model="editForm.capabilities" multiple style="width: 100%">
+              <el-option label="文本" value="text" />
+              <el-option label="图片" value="image" />
+              <el-option label="音频" value="audio" />
+              <el-option label="工具调用" value="tools" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="editVisible = false">取消</el-button>
+          <el-button type="primary" :loading="saving" @click="saveEdit">保存</el-button>
+        </template>
+      </el-dialog>
     </template>
   </div>
 </template>
