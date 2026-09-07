@@ -180,8 +180,8 @@ export interface InteractionListResponse {
 
 export interface RelationshipIdentityAccount {
   actor_id: string
-  frontend: string
-  external_key: string
+  frontend: string | null
+  external_key: string | null
   display_name: string | null
 }
 
@@ -196,7 +196,7 @@ export interface Relationship {
   user_id: string
   identity: RelationshipIdentity | null
   favor: number
-  relationship_type: string | null
+  relationship_type: string
   notes: string | null
   updated_at: string
   persona_addressing: string
@@ -206,18 +206,17 @@ export interface Relationship {
 
 export interface RelationshipAuditEntry {
   id: number
-  persona_id: string
-  user_id: string
   changed_at: string
   source: 'agent' | 'manual'
   field_name: 'persona_addressing' | 'user_addressing' | 'context'
   old_value: string | null
   new_value: string | null
-  reason: string
+  reason: string | null
 }
 
 export interface RelationshipAuditListResponse {
   items: RelationshipAuditEntry[]
+  total: number
 }
 
 export interface RelationshipUpdateBody {
@@ -226,6 +225,7 @@ export interface RelationshipUpdateBody {
   context?: string | null
   reason: string
   user_id?: string
+  actor_id?: string
 }
 
 /** v0.3.0: 多用户关系列表 (分页 + 排序). */

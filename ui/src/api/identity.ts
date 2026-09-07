@@ -134,7 +134,6 @@ export async function bindActorToGroup(
 ): Promise<void> {
   await apiPost(
     `/admin/identity/actors/${encodeURIComponent(actorId)}/groups/${encodeURIComponent(groupId)}`,
-    { actor_id: actorId, group_id: groupId },
   )
 }
 
