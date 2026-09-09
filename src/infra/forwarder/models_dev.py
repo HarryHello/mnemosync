@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 _MODELS_DEV_URL = "https://models.dev/api.json"
 _TTL_SECONDS = 24 * 3600.0  # 能力数据低频变化, 缓存一天
 _FAILURE_RETRY_SECONDS = 300.0  # 拉取失败后 5 分钟内不打网络
-_FETCH_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+_FETCH_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 # 进程内缓存
 _cached_index: dict[str, KnownCapability] | None = None
