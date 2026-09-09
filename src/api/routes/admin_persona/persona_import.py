@@ -105,13 +105,21 @@ async def export_persona(request: Request) -> Response:
         raise HTTPException(404, "No active persona definition")
 
     import json as _json
+    from urllib.parse import quote
 
     payload = _json.dumps(defn.to_dict(), ensure_ascii=False, indent=2)
-    filename = f"{defn.name or 'persona'}.json"
+    # 人格名可能含中文: HTTP 头仅 latin-1 可编码, 直接放 filename 会 500.
+    # ASCII 兜底名 + RFC 5987 filename* (UTF-8 百分号编码) 双写.
+    raw_name = defn.name or "persona"
+    ascii_name = "".join(c for c in raw_name if c.isascii() and c.isalnum() or c in "-_ ") or "persona"
+    ascii_name = ascii_name.strip() or "persona"
+    encoded = quote(f"{raw_name}.json")
     return Response(
         content=payload,
         media_type="application/json",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_name}.json"; filename*=UTF-8\'\'{encoded}'
+            ),
         },
     )
