@@ -182,11 +182,14 @@ def _mount_static(app: "FastAPI", project_root: str) -> None:
 
 def _run_daemon(project_root: str, pid_file: str, log_file: str, cmd: list[str],
                 host: str = "", port: int = 0) -> int:
-    """以守护进程方式启动子进程, 写 PID 文件, 返回父进程退出码.
+    """以守护进程方式启动子进程, 确认存活后写 PID 文件.
 
     cmd: 子进程命令行 (sys.executable -m src.cli.cli <cmd>)
+    子进程前台分支自行写 PID 文件; 这里只等待观察启动是否夭折,
+    避免出现「提示已启动但进程秒死」的假成功 (beta.1 实测教训).
     """
     import subprocess
+    import time
 
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
     env = os.environ.copy()
@@ -203,6 +206,19 @@ def _run_daemon(project_root: str, pid_file: str, log_file: str, cmd: list[str],
         start_new_session=True,
     )
     log_fh.close()
+
+    # 等待观察: 秒级崩溃 (端口占用/迁移失败/依赖缺失) 时立刻报错并带出日志
+    time.sleep(1.5)
+    if proc.poll() is not None:
+        print(f"❌ 进程启动后立即退出 (exit={proc.returncode}), 最近日志:")
+        try:
+            with open(log_file, "rb") as f:
+                f.seek(max(0, f.seek(0, 2) - 800))
+                print(f.read().decode("utf-8", "replace"))
+        except OSError:
+            pass
+        print(f"   完整日志: {log_file}")
+        return 1
 
     os.makedirs(os.path.dirname(pid_file), exist_ok=True)
     with open(pid_file, "w") as f:
@@ -474,11 +490,28 @@ def cmd_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def _port_alive(host: str, port: int) -> bool:
+    """探测端口是否有服务监听 (PID 文件丢失时的兜底真相检查)."""
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def cmd_backend_stop(args: argparse.Namespace) -> int:
     """停止后端进程 (分离模式)."""
     project_root = get_project_root()
     pid_file = os.path.join(project_root, "data", "backend.pid")
     if not _stop_pid_file(pid_file, "后端"):
+        # PID 文件缺失/失效不代表真没跑: 端口仍通说明进程活着但失联 (beta.2 实测)
+        port = int(os.getenv("MNEMOSYNC_BACKEND_PORT", "16126"))
+        if _port_alive("127.0.0.1", port):
+            print(f"⚠️  未找到 PID 记录, 但端口 {port} 仍有后端在监听 (孤儿进程).")
+            print("    可用 `ss -tlnp | grep " + str(port) + "` 找到 PID 后手动 kill.")
+            return 1
         print("ℹ️  后端未运行")
     return 0
 
