@@ -44,6 +44,7 @@ class ModelRegistryItem(BaseModel):
     send_dimensions: bool
     concurrency: int
     enabled: bool
+    model_kind: str = "chat"
     created_at: str
     updated_at: str
 
@@ -61,6 +62,7 @@ class ModelRegistryCreateBody(BaseModel):
     send_dimensions: bool = False
     concurrency: int = Field(default=20, ge=0, description="并发上限, 0 = 不限")
     enabled: bool = True
+    model_kind: str = "chat"  # chat | embedding | rerank
 
 
 class ModelRegistryUpdateBody(BaseModel):
@@ -78,6 +80,7 @@ class ModelRegistryUpdateBody(BaseModel):
     send_dimensions: bool | None = None
     concurrency: int | None = Field(default=None, ge=0)
     enabled: bool | None = None
+    model_kind: str | None = None
 
     model_config = {"protected_namespaces": ()}
 
@@ -124,6 +127,7 @@ def _entry_to_item(e: ModelRegistryEntry) -> ModelRegistryItem:
         send_dimensions=e.send_dimensions,
         concurrency=e.concurrency,
         enabled=e.enabled,
+        model_kind=e.model_kind,
         created_at=e.created_at.isoformat(),
         updated_at=e.updated_at.isoformat(),
     )
@@ -172,6 +176,7 @@ async def create_registry_model(
         send_dimensions=body.send_dimensions,
         concurrency=body.concurrency,
         enabled=body.enabled,
+        model_kind=body.model_kind,
     )
     try:
         await store.save_model_registry(entry)
@@ -195,6 +200,7 @@ async def update_registry_model(
         "clear_display_name", "input_modalities", "output_modalities",
         "clear_context_length", "clear_output_limit", "supports_tools",
         "clear_embedding_dim", "send_dimensions", "concurrency", "enabled",
+        "model_kind",
     ):
         if key in provided:
             kwargs[key] = provided[key]

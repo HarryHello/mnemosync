@@ -196,6 +196,7 @@ class LLMServiceStore:
                     send_dimensions INTEGER NOT NULL DEFAULT 0,
                     concurrency INTEGER NOT NULL DEFAULT 20,
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    model_kind TEXT NOT NULL DEFAULT 'chat',
                     created_at TIMESTAMP NOT NULL,
                     updated_at TIMESTAMP NOT NULL,
                     UNIQUE (service_id, model),
@@ -219,6 +220,7 @@ class LLMServiceStore:
                 ("010_backfill_binding_model_id", _backfill_binding_model_id),
                 ("011_add_output_limit", add_column_if_missing("models", "output_limit", "INTEGER")),
                 ("012_add_supports_tools", add_column_if_missing("models", "supports_tools", "INTEGER NOT NULL DEFAULT 0")),
+                ("013_add_model_kind", add_column_if_missing("models", "model_kind", "TEXT NOT NULL DEFAULT 'chat'")),
             ]).apply(db)
             await db.commit()
 
@@ -359,7 +361,7 @@ class LLMServiceStore:
     _MODEL_COLUMNS = (
         "id, service_id, model, display_name, input_modalities, output_modalities, "
         "context_length, output_limit, supports_tools, embedding_dim, send_dimensions, "
-        "concurrency, enabled, created_at, updated_at"
+        "concurrency, enabled, model_kind, created_at, updated_at"
     )
 
     def _model_row_to_entry(self, row: Any) -> ModelRegistryEntry:
@@ -377,8 +379,9 @@ class LLMServiceStore:
             send_dimensions=bool(row[10]),
             concurrency=row[11] if row[11] is not None else 20,  # 0 = 不限, 不能 or 掉
             enabled=bool(row[12]),
-            created_at=self._parse_dt(row[13]),
-            updated_at=self._parse_dt(row[14]),
+            model_kind=row[13] if len(row) > 13 and row[13] else "chat",
+            created_at=self._parse_dt(row[-2]),
+            updated_at=self._parse_dt(row[-1]),
         )
 
     async def save_model_registry(self, entry: ModelRegistryEntry) -> ModelRegistryEntry:
@@ -393,8 +396,9 @@ class LLMServiceStore:
             await db.execute(
                 "INSERT INTO models (id, service_id, model, display_name, input_modalities, "
                 "output_modalities, context_length, output_limit, supports_tools, "
-                "embedding_dim, send_dimensions, concurrency, enabled, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "embedding_dim, send_dimensions, concurrency, enabled, model_kind, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "display_name = excluded.display_name, "
                 "input_modalities = excluded.input_modalities, "
@@ -406,6 +410,7 @@ class LLMServiceStore:
                 "send_dimensions = excluded.send_dimensions, "
                 "concurrency = excluded.concurrency, "
                 "enabled = excluded.enabled, "
+                "model_kind = excluded.model_kind, "
                 "updated_at = excluded.updated_at",
                 (
                     entry.id, entry.service_id, entry.model, entry.display_name,
@@ -415,6 +420,7 @@ class LLMServiceStore:
                     1 if entry.supports_tools else 0, entry.embedding_dim,
                     1 if entry.send_dimensions else 0,
                     entry.concurrency, 1 if entry.enabled else 0,
+                    entry.model_kind,
                     entry.created_at.isoformat(), entry.updated_at.isoformat(),
                 ),
             )
@@ -466,10 +472,13 @@ class LLMServiceStore:
         send_dimensions: bool | None = None,
         concurrency: int | None = None,
         enabled: bool | None = None,
+        model_kind: str | None = None,
     ) -> ModelRegistryEntry | None:
         """就地更新注册表条目. None 语义 = 不修改; clear_* 显式清空. 找不到返回 None."""
         if concurrency is not None and concurrency < 0:
             raise ValueError("concurrency 必须 >= 0 (0 = 不限)")
+        if model_kind is not None and model_kind not in ("chat", "embedding", "rerank"):
+            raise ValueError("model_kind 仅支持 chat / embedding / rerank")
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
                 f"SELECT {self._MODEL_COLUMNS} FROM models WHERE id = ?", (model_id,)
@@ -517,6 +526,9 @@ class LLMServiceStore:
             if enabled is not None:
                 sets.append("enabled = ?")
                 params.append(1 if enabled else 0)
+            if model_kind is not None:
+                sets.append("model_kind = ?")
+                params.append(model_kind)
             if sets:
                 sets.append("updated_at = ?")
                 params.append(datetime.now(UTC).isoformat())
@@ -568,8 +580,9 @@ class LLMServiceStore:
                     "INSERT OR IGNORE INTO models "
                     "(id, service_id, model, display_name, input_modalities, "
                     "output_modalities, context_length, output_limit, supports_tools, "
-                    "embedding_dim, send_dimensions, concurrency, enabled, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?)",
+                    "embedding_dim, send_dimensions, concurrency, enabled, model_kind, "
+                    "created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?, ?)",
                     (
                         mid, service_id, name, display,
                         json.dumps(entry.input_modalities),
@@ -578,6 +591,7 @@ class LLMServiceStore:
                         1 if entry.supports_tools else 0,
                         1 if entry.send_dimensions else 0,
                         entry.concurrency if entry.concurrency else 20,
+                        entry.model_kind,
                         now, now,
                     ),
                 )

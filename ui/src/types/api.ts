@@ -403,6 +403,7 @@ export interface ModelRegistryItem {
   send_dimensions: boolean
   concurrency: number
   enabled: boolean
+  model_kind: 'chat' | 'embedding' | 'rerank'
   created_at: string
   updated_at: string
 }
@@ -420,6 +421,7 @@ export interface ModelRegistryCreateBody {
   send_dimensions?: boolean
   concurrency?: number
   enabled?: boolean
+  model_kind?: 'chat' | 'embedding' | 'rerank'
 }
 
 export interface ModelRegistryUpdateBody {
@@ -437,6 +439,7 @@ export interface ModelRegistryUpdateBody {
   send_dimensions?: boolean
   concurrency?: number
   enabled?: boolean
+  model_kind?: 'chat' | 'embedding' | 'rerank'
 }
 
 export interface ModelImportItem {

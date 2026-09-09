@@ -599,7 +599,10 @@ class Forwarder:
             input_mods = [str(x) for x in im] if isinstance(im, list) else ["text"]
             output_mods = [str(x) for x in om] if isinstance(om, list) else ["text"]
             # 上游未声明能力时, models.dev 实时目录与内置静态表依次兜底
-            known = lookup_models_dev(dev_index, mid) or known_capability_for(mid)
+            # (目录按服务商 base_url 同主机优先取来源, 避免跨服务商声明串味)
+            known = lookup_models_dev(
+                dev_index, mid, base_url=str(self.config.base_url)
+            ) or known_capability_for(mid)
             if known is not None:
                 if not isinstance(cl, (int, float)) and known.context_length is not None:
                     cl = known.context_length

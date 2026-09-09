@@ -355,3 +355,31 @@ def test_slash_in_model_id_crud(app: FastAPI) -> None:
     resp = client.delete(f"/panel/admin/models/{mid}")
     assert resp.status_code == 200, resp.text
     assert client.get("/panel/admin/models?service_id=s1").json() == []
+
+
+def test_model_kind_crud(app: FastAPI) -> None:
+    """v0.4.1: model_kind (chat/embedding/rerank) 创建与更新."""
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/models",
+        json={"service_id": "s1", "model": "text-embedding-v3",
+              "model_kind": "embedding", "embedding_dim": 1024},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["model_kind"] == "embedding"
+
+    resp = client.patch(
+        "/panel/admin/models/s1:text-embedding-v3", json={"model_kind": "rerank"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["model_kind"] == "rerank"
+
+    # 非法值 400
+    resp = client.patch(
+        "/panel/admin/models/s1:text-embedding-v3", json={"model_kind": "bogus"}
+    )
+    assert resp.status_code == 400
+
+    # 默认 chat
+    resp = client.post("/panel/admin/models", json={"service_id": "s1", "model": "m2"})
+    assert resp.json()["model_kind"] == "chat"
