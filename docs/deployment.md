@@ -153,7 +153,19 @@ cd ..
 
 ```bash
 uv run mnemosync init
-uv run mnemosync serve                    # 前台
+```
+
+**前后端分离模式 (v0.4+ 推荐)**: 面板进程是唯一入口 (16125), 静态文件 + 登录 + 后端管理 + 反代; 后端进程 (16126) 承接 API。仪表盘可一键启停后端。
+
+```bash
+uv run mnemosync panel                     # 面板进程, 仪表盘一键启动后端
+# 或手动: uv run mnemosync backend --daemon
+```
+
+**单进程模式** (面板与 API 同端口, 轻量/调试场景):
+
+```bash
+uv run mnemosync serve                     # 前台
 uv run mnemosync serve --daemon           # 后台
 uv run mnemosync serve --debug            # 打印所有上游 HTTP 请求/响应
 uv run mnemosync serve --host 127.0.0.1 --port 16126 --log-level debug
