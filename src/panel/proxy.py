@@ -36,6 +36,10 @@ async def proxy_request(request: Request, path: str) -> Response:
         path: 待转发路径 (不含前导 /, 如 "v1/chat/completions")
     """
     url = f"{BACKEND_BASE}/{path}"
+    # query string 必须透传: 分离模式下 service_id/分页/筛选等全靠它
+    # (beta.7 实测: 丢失导致服务商模型列表永远返回全部)
+    if request.url.query:
+        url += "?" + request.url.query
     headers = {
         k: v for k, v in request.headers.items()
         if k.lower() in _FORWARD_HEADERS
