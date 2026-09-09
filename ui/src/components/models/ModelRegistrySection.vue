@@ -248,13 +248,14 @@ async function setConcurrency(item: ModelRegistryItem, value: number) {
 }
 
 function openEdit(item: ModelRegistryItem) {
-  // 编辑对话框: 显示名 / 上限 / 并发 / 能力 一次改完
+  // 编辑对话框: 显示名 / 上限 / 并发 / 嵌入维度 / 能力 一次改完
   editForm.id = item.id
   editForm.model = item.model
   editForm.display_name = item.display_name || ''
   editForm.input_limit = formatTokenLimit(item.context_length)
   editForm.output_limit = formatTokenLimit(item.output_limit)
   editForm.concurrency = item.concurrency
+  editForm.embedding_dim = item.embedding_dim
   editForm.capabilities = [
     ...(item.input_modalities?.length ? item.input_modalities : ['text']),
     ...(item.supports_tools ? ['tools'] : []),
@@ -283,6 +284,7 @@ async function saveEdit() {
       context_length: il,
       output_limit: ol,
       concurrency: editForm.concurrency,
+      embedding_dim: editForm.embedding_dim,
       // 模态至少保留 text; tools 归属 supports_tools
       input_modalities: mods.length ? mods : ['text'],
       supports_tools: editForm.capabilities.includes('tools'),
@@ -358,6 +360,7 @@ const editForm = reactive({
   input_limit: '',
   output_limit: '',
   concurrency: DEFAULT_CONCURRENCY,
+  embedding_dim: null as number | null,
   capabilities: ['text'] as string[],
 })
 
@@ -574,6 +577,15 @@ watch(
           </el-form-item>
           <el-form-item label="并发">
             <el-input-number v-model="editForm.concurrency" :min="0" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="嵌入维度">
+            <el-input-number
+              v-model="editForm.embedding_dim"
+              :min="1"
+              :max="65536"
+              placeholder="嵌入模型必填 (如 1024), 可空"
+              style="width: 100%"
+            />
           </el-form-item>
           <el-form-item label="能力">
             <el-select v-model="editForm.capabilities" multiple style="width: 100%">

@@ -330,3 +330,28 @@ def test_import_default_display_name(app: FastAPI) -> None:
     assert by_model["deepseek-chat"]["concurrency"] == 20
     assert by_model["deepseek-chat"]["output_limit"] is None
 
+
+
+def test_slash_in_model_id_crud(app: FastAPI) -> None:
+    """回归 (v0.4.1-beta.1): 模型名含 '/' (OpenRouter 形态) 时 CRUD 曾 404.
+
+    路由参数默认 converter 不匹配斜杠, 列表能显示但 PATCH/DELETE 寻址失败.
+    """
+    client = TestClient(app)
+    resp = client.post(
+        "/panel/admin/models",
+        json={"service_id": "s1", "model": "deepseek/deepseek-v4-flash"},
+    )
+    assert resp.status_code == 200, resp.text
+    mid = resp.json()["id"]
+    assert mid == "s1:deepseek/deepseek-v4-flash"
+
+    resp = client.patch(
+        f"/panel/admin/models/{mid}", json={"display_name": "DS V4 Flash"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["display_name"] == "DS V4 Flash"
+
+    resp = client.delete(f"/panel/admin/models/{mid}")
+    assert resp.status_code == 200, resp.text
+    assert client.get("/panel/admin/models?service_id=s1").json() == []

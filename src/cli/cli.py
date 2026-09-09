@@ -648,11 +648,19 @@ Mnemosync CLI
 用法: mnemosync <command> [options]
 
 服务管理:
-  serve               前台启动服务
+  serve               前台启动服务 (单进程: 面板 + API 同端口)
   serve -d            后台启动服务
   serve --port 16125  指定端口
   serve --host 0.0.0.0  指定监听地址
   stop                停止服务
+  restart             重启服务
+
+前后端分离模式 (v0.4.x):
+  panel               面板进程 (端口 16125, 承接 UI 静态文件 + 反代后端)
+  backend             后端服务进程 (端口 16126, 承接 /panel/admin/* 与 /v1/*)
+  backend --daemon    后台启动后端进程
+  backend-stop        停止后端进程
+  面板「设置」页可就地启停后端; 单机建议直接用 serve 即可.
 
 初始化:
   init                初始化数据库（本地模式）

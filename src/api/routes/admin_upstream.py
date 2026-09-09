@@ -184,7 +184,7 @@ async def create_upstream_service(
     return await _service_to_response(service, store)
 
 
-@router.get("/upstream/services/{service_id}", response_model=UpstreamServiceResponse)
+@router.get("/upstream/services/{service_id:path}", response_model=UpstreamServiceResponse)
 async def get_upstream_service(
     service_id: str,
     store: LLMServiceStore = Depends(get_llm_service_store),
@@ -196,7 +196,7 @@ async def get_upstream_service(
     return await _service_to_response(service, store)
 
 
-@router.patch("/upstream/services/{service_id}", response_model=UpstreamServiceResponse)
+@router.patch("/upstream/services/{service_id:path}", response_model=UpstreamServiceResponse)
 async def update_upstream_service(
     service_id: str,
     body: UpstreamServiceUpdateBody,
@@ -234,7 +234,7 @@ async def update_upstream_service(
     return await _service_to_response(updated, store)
 
 
-@router.delete("/upstream/services/{service_id}")
+@router.delete("/upstream/services/{service_id:path}")
 async def delete_upstream_service(
     service_id: str,
     store: LLMServiceStore = Depends(get_llm_service_store),
@@ -247,7 +247,7 @@ async def delete_upstream_service(
 
 
 @router.post(
-    "/upstream/services/{service_id}/models", response_model=UpstreamServiceResponse
+    "/upstream/services/{service_id:path}/models", response_model=UpstreamServiceResponse
 )
 async def set_upstream_model(
     service_id: str,
@@ -276,7 +276,7 @@ async def set_upstream_model(
 
 
 @router.get(
-    "/upstream/services/{service_id}/available-models",
+    "/upstream/services/{service_id:path}/available-models",
     response_model=UpstreamModelListResponse,
 )
 async def list_upstream_available_models(

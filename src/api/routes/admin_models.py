@@ -180,7 +180,9 @@ async def create_registry_model(
     return _entry_to_item(entry)
 
 
-@router.patch("/models/{model_id}", response_model=ModelRegistryItem)
+# {model_id:path}: 注册表 id 形如 {service}:{model}, 模型名可含 '/'
+# (OpenRouter 形态 deepseek/deepseek-v4-flash), 默认 converter 不匹配斜杠会 404.
+@router.patch("/models/{model_id:path}", response_model=ModelRegistryItem)
 async def update_registry_model(
     model_id: str,
     body: ModelRegistryUpdateBody,
@@ -230,7 +232,7 @@ async def update_registry_model(
     return _entry_to_item(entry)
 
 
-@router.delete("/models/{model_id}")
+@router.delete("/models/{model_id:path}")
 async def delete_registry_model(
     model_id: str,
     store: LLMServiceStore = Depends(get_llm_service_store),
