@@ -127,6 +127,7 @@ class ModelRegistryEntry:
     send_dimensions: bool = False
     concurrency: int = 20
     enabled: bool = True
+    model_kind: str = "chat"  # v0.4.1: chat | embedding | rerank (面板展示/绑定过滤用)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -146,6 +147,7 @@ class ModelRegistryEntry:
         send_dimensions: bool = False,
         concurrency: int = 20,
         enabled: bool = True,
+        model_kind: str = "chat",
     ) -> ModelRegistryEntry:
         now = datetime.now(UTC)
         return cls(
@@ -162,6 +164,7 @@ class ModelRegistryEntry:
             send_dimensions=send_dimensions,
             concurrency=concurrency,
             enabled=enabled,
+            model_kind=model_kind if model_kind in ("chat", "embedding", "rerank") else "chat",
             created_at=now,
             updated_at=now,
         )

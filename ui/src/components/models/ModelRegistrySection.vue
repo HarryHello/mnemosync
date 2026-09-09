@@ -119,6 +119,7 @@ const addForm = reactive({
   output_limit: '',
   concurrency: DEFAULT_CONCURRENCY,
   capabilities: ['text'] as string[],
+  model_kind: 'chat' as 'chat' | 'embedding' | 'rerank',
 })
 
 function defaultDisplay(model: string): string {
@@ -133,6 +134,7 @@ function clearAddForm() {
   addForm.output_limit = ''
   addForm.concurrency = DEFAULT_CONCURRENCY
   addForm.capabilities = ['text']
+  addForm.model_kind = 'chat'
 }
 
 async function reload() {
@@ -215,6 +217,7 @@ async function submitAdd() {
       // 能力合并: tools 归属 supports_tools, 其余为输入模态
       supports_tools: addForm.capabilities.includes('tools'),
       input_modalities: addForm.capabilities.filter((c) => c !== 'tools'),
+      model_kind: addForm.model_kind,
     })
     ElMessage.success('已注册')
     clearAddForm()
@@ -256,6 +259,7 @@ function openEdit(item: ModelRegistryItem) {
   editForm.output_limit = formatTokenLimit(item.output_limit)
   editForm.concurrency = item.concurrency
   editForm.embedding_dim = item.embedding_dim
+  editForm.model_kind = item.model_kind ?? 'chat'
   editForm.capabilities = [
     ...(item.input_modalities?.length ? item.input_modalities : ['text']),
     ...(item.supports_tools ? ['tools'] : []),
@@ -285,6 +289,7 @@ async function saveEdit() {
       output_limit: ol,
       concurrency: editForm.concurrency,
       embedding_dim: editForm.embedding_dim,
+      model_kind: editForm.model_kind,
       // 模态至少保留 text; tools 归属 supports_tools
       input_modalities: mods.length ? mods : ['text'],
       supports_tools: editForm.capabilities.includes('tools'),
@@ -351,6 +356,22 @@ async function importFromUpstream() {
 
 const isCreateMode = () => !props.serviceId
 
+const KIND_LABELS: Record<string, string> = {
+  chat: '聊天',
+  embedding: '嵌入',
+  rerank: '重排',
+}
+
+function kindLabel(kind: string | null | undefined): string {
+  return KIND_LABELS[kind ?? 'chat'] ?? (kind ?? '聊天')
+}
+
+function kindTag(kind: string | null | undefined): 'primary' | 'success' | 'warning' {
+  if (kind === 'embedding') return 'success'
+  if (kind === 'rerank') return 'warning'
+  return 'primary'
+}
+
 // ── 编辑对话框 ──────────────────────────────────────────────────────────────
 const editVisible = ref(false)
 const editForm = reactive({
@@ -362,6 +383,7 @@ const editForm = reactive({
   concurrency: DEFAULT_CONCURRENCY,
   embedding_dim: null as number | null,
   capabilities: ['text'] as string[],
+  model_kind: 'chat' as 'chat' | 'embedding' | 'rerank',
 })
 
 onMounted(() => {
@@ -370,11 +392,15 @@ onMounted(() => {
 
 watch(
   () => props.serviceId,
-  (id) => {
+  (id, old) => {
+    if (id !== old) {
+      // 切换服务商: 上游拉取列表与未提交表单都不得跨服务商残留 (beta.6 实测)
+      availableModels.value = []
+      upstreamDetails.value = {}
+      clearAddForm()
+    }
     if (id) {
       reload()
-    } else {
-      availableModels.value = []
     }
   },
 )
@@ -451,6 +477,8 @@ watch(
             <el-option label="文本" value="text" />
             <el-option label="图片" value="image" />
             <el-option label="音频" value="audio" />
+            <el-option label="视频" value="video" />
+            <el-option label="PDF" value="pdf" />
             <el-option label="工具调用" value="tools" />
           </el-select>
         </div>
@@ -498,6 +526,11 @@ watch(
             placeholder="并发 0 不限"
             style="width: 110px"
           />
+          <el-select v-model="addForm.model_kind" style="width: 100px">
+            <el-option label="聊天" value="chat" />
+            <el-option label="嵌入" value="embedding" />
+            <el-option label="重排" value="rerank" />
+          </el-select>
           <el-select
             v-model="addForm.capabilities"
             multiple
@@ -507,6 +540,8 @@ watch(
             <el-option label="文本" value="text" />
             <el-option label="图片" value="image" />
             <el-option label="音频" value="audio" />
+            <el-option label="视频" value="video" />
+            <el-option label="PDF" value="pdf" />
             <el-option label="工具调用" value="tools" />
           </el-select>
           <el-button type="primary" :loading="saving" @click="submitAdd">注册</el-button>
@@ -521,6 +556,13 @@ watch(
         <el-table-column prop="display_name" label="显示名" min-width="150" show-overflow-tooltip>
           <template #default="{ row }: { row: ModelRegistryItem }">
             {{ row.display_name || '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="76">
+          <template #default="{ row }: { row: ModelRegistryItem }">
+            <el-tag size="small" :type="kindTag(row.model_kind)">
+              {{ kindLabel(row.model_kind) }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="能力" min-width="180">
@@ -587,11 +629,20 @@ watch(
               style="width: 100%"
             />
           </el-form-item>
+          <el-form-item label="类型">
+            <el-radio-group v-model="editForm.model_kind">
+              <el-radio-button value="chat">聊天</el-radio-button>
+              <el-radio-button value="embedding">嵌入</el-radio-button>
+              <el-radio-button value="rerank">重排</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
           <el-form-item label="能力">
             <el-select v-model="editForm.capabilities" multiple style="width: 100%">
               <el-option label="文本" value="text" />
               <el-option label="图片" value="image" />
               <el-option label="音频" value="audio" />
+              <el-option label="视频" value="video" />
+              <el-option label="PDF" value="pdf" />
               <el-option label="工具调用" value="tools" />
             </el-select>
           </el-form-item>

@@ -30,6 +30,28 @@ def _reset_cache() -> None:
 
 # ── api.json 样例 (简化自真实结构) ──────────────────────────────────────────
 _SAMPLE: dict = {
+    "digitalocean": {
+        "id": "digitalocean",
+        "api": "https://inference.do-ai.run/v1",
+        "models": {
+            "glm-5.3-flash": {
+                "tool_call": True,
+                "limit": {"context": 1048576, "output": 1048576},
+                "modalities": {"input": ["text", "image", "video"], "output": ["text"]},
+            },
+        },
+    },
+    "zhipuai": {
+        "id": "zhipuai",
+        "api": "https://open.bigmodel.cn/api/paas/v4",
+        "models": {
+            "glm-5.3-flash": {
+                "tool_call": True,
+                "limit": {"context": 1000000, "output": 131072},
+                "modalities": {"input": ["text", "image", "video", "pdf"], "output": ["text"]},
+            },
+        },
+    },
     "deepseek": {
         "id": "deepseek",
         "models": {
@@ -63,6 +85,7 @@ class TestBuildIndex:
     def test_flattens_providers(self) -> None:
         idx = build_models_dev_index(_SAMPLE)
         assert set(idx) == {
+            "glm-5.3-flash",
             "deepseek-v4-flash",
             "deepseek-v4-flash-vision-exp",
             "deepseek/deepseek-v4-flash",
@@ -70,7 +93,7 @@ class TestBuildIndex:
 
     def test_capability_mapping(self) -> None:
         idx = build_models_dev_index(_SAMPLE)
-        cap = idx["deepseek-v4-flash-vision-exp"]
+        cap = idx["deepseek-v4-flash-vision-exp"][0].cap
         assert cap.context_length == 65536
         assert cap.output_limit == 8192
         assert cap.supports_tools is True
@@ -80,7 +103,7 @@ class TestBuildIndex:
         idx = build_models_dev_index({
             "p": {"models": {"m1": {"tool_call": False}}},
         })
-        cap = idx["m1"]
+        cap = idx["m1"][0].cap
         assert cap.context_length is None
         assert cap.output_limit is None
         assert cap.supports_tools is False
@@ -93,8 +116,8 @@ class TestBuildIndex:
                 "m2": "not-a-dict",
             }},
         })
-        assert idx["m1"].context_length is None
-        assert idx["m1"].output_limit is None
+        assert idx["m1"][0].cap.context_length is None
+        assert idx["m1"][0].cap.output_limit is None
         assert "m2" not in idx
 
 
@@ -105,6 +128,24 @@ class TestLookup:
         assert lookup_models_dev(idx, "deepseek/deepseek-v4-flash") is not None
         # 命名空间前缀去除后命中官方条目
         assert lookup_models_dev(idx, "other/deepseek-v4-flash") is not None
+
+    def test_base_url_prefers_matching_provider(self) -> None:
+        """回归 (beta.6): 同 id 多服务商声明不一, 按 base_url 同主机优先取来源.
+
+        glm-5.3-flash: digitalocean 声明 output 1M, zhipuai (BigModel 同主机)
+        声明 output 128K — BigModel 服务商必须取到 128K.
+        """
+        idx = build_models_dev_index(_SAMPLE)
+        cap = lookup_models_dev(
+            idx, "glm-5.3-flash", base_url="https://open.bigmodel.cn/api/paas/v4"
+        )
+        assert cap is not None
+        assert cap.output_limit == 131072
+        assert cap.input_modalities == ("text", "image", "video", "pdf")
+        # 无 base_url 时回退首个来源 (digitalocean)
+        cap2 = lookup_models_dev(idx, "glm-5.3-flash")
+        assert cap2 is not None
+        assert cap2.output_limit == 1048576
 
     def test_miss(self) -> None:
         idx = build_models_dev_index(_SAMPLE)
@@ -146,7 +187,7 @@ class TestFetch:
         with patch.object(models_dev.httpx, "AsyncClient", lambda **kw: _FakeClient(_FakeResp(_SAMPLE))):
             idx1 = asyncio.run(fetch_models_dev_index())
             idx2 = asyncio.run(fetch_models_dev_index())
-        assert idx1 is not None and len(idx1) == 3
+        assert idx1 is not None and len(idx1) == 4
         assert idx2 is idx1  # TTL 内复用缓存, 不打网络
 
     def test_http_failure_short_circuits(self) -> None:
@@ -183,7 +224,9 @@ class TestFetch:
 
 # ── forwarder 兜底链集成 ────────────────────────────────────────────────────
 
-def _detail_with_dev(model: SimpleNamespace, dev_index: dict | None) -> object:
+def _detail_with_dev(
+    model: SimpleNamespace, dev_index: dict | None, base_url: str = "https://x"
+) -> object:
     """mock openai client + 注入 dev_index 拉一次 list_model_details."""
     from src.infra.forwarder.forwarder import Forwarder, ForwarderConfig
 
@@ -197,7 +240,7 @@ def _detail_with_dev(model: SimpleNamespace, dev_index: dict | None) -> object:
         client = AsyncMock()
         client.models.list = AsyncMock(return_value=SimpleNamespace(data=[model]))
         mock_get.return_value = client
-        fwd = Forwarder(ForwarderConfig(base_url="https://x", api_key="k"))
+        fwd = Forwarder(ForwarderConfig(base_url=base_url, api_key="k"))
         return asyncio.run(fwd.list_model_details())[0]
 
 
@@ -231,6 +274,15 @@ class TestFallbackChain:
         dev = build_models_dev_index(_SAMPLE)
         d = _detail_with_dev(_model(id="deepseek-unknown-x"), dev)
         assert d.context_length == 65536
+
+    def test_forwarder_base_url_selects_provider(self) -> None:
+        """list_model_details 按 base_url 同主机取 models.dev 来源 (端到端)."""
+        dev = build_models_dev_index(_SAMPLE)
+        d = _detail_with_dev(
+            _model(id="glm-5.3-flash"), dev, base_url="https://open.bigmodel.cn/api/paas/v4"
+        )
+        assert d.output_limit == 131072
+        assert d.input_modalities == ["text", "image", "video", "pdf"]
 
     def test_upstream_declaration_wins_over_dev(self) -> None:
         """上游显式声明始终优先."""

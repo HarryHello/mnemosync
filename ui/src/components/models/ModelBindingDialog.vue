@@ -60,6 +60,18 @@ const priorityCap = computed(() => props.bindings[form.role]?.length ?? 0)
 const isEmbeddingForm = computed(() => form.role === 'embedding')
 const showPriorityField = computed(() => mode.value === 'add' && !isEmbeddingForm.value)
 
+// 按角色类型过滤候选: 嵌入/重排角色只出对应 kind 的模型 (空则回退全部并提示)
+const modelOptions = computed<ModelRegistryItem[]>(() => {
+  const want = form.role === 'embedding' ? 'embedding' : form.role === 'rerank' ? 'rerank' : 'chat'
+  const matched = props.models.filter((m) => (m.model_kind ?? 'chat') === want)
+  return matched.length ? matched : props.models
+})
+
+const kindFallback = computed<boolean>(() => {
+  const want = form.role === 'embedding' ? 'embedding' : form.role === 'rerank' ? 'rerank' : 'chat'
+  return props.models.length > 0 && !props.models.some((m) => (m.model_kind ?? 'chat') === want)
+})
+
 // 当前选中模型 (只读能力展示)
 const selectedModel = computed<ModelRegistryItem | null>(() => {
   return props.models.find((m) => m.id === form.model_id) ?? null
@@ -134,7 +146,8 @@ async function onProbeDim() {
 
 function modelLabel(m: ModelRegistryItem): string {
   const name = m.display_name || m.model
-  return `${name} (${m.service_id})`
+  const kind = m.model_kind === 'embedding' ? ' · 嵌入' : m.model_kind === 'rerank' ? ' · 重排' : ''
+  return `${name} (${m.service_id}${kind})`
 }
 
 function fmtLimit(n: number | null | undefined): string {
@@ -219,12 +232,15 @@ async function onSubmit() {
           style="width: 100%"
         >
           <el-option
-            v-for="m in models"
+            v-for="m in modelOptions"
             :key="m.id"
             :label="modelLabel(m)"
             :value="m.id"
           />
         </el-select>
+        <div v-if="kindFallback" class="hint hint-warn">
+          当前没有标记为对应类型的模型, 已显示全部; 可在『上游 API → 模型配置』编辑对话框中调整类型。
+        </div>
         <div class="hint">
           从『上游 API → 模型配置 / 模型注册表』添加模型。能力字段 (模态/上下文) 随注册表。
         </div>
@@ -300,6 +316,10 @@ async function onSubmit() {
   font-size: 12px;
   line-height: 1.4;
   color: var(--el-text-color-secondary);
+}
+
+.hint-warn {
+  color: var(--el-color-warning);
 }
 
 .hint-inline {
