@@ -286,24 +286,24 @@ docker cp $(docker compose ps -q mnemosync):/tmp/backup.tar.gz ./
 
 ## 8. 升级
 
-### 8.1 一键升级 (推荐)
+### 8.1 一键升级 (推荐: 与安装同一条命令)
 
-`mnemosync upgrade` 委托目标分支的**远程 install.sh** 执行，自动带版本守卫 / 镜像切换 / 分支切换 / UI 下载，无需本地编译前端：
+更新与安装使用**同一个 install.sh**——重跑安装命令即可，脚本检测已有安装后原地升级（自动带版本守卫 / 镜像切换 / 分支切换 / UI 下载，无需本地编译前端）：
+
+```bash
+# 正式版 (main)
+curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
+# 预发布 (beta) — 自动拉 preview pre-release 的 UI
+curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.sh | sh
+```
+
+等价便捷方式 `mnemosync upgrade`（委托目标分支的**远程 install.sh** 执行）：
 
 ```bash
 mnemosync upgrade                       # 升级到当前分支最新
 mnemosync upgrade --version v0.4.0      # 升级到指定版本
 mnemosync upgrade --branch dev          # 切到 dev 分支
 mnemosync versions                      # 列出所有可用版本及发布描述
-```
-
-也可以用安装脚本（会检测已有安装并升级）：
-
-```bash
-# 正式版 (main)
-curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/main/install.sh | sh
-# 预发布 (beta) — 无需编译前端, 自动拉 preview pre-release 的 UI
-curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.sh | sh
 ```
 
 环境变量控制：

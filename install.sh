@@ -379,6 +379,9 @@ main() {
     echo "首次使用请先编辑配置文件，填入你的 LLM 服务商 API Key。"
     echo "模型与角色绑定也可安装后直接在面板中配置。"
     echo ""
+    echo "更新: 重新运行本安装脚本即可 (与安装同一条命令, 自动原地升级);"
+    echo "      或使用 mnemosync upgrade / 面板「设置 → 版本更新」。"
+    echo ""
     echo "如需卸载: $INSTALL_DIR/uninstall.sh"
     echo ""
 }
