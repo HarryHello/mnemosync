@@ -140,7 +140,7 @@ curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.s
 
 每个分支有自己的一份 install.sh，默认安装对应分支——`curl 哪个分支的脚本就装哪个分支`。脚本自动完成：安装 uv → 克隆代码 → 安装依赖 → 下载/构建管理面板 → 初始化数据库 → 注册 `mnemosync` 命令。
 
-**逐版本升级**：`mnemosync versions` 列出版本，`mnemosync upgrade --version vX.Y.Z` 升级到指定版本。
+**更新/升级**：与安装同一条 curl 命令重跑即可（脚本检测已有安装原地升级）；已装环境也可用 `mnemosync upgrade` 或面板「设置 → 版本更新」，`upgrade --version vX.Y.Z` 支持锁定指定版本。
 
 安装完成后（v0.4+ 推荐前后端分离模式）：
 ```bash
