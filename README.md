@@ -142,10 +142,11 @@ curl -fsSL https://raw.githubusercontent.com/HarryHello/mnemosync/beta/install.s
 
 **逐版本升级**：`mnemosync versions` 列出版本，`mnemosync upgrade --version vX.Y.Z` 升级到指定版本。
 
-安装完成后：
+安装完成后（v0.4+ 推荐前后端分离模式）：
 ```bash
-mnemosync serve     # 启动服务
+mnemosync panel     # 启动面板 (16125)，仪表盘可一键启停后端
 mnemosync login     # 进入交互式 CLI
+# 轻量场景可用单进程模式: mnemosync serve
 ```
 
 配置文件位于 `~/.mnemosync/config.local.toml`，首次使用请编辑填入 LLM 服务商 API Key。
