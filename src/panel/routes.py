@@ -124,8 +124,12 @@ def _backend_log_tail(max_chars: int = 600) -> str:
         return ""
 
 
-async def _wait_backend_running(timeout_s: float = 6.0) -> bool:
-    """轮询等待后端进程存活 + /health 就绪 (启动确认)."""
+async def _wait_backend_running(timeout_s: float = 15.0) -> bool:
+    """轮询等待后端进程存活 + /health 就绪 (启动确认).
+
+    慢盘/冷启动 (迁移 + 各库连接) 可能超过 10s, 旧进程退出释放端口也有延迟,
+    beta.4 实测 6s 超时会造成「已启动却报失败」.
+    """
     import asyncio
     import time
 
@@ -135,6 +139,25 @@ async def _wait_backend_running(timeout_s: float = 6.0) -> bool:
         if status["running"] and status["health"] is not None:
             return True
         await asyncio.sleep(0.5)
+    return False
+
+
+async def _wait_backend_port_free(timeout_s: float = 8.0) -> bool:
+    """等待后端端口释放 (重启场景: 旧进程 SIGTERM 后仍可能短暂占用)."""
+    import asyncio
+    import time
+
+    port = int(os.getenv("MNEMOSYNC_BACKEND_PORT", "16126"))
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", port), timeout=0.4
+            )
+            writer.close()
+        except OSError:
+            return True  # 连不上 = 已释放
+        await asyncio.sleep(0.3)
     return False
 
 
@@ -172,10 +195,11 @@ async def backend_stop() -> dict[str, Any]:
 
 @router.post("/restart")
 async def backend_restart() -> dict[str, Any]:
-    """重启后端进程 (先停后启, 轮询确认)."""
+    """重启后端进程 (先停后启: 等端口释放再拉起, 轮询确认)."""
     from src.cli.cli import _stop_pid_file
 
     _stop_pid_file(_pid_file(), "后端")
+    await _wait_backend_port_free()
     proc = _spawn_backend()
     ok = await _wait_backend_running()
     if ok:
