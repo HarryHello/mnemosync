@@ -212,7 +212,8 @@ async function submitAdd() {
       model: name,
       display_name: addForm.display_name.trim() || defaultDisplay(name),
       context_length: cl,
-      output_limit: ol,
+      // 嵌入/重排模型没有输出上限概念, 强制清空避免存展示性脏值
+      output_limit: addForm.model_kind === 'chat' ? ol : null,
       concurrency: conv,
       // 能力合并: tools 归属 supports_tools, 其余为输入模态
       supports_tools: addForm.capabilities.includes('tools'),
@@ -286,7 +287,8 @@ async function saveEdit() {
       display_name: editForm.display_name.trim(),
       // 留空上限 → null → 后端清除
       context_length: il,
-      output_limit: ol,
+      // 嵌入/重排模型没有输出上限概念, 强制清空避免存展示性脏值
+      output_limit: editForm.model_kind === 'chat' ? ol : null,
       concurrency: editForm.concurrency,
       embedding_dim: editForm.embedding_dim,
       model_kind: editForm.model_kind,
@@ -520,7 +522,11 @@ watch(
         </div>
         <div class="row-line second-row">
           <el-input v-model="addForm.input_limit" placeholder="输入上限 128K" />
-          <el-input v-model="addForm.output_limit" placeholder="输出上限 8K" />
+          <el-input
+            v-if="addForm.model_kind === 'chat'"
+            v-model="addForm.output_limit"
+            placeholder="输出上限 8K"
+          />
           <el-input
             v-model="addForm.concurrency"
             placeholder="并发 0 不限"
@@ -569,7 +575,7 @@ watch(
           <template #default="{ row }: { row: ModelRegistryItem }">
             <span class="caps">{{ (row.input_modalities?.join('/') || 'text') + (row.supports_tools ? '/工具' : '') }}</span>
             <span v-if="row.context_length" class="caps muted">· 入 {{ formatTokenLimit(row.context_length) }}</span>
-            <span v-if="row.output_limit" class="caps muted">· 出 {{ formatTokenLimit(row.output_limit) }}</span>
+            <span v-if="row.output_limit && (row.model_kind ?? 'chat') === 'chat'" class="caps muted">· 出 {{ formatTokenLimit(row.output_limit) }}</span>
             <span v-if="row.embedding_dim" class="caps muted">· {{ row.embedding_dim }}d</span>
           </template>
         </el-table-column>
@@ -614,7 +620,7 @@ watch(
           <el-form-item label="输入上限">
             <el-input v-model="editForm.input_limit" placeholder="如 128K / 1M / 131072, 留空清除" />
           </el-form-item>
-          <el-form-item label="输出上限">
+          <el-form-item v-if="editForm.model_kind === 'chat'" label="输出上限">
             <el-input v-model="editForm.output_limit" placeholder="如 8K / 0.5M, 留空清除" />
           </el-form-item>
           <el-form-item label="并发">
