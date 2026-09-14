@@ -189,14 +189,24 @@ setup_code() {
             fi
         fi
 
-        # 拉取最新代码 (支持代理)
+        # 拉取最新代码 (支持代理, beta.17: fetch 失败自动回退直连)
         if [ -n "$GITHUB_PROXY" ]; then
             git remote set-url origin "$REPO_URL"
         fi
-        git fetch origin "$BRANCH"
+        if ! git fetch origin "$BRANCH"; then
+            warn "git fetch 经当前 remote 失败, 尝试直连 GitHub..."
+            _backup_url=$(git remote get-url origin)
+            git remote set-url origin "https://github.com/HarryHello/mnemosync.git"
+            if git fetch origin "$BRANCH"; then
+                _fetched_via_direct=1
+            else
+                git remote set-url origin "$_backup_url"
+                error "代码拉取失败 (代理与直连均不可达)"
+            fi
+        fi
         if [ -n "$MNEMOSYNC_VERSION" ]; then
             # 锁定版本: 拉取指定 tag
-            git fetch origin tag "$MNEMOSYNC_VERSION"
+            git fetch origin tag "$MNEMOSYNC_VERSION" || git fetch origin tag "$MNEMOSYNC_VERSION"
         fi
         # 版本降级检测 (只能升不能降)
         check_not_downgrade
@@ -211,7 +221,10 @@ setup_code() {
         fi
     else
         info "下载 Mnemosync..."
-        git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+        git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR" || {
+            warn "克隆失败 (经 $REPO_URL), 尝试直连 GitHub..."
+            git clone --branch "$BRANCH" "https://github.com/HarryHello/mnemosync.git" "$INSTALL_DIR"
+        }
         cd "$INSTALL_DIR"
     fi
 
@@ -256,40 +269,58 @@ install_deps() {
 setup_ui() {
     cd "$INSTALL_DIR"
 
-    # 升级时清除旧面板 (确保下载新版)
-    if [ -f "ui/dist/index.html" ]; then
-        info "更新管理面板..."
-        rm -rf ui/dist
-    fi
-
     # 锁定版本时, UI 用对应版本的 release tag
     if [ -n "$MNEMOSYNC_VERSION" ]; then
         RELEASE_TAG="$MNEMOSYNC_VERSION"
     fi
 
-    # 尝试从 release 拉取 ui-dist.tar.gz (latest 或指定 RELEASE_TAG)
     if command -v curl > /dev/null 2>&1; then
+        # ── 候选前缀: 用户代理 > 直连 > 内置镜像 (beta.17: 多路回退) ──
+        # 单路无回退时, 任一环节抖动都会导致预编译面板下载失败
+        _ui_prefixes=()
+        [ -n "$GITHUB_PROXY" ] && _ui_prefixes+=("$GITHUB_PROXY")
+        _ui_prefixes+=("" "https://gh-proxy.org/" "https://ghproxy.com/")
+
         if [ "$RELEASE_TAG" = "latest" ]; then
-            RELEASE_URL="$API_URL/releases/latest"
+            _api_path="https://api.github.com/repos/HarryHello/mnemosync/releases/latest"
         else
-            RELEASE_URL="$API_URL/releases/tags/$RELEASE_TAG"
+            _api_path="https://api.github.com/repos/HarryHello/mnemosync/releases/tags/$RELEASE_TAG"
         fi
+
         info "尝试从 GitHub Release ($RELEASE_TAG) 下载预编译面板..."
-        DIST_URL=$(curl -fsSL "$RELEASE_URL" 2>/dev/null \
-            | grep -oE '"browser_download_url":[[:space:]]*"[^"]*ui-dist\.tar\.gz"' \
-            | head -1 \
-            | cut -d'"' -f4)
+        DIST_URL=""
+        for _p in "${_ui_prefixes[@]}"; do
+            DIST_URL=$(curl -fsSL --max-time 20 "${_p}${_api_path}" 2>/dev/null \
+                | grep -oE '"browser_download_url":[[:space:]]*"[^"]*ui-dist\.tar\.gz"' \
+                | head -1 \
+                | cut -d'"' -f4)
+            [ -n "$DIST_URL" ] && break
+        done
 
         if [ -n "$DIST_URL" ]; then
-            DIST_URL="${GITHUB_PROXY}${DIST_URL}"
-            if curl -fsSL "$DIST_URL" -o /tmp/mnemosync-ui-dist.tar.gz 2>/dev/null; then
-                tar -xzf /tmp/mnemosync-ui-dist.tar.gz -C ui/
-                rm -f /tmp/mnemosync-ui-dist.tar.gz
-                if [ -f "ui/dist/index.html" ]; then
+            # 资产下载同样多路回退
+            _ui_tar="/tmp/mnemosync-ui-dist.tar.gz"
+            rm -f "$_ui_tar"
+            for _p in "${_ui_prefixes[@]}"; do
+                curl -fsSL --max-time 180 "${_p}${DIST_URL}" -o "$_ui_tar" 2>/dev/null && [ -s "$_ui_tar" ] && break
+                rm -f "$_ui_tar"
+            done
+            if [ -s "$_ui_tar" ]; then
+                # 非破坏替换: 先解压到暂存目录, 成功后才替换旧面板
+                # (beta.17 前: 先 rm 旧 ui/dist 再下载, 失败路径下面板直接消失)
+                rm -rf ui/.dist-new
+                mkdir -p ui/.dist-new
+                if tar -xzf "$_ui_tar" -C ui/.dist-new 2>/dev/null \
+                   && [ -f "ui/.dist-new/dist/index.html" ]; then
+                    rm -rf ui/dist
+                    mv ui/.dist-new/dist ui/dist
+                    rm -rf ui/.dist-new "$_ui_tar"
                     info "预编译面板下载完成 ✓"
                     return
                 fi
+                rm -rf ui/.dist-new
             fi
+            rm -f "$_ui_tar"
             warn "预编译面板下载失败, 尝试本地构建"
         else
             warn "未找到预编译面板产物, 尝试本地构建"
