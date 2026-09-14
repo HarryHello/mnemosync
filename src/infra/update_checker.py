@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from importlib.metadata import version as _get_version
 from typing import Any
 
@@ -19,15 +20,35 @@ GITHUB_RELEASES_LIST_URL = (
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
-    """解析版本号为可比较的元组 (忽略 'v' 前缀)."""
+    """解析版本号数字段为元组 (不足不补齐, 忽略 'v' 前缀与预发布后缀)."""
     v = v.lstrip("v")
-    parts = []
-    for p in v.split("."):
-        try:
-            parts.append(int(p))
-        except ValueError:
-            break
-    return tuple(parts) if parts else (0,)
+    m = re.match(r"^(\d+(?:\.\d+)*)", v.strip())
+    if not m:
+        return (0,)
+    return tuple(int(x) for x in m.group(1).split("."))
+
+
+def _version_key(v: str) -> tuple[tuple[int, ...], tuple[tuple[int | str, ...], ...]]:
+    """完整 semver 排序键: (数字三元组, 预发布键).
+
+    规则: 稳定版 > 预发布; 预发布逐段比较, 数字段按数值
+    (beta.10 > beta.9, 字典序会把 beta.10 判小), 段多者大 (beta < beta.1).
+    """
+    v = v.strip().lstrip("v")
+    m = re.match(r"^(\d+(?:\.\d+)*)(?:[-.]?([0-9A-Za-z.]+))?$", v)
+    if not m:
+        return ((0, 0, 0), ())
+    nums = [int(x) for x in m.group(1).split(".")]
+    nums += [0] * (3 - len(nums))
+    pre = (m.group(2) or "").strip(".")
+    segs: list[tuple[int | str, ...]] = []
+    if not pre:
+        pre_key: tuple[tuple[int | str, ...], ...] = ((2,),)  # 稳定版标记: 数字段 0/字母段 1 开头, 2 恒大
+    else:
+        for seg in pre.replace("-", ".").split("."):
+            segs.append((0, int(seg), "") if seg.isdigit() else (1, 0, seg.lower()))
+        pre_key = tuple(segs)
+    return tuple(nums), pre_key
 
 
 async def check_for_update() -> dict[str, Any] | None:
@@ -61,7 +82,7 @@ async def check_for_update() -> dict[str, Any] | None:
     if not latest:
         return None
 
-    if _parse_version(latest) > _parse_version(current):
+    if _version_key(latest) > _version_key(current):
         return {
             "latest_version": latest,
             "current_version": current,
