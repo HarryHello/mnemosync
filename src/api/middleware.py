@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -70,12 +71,13 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         self._inner_app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """ASGI 入口: SSE/流式请求直接透传, 其他走 BaseHTTPMiddleware."""
+        """ASGI 入口: SSE/流式请求走原生 ASGI 捕获, 其他走 BaseHTTPMiddleware."""
         if scope["type"] == "http":
             path = scope.get("path", "")
             method = scope.get("method", "")
 
-            # SSE 请求: 检查 Accept header 或路径, 直接透传不经过 BaseHTTPMiddleware
+            # SSE 请求: 检查 Accept header 或路径, 不能走 BaseHTTPMiddleware
+            # (它会缓冲 StreamingResponse 导致流式聊天卡死, v0.3.x 修复)
             is_sse = False
             if path in _SSE_PATHS:
                 is_sse = True
@@ -86,16 +88,14 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                         break
 
             if is_sse:
-                # 记录请求日志 (仅 enqueue, 不阻塞)
-                store = None
-                try:
-                    # 从 scope 的 app state 获取 store
-                    app_state = scope.get("app", {})
-                    if hasattr(app_state, "state"):
-                        store = getattr(app_state.state, "http_log_store", None)
-                except Exception:
-                    pass
-
+                if path == "/v1/chat/completions":
+                    # 流式聊天: 原生 ASGI 捕获请求体 (replay) + 响应状态/body
+                    # (限长), 流结束后补一条完整日志 — 占位的空 body 行没有
+                    # 调试价值 (beta.12 用户反馈: 下游 bot 的请求体看不到)
+                    await self._log_and_passthrough(scope, receive, send, path, method)
+                    return
+                # 调试事件长连接: 只记占位, 不缓冲不等待结束
+                store = self._store_from_scope(scope)
                 if store is not None:
                     headers_dict = {k.decode(): v.decode() for k, v in scope.get("headers", [])}
                     try:
@@ -112,13 +112,114 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                         })
                     except Exception:
                         pass
-
-                # 直接调用内层 ASGI app, 完全绕过 BaseHTTPMiddleware
                 await self._inner_app(scope, receive, send)
                 return
 
         # 非 SSE 请求: 走正常的 BaseHTTPMiddleware 路径
         await super().__call__(scope, receive, send)
+
+    def _store_from_scope(self, scope: Scope) -> Any | None:
+        try:
+            app_state = scope.get("app", {})
+            if hasattr(app_state, "state"):
+                return getattr(app_state.state, "http_log_store", None)
+        except Exception:
+            pass
+        return None
+
+    async def _log_and_passthrough(
+        self, scope: Scope, receive: Receive, send: Send, path: str, method: str,
+    ) -> None:
+        """流式聊天的原生 ASGI 日志捕获: 窥探请求体 + 包装 send 记录响应.
+
+        请求体: 预读进缓冲并 replay 给应用 (上限 1MB, 防异常大历史爆内存);
+        响应: 捕获状态码与 body 块 (累计上限 LOG_BODY_MAX_CHARS);
+        correlation_id: 与非流式路径一致地设置, 调试事件不再全部挂 no-cid.
+        """
+        start_time = time.time()
+
+        # 流式路径也要有 correlation_id (beta.12: 调试事件全挂 no-cid 的原因)
+        if path.startswith("/v1/"):
+            set_correlation_id(new_correlation_id())
+
+        # ── 窥探请求体: 预读 + replay ─────────────────────────────────
+        buffered: deque[bytes] = deque()
+        buffered_size = 0
+        peek_cap = 1024 * 1024
+        pre_read_complete = False  # 预读是否见到流结束; 未见到时 replay 后还有残余
+        original_receive = receive
+
+        while True:
+            msg = await original_receive()
+            if msg["type"] != "http.request":
+                break
+            chunk = msg.get("body", b"")
+            if buffered_size < peek_cap:
+                buffered.append(chunk)
+                buffered_size += len(chunk)
+            if not msg.get("more_body", False) or buffered_size >= peek_cap:
+                pre_read_complete = not msg.get("more_body", False)
+                break
+        # replay 会消费 buffered, 先留一份原始拷贝供日志使用
+        peeked_body = b"".join(buffered)
+
+        async def _receive_replay() -> Any:
+            if buffered:
+                chunk = buffered.popleft()
+                more = bool(buffered) or not pre_read_complete
+                return {"type": "http.request", "body": chunk, "more_body": more}
+            return await original_receive()
+
+        # ── 包装 send: 捕获状态与响应 body (限长) ─────────────────────
+        status_holder: dict[str, int | None] = {"status": None}
+        resp_chunks: list[bytes] = []
+        resp_size = 0
+        original_send = send
+
+        async def _send_wrapper(message: Any) -> None:
+            nonlocal resp_size
+            if message["type"] == "http.response.start":
+                status_holder["status"] = message.get("status")
+            elif message["type"] == "http.response.body":
+                part = message.get("body", b"")
+                if resp_size < LOG_BODY_MAX_CHARS:
+                    resp_chunks.append(part)
+                    resp_size += len(part)
+            await original_send(message)
+
+        try:
+            await self._inner_app(scope, _receive_replay, _send_wrapper)
+        finally:
+            store = self._store_from_scope(scope)
+            if store is not None:
+                raw_body = peeked_body
+                request_body: Any = None
+                if raw_body:
+                    try:
+                        request_body = json.loads(raw_body.decode("utf-8", errors="replace"))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        request_body = raw_body.decode("utf-8", errors="replace")[:LOG_BODY_MAX_CHARS]
+                response_text = b"".join(resp_chunks).decode("utf-8", errors="replace")[:LOG_BODY_MAX_CHARS]
+                headers_dict = {
+                    k.decode(): v.decode() for k, v in scope.get("headers", [])
+                }
+                for key in list(headers_dict.keys()):
+                    if "auth" in key.lower() or "key" in key.lower() or "token" in key.lower():
+                        headers_dict[key] = "***"
+                try:
+                    store.enqueue({
+                        "method": method,
+                        "path": path,
+                        "query_params": scope.get("query_string", b"").decode() or None,
+                        "request_headers": headers_dict,
+                        "request_body": request_body,
+                        "response_status": status_holder["status"],
+                        "response_body": response_text or None,
+                        "duration_ms": round((time.time() - start_time) * 1000, 1),
+                        "client_ip": scope.get("client", ("",))[0] if scope.get("client") else None,
+                    })
+                except Exception:
+                    pass
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]],
