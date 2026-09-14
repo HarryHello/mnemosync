@@ -88,6 +88,58 @@ async def import_character_card(
     )
 
 
+@router.post("/persona/import")
+async def import_persona(request: Request) -> dict[str, Any]:
+    """导入先前导出的人格定义 JSON (与 GET /persona/export 配对).
+
+    接受 PersonaDefinition 序列化 JSON, 校验后存为当前人格 profile 的新版本.
+    拒绝空内容; 版本号按当前 profile 递增, 不沿用导出文件的旧版本号.
+    """
+    import json as _json
+
+    store = _get_persona_store(request)
+    if store is None:
+        raise HTTPException(404, "persona_store not available")
+    raw = await request.body()
+    if not raw:
+        raise HTTPException(400, "No JSON uploaded")
+    if len(raw) > 1024 * 1024:
+        raise HTTPException(400, "File too large (max 1MB)")
+    try:
+        data = _json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, _json.JSONDecodeError) as e:
+        raise HTTPException(400, detail="不是有效的 JSON 文件") from e
+    if not isinstance(data, dict):
+        raise HTTPException(400, detail="JSON 结构应为对象 (PersonaDefinition)")
+
+    from src.core.persona.definition import PersonaDefinition
+
+    defn = PersonaDefinition.from_dict(data)
+    identity = defn.identity
+    if not (
+        (defn.name or "").strip()
+        or (identity.personality or "").strip()
+        or (identity.speaking_style or "").strip()
+    ):
+        raise HTTPException(400, detail="人格内容为空 (缺少 name / personality / speaking_style)")
+    if not (defn.name or "").strip():
+        defn.name = "导入的人格"
+
+    # 版本号按当前 profile 递增 (与 PUT /persona/definition 同规则)
+    current = await store.get_active()
+    if current:
+        parts = current.version.split(".")
+        try:
+            defn.version = f"{parts[0]}.{parts[1]}.{int(parts[2]) + 1}"
+        except (IndexError, ValueError):
+            defn.version = "1.0.1"
+    else:
+        defn.version = "1.0.0"
+
+    await store.save(defn, changelog="导入人格定义 (面板上传)")
+    return {"success": True, "name": defn.name, "version": defn.version}
+
+
 @router.get("/persona/export")
 async def export_persona(request: Request) -> Response:
     """导出当前激活人格定义 (JSON 下载).

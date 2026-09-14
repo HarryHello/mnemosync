@@ -104,3 +104,57 @@ def test_export_no_active_persona(app: FastAPI) -> None:
     client = TestClient(app)
     resp = client.get("/panel/admin/persona/export")
     assert resp.status_code == 404
+
+
+def test_import_persona_roundtrip(app: FastAPI) -> None:
+    """导出 → 导入回环: 导出的 JSON 能原样导回并存为新版本."""
+    import asyncio as _asyncio
+
+    from src.core.persona.definition import PersonaDefinition, PersonaIdentity
+
+    store: SqlitePersonaStore = app.state.persona_store
+    d = PersonaDefinition(version="1", name="绫音", identity=PersonaIdentity())
+    _asyncio.run(store.save(d, changelog="seed", author="t"))
+
+    client = TestClient(app)
+    exported = client.get("/panel/admin/persona/export")
+    assert exported.status_code == 200
+
+    resp = client.post(
+        "/panel/admin/persona/import",
+        content=exported.content,
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["success"] is True
+    assert body["name"] == "绫音"
+
+    # 导入后 get_active 拿到的是新版本 (版本号递增)
+    defn = _asyncio.run(store.get_active())
+    assert defn is not None and defn.name == "绫音"
+    assert defn.version == "1.0.1"
+
+
+def test_import_persona_rejects_garbage(app: FastAPI) -> None:
+    client = TestClient(app)
+
+    # 非 JSON
+    resp = client.post("/panel/admin/persona/import", content=b"not json",
+                       headers={"Content-Type": "application/json"})
+    assert resp.status_code == 400
+
+    # JSON 数组
+    resp = client.post("/panel/admin/persona/import", json=[1, 2])
+    assert resp.status_code == 400
+
+    # 空人格 (无 name / personality / speaking_style)
+    resp = client.post("/panel/admin/persona/import", json={"identity": {}})
+    assert resp.status_code == 400
+    assert "为空" in resp.json()["detail"]
+
+
+def test_import_persona_empty_body(app: FastAPI) -> None:
+    client = TestClient(app)
+    resp = client.post("/panel/admin/persona/import")
+    assert resp.status_code == 400
