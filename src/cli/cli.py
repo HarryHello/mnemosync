@@ -464,19 +464,38 @@ def _stop_pid_file(pid_file: str, label: str = "服务") -> bool:
         return False
 
 
+def _find_orphan_pids(keyword: str) -> list[int]:
+    """扫描 /proc 找 cmdline 含 'src.cli.cli <keyword>' 的进程 (孤儿兜底).
+
+    pid 文件可能因多轮启停竞争丢失 (beta.13 服务器实测), 此时按命令行
+    找回真实进程. 仅 Linux 有效 (/proc); 当前进程自身不会匹配 (stop/restart
+    经 console-script 启动, cmdline 不含 src.cli.cli).
+    """
+    pids: list[int] = []
+    if not os.path.isdir("/proc"):
+        return pids
+    target = f"src.cli.cli {keyword}"
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as f:
+                cmd = f.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if target in cmd:
+            pids.append(int(entry))
+    return pids
+
+
 def cmd_stop(args: argparse.Namespace) -> int:
     """停止服务 (单进程模式 + 分离模式后端/面板)."""
     project_root = get_project_root()
     data_dir = os.path.join(project_root, "data")
 
     stopped = False
-    # 单进程模式
-    stopped |= _stop_pid_file(os.path.join(data_dir, "mnemosync.pid"), "服务")
-    # 分离模式: 后端 + 面板
-    stopped |= _stop_pid_file(os.path.join(data_dir, "backend.pid"), "后端")
-    stopped |= _stop_pid_file(os.path.join(data_dir, "panel.pid"), "面板")
-
-    # 检查 Docker 容器
+    # Docker 容器在跑时只走 docker down, 不做本机进程扫描
+    # (容器进程在宿主 /proc 可见, 孤儿扫描会误杀容器内进程)
     if is_container_running():
         print("⏹  停止 Docker 服务...")
         result = run_docker_command(["down"])
@@ -485,7 +504,39 @@ def cmd_stop(args: argparse.Namespace) -> int:
         else:
             print("❌ 停止失败")
             return 1
-    elif not stopped:
+        return 0
+
+    # 单进程模式
+    stopped |= _stop_pid_file(os.path.join(data_dir, "mnemosync.pid"), "服务")
+    # 分离模式: 后端 + 面板
+    stopped |= _stop_pid_file(os.path.join(data_dir, "backend.pid"), "后端")
+    stopped |= _stop_pid_file(os.path.join(data_dir, "panel.pid"), "面板")
+
+    # 孤儿兜底: pid 文件丢失时按命令行扫描 (beta.13 实测: panel.pid 丢失后
+    # 面板停不掉), SIGTERM + 等待退出
+    import time as _time
+
+    for label, keyword in (("面板", "panel"), ("后端", "backend"), ("服务", "serve")):
+        for pid in _find_orphan_pids(keyword):
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                continue  # 已退出
+            print(f"⏹  停止孤儿{label}进程 (PID: {pid}, PID 文件丢失)...")
+            try:
+                os.kill(pid, 15)
+            except OSError:
+                continue
+            for _ in range(10):
+                try:
+                    os.kill(pid, 0)
+                    _time.sleep(0.5)
+                except OSError:
+                    break
+            print(f"✅ 孤儿{label}已停止")
+            stopped = True
+
+    if not stopped:
         print("ℹ️  服务未运行")
     return 0
 
