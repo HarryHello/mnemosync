@@ -19,6 +19,7 @@ import {
   updateRegistryModel,
 } from '@/api/client'
 import type { ModelRegistryItem, UpstreamModelDetail } from '@/types/api'
+import { formatTokenLimit, parseTokenLimit } from '@/utils/tokenFormat'
 
 export interface PendingModel {
   model: string
@@ -45,26 +46,7 @@ const models = ref<ModelRegistryItem[]>([])
 // 并发默认 20 (0 = 不限)
 const DEFAULT_CONCURRENCY = 20
 
-// ── K / M 单位解析 ─────────────────────────────────────────────────────────
-function parseTokenLimit(v: string | undefined | null): number | null {
-  const sv = (v || '').trim()
-  if (!sv) return null
-  const s = sv.toUpperCase()
-  const m = /^(\d+(?:\.\d+)?)\s*([KM]?)$/.exec(s)
-  if (!m) return null
-  const n = parseFloat(m[1] ?? '')
-  if (Number.isNaN(n)) return null
-  if (m[2] === 'K') return Math.max(1, Math.round(n * 1024))
-  if (m[2] === 'M') return Math.max(1, Math.round(n * 1024 * 1024))
-  return Math.max(1, Math.round(n))
-}
-
-function formatTokenLimit(n: number | null | undefined): string {
-  if (!n) return ''
-  if (n >= 1024 * 1024 && n % (1024 * 1024) === 0) return String(n / (1024 * 1024)) + 'M'
-  if (n >= 1024 && n % 1024 === 0) return String(n / 1024) + 'K'
-  return String(n)
-}
+// ── K / M 单位解析/显示 → @/utils/tokenFormat (十进制解析 + 双制式显示) ──
 
 // ── 创建模式: 暂存行 (两行) ─────────────────────────────────────────────────
 const pending = ref<PendingModel[]>([])
