@@ -116,7 +116,23 @@ _version_gt() {
             }
             return 1 if $pa eq "" && $pb ne "";
             return -1 if $pa ne "" && $pb eq "";
-            return $pa cmp $pb;
+            # 预发布逐段比较: 数字段按数值 (beta.10 > beta.9, 字典序会把
+            # beta.10 判小于 beta.9), 段多者大 (beta < beta.1)
+            my @sa = split /\./, $pa;
+            my @sb = split /\./, $pb;
+            my $n = @sa > @sb ? scalar(@sa) : scalar(@sb);
+            for my $i (0..$n-1){
+                my $x = $sa[$i]; my $y = $sb[$i];
+                return -1 unless defined $x;
+                return 1  unless defined $y;
+                if ($x =~ /^\d+$/ && $y =~ /^\d+$/) {
+                    return $x <=> $y if $x != $y;
+                } else {
+                    my $c = lc($x) cmp lc($y);
+                    return $c if $c != 0;
+                }
+            }
+            return 0;
         }
         exit 0 if cmp_ver($ARGV[0], $ARGV[1]) > 0;
         exit 1;

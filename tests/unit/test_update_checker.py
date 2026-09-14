@@ -25,8 +25,8 @@ def test_parse_version_partial():
 
 
 def test_parse_version_non_numeric():
-    # 非数字部分被忽略
-    assert _parse_version("v0.3.5-beta") == (0, 3)
+    # 非数字后缀被忽略, 但不能丢数字段 (原实现在 '5-beta' 处 break 丢 patch)
+    assert _parse_version("v0.3.5-beta") == (0, 3, 5)
 
 
 def test_version_comparison():
@@ -100,3 +100,33 @@ async def test_list_releases_non_200_returns_empty(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
 
     assert await list_releases() == []
+
+
+def test_parse_version_ignores_prerelease_suffix():
+    """beta 后缀不再截断数字段 (原实现在 '1-beta' 处 break 丢段)."""
+    assert _parse_version("v0.4.1-beta.10") == (0, 4, 1)
+    assert _parse_version("0.4.1-beta.9") == (0, 4, 1)
+
+
+def test_version_key_prerelease_numeric_order():
+    """回归: 预发布序号必须按数值比较, beta.10 > beta.9 (字典序误判为降级)."""
+    from src.infra.update_checker import _version_key
+
+    assert _version_key("v0.4.1-beta.10") > _version_key("0.4.1-beta.9")
+    assert _version_key("0.4.1-beta.2") > _version_key("v0.4.1-beta.1")
+    assert _version_key("0.4.1-beta.9") < _version_key("0.4.1-beta.10")
+    assert _version_key("1.0.0-beta.10") > _version_key("1.0.0-beta.2")
+
+
+def test_version_key_stable_beats_prerelease():
+    from src.infra.update_checker import _version_key
+
+    assert _version_key("v0.4.1") > _version_key("0.4.1-beta.10")
+    assert _version_key("0.4.0-beta.1") > _version_key("v0.3.5")
+    assert _version_key("v0.3.5") < _version_key("0.4.0-beta.1")
+
+
+def test_version_key_longer_prerelease_is_newer():
+    from src.infra.update_checker import _version_key
+
+    assert _version_key("0.4.1-beta.1") > _version_key("0.4.1-beta")
