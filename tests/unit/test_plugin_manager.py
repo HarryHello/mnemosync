@@ -342,3 +342,26 @@ class TestRemovePlugin:
 
         with patch("src.core.identity.plugin_manager.PLUGIN_DIR", plugin_dir):
             assert remove_plugin("nonexistent/__init__.py") is False
+
+
+def test_available_route_version_comparison() -> None:
+    """available 端点的 update_available 判定逻辑 (beta.16 插件更新).
+
+    _version_key 语义化比较: 1.0.1 > 1.0.0 → 可更新; 相同/回退 → 不可更新.
+    """
+    from src.infra.update_checker import _version_key
+
+    def has_update(remote: str, installed: str) -> bool:
+        if not installed or not remote:
+            return False
+        try:
+            return _version_key(remote) > _version_key(installed)
+        except Exception:
+            return False
+
+    assert has_update("1.0.1", "1.0.0") is True
+    assert has_update("1.1.0", "1.0.0") is True
+    assert has_update("1.0.0", "1.0.0") is False
+    assert has_update("1.0.0", "1.0.1") is False   # 远程更旧不提示降级
+    assert has_update("1.0.1", "") is False        # 本地无版本信息不提示
+    assert has_update("", "1.0.0") is False        # 远程无版本信息不提示

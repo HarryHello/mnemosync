@@ -740,6 +740,8 @@ export interface AvailablePluginInfo {
   version: string
   author: string
   installed: boolean
+  installed_version: string
+  update_available: boolean
 }
 
 export interface AvailablePluginListResponse {

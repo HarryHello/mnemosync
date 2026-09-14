@@ -59,19 +59,30 @@ async def list_available_plugins() -> AvailablePluginListResponse:
     同时标记哪些已安装。
     """
     from src.core.identity.plugin_manager import list_available, list_installed
+    from src.infra.update_checker import _version_key
 
     available = await list_available()
-    installed_names = {p.file_name for p in list_installed()}
+    installed_by_file = {p.file_name: p for p in list_installed()}
 
-    items = [
-        AvailablePluginInfo(
+    items = []
+    for p in available:
+        installed_meta = installed_by_file.get(p.file_name)
+        remote_version = (p.metadata.version if p.metadata else "") or ""
+        installed_version = (installed_meta.metadata.version if installed_meta and installed_meta.metadata else "") or ""
+        update_available = False
+        if installed_version and remote_version:
+            try:
+                update_available = _version_key(remote_version) > _version_key(installed_version)
+            except Exception:
+                update_available = False
+        items.append(AvailablePluginInfo(
             file_name=p.file_name,
             download_url=p.download_url,
             **_metadata_fields(p.metadata),
-            installed=p.file_name in installed_names,
-        )
-        for p in available
-    ]
+            installed=installed_meta is not None,
+            installed_version=installed_version,
+            update_available=update_available,
+        ))
     return AvailablePluginListResponse(items=items, total=len(items))
 
 

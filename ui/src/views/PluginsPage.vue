@@ -89,11 +89,14 @@ async function refreshAvailable() {
 
 async function handleInstall(plugin: AvailablePluginInfo) {
   const name = plugin.name || plugin.file_name
+  const isUpdate = plugin.installed && plugin.update_available
   try {
     await ElMessageBox.confirm(
-      `安装插件「${name}」？文件将下载到 plugins/ 目录，重启后生效。`,
-      '安装插件',
-      { confirmButtonText: '安装', cancelButtonText: '取消' },
+      isUpdate
+        ? `更新插件「${name}」到 v${plugin.version}？（当前 v${plugin.installed_version}）文件将覆盖下载到 plugins/ 目录，重启后生效。`
+        : `安装插件「${name}」？文件将下载到 plugins/ 目录，重启后生效。`,
+      isUpdate ? '更新插件' : '安装插件',
+      { confirmButtonText: isUpdate ? '更新' : '安装', cancelButtonText: '取消' },
     )
   } catch {
     return
@@ -102,7 +105,7 @@ async function handleInstall(plugin: AvailablePluginInfo) {
   installing.value.add(plugin.file_name)
   try {
     await installPlugin(plugin.file_name, plugin.download_url)
-    ElMessage.success(`插件「${name}」已安装，重启后生效`)
+    ElMessage.success(`插件「${name}」已${isUpdate ? '更新' : '安装'}，重启后生效`)
     await refresh()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
@@ -196,11 +199,19 @@ onMounted(() => {
           <template #default="{ row }: { row: AvailablePluginInfo }">
             <div class="plugin-name">
               <strong>{{ row.name || row.file_name }}</strong>
-              <el-tag v-if="row.installed" type="success" size="small" class="installed-tag">
+              <el-tag v-if="row.installed && row.update_available" type="warning" size="small" class="installed-tag">
+                可更新
+              </el-tag>
+              <el-tag v-else-if="row.installed" type="success" size="small" class="installed-tag">
                 已安装
               </el-tag>
             </div>
-            <div v-if="row.version" class="plugin-meta">v{{ row.version }}</div>
+            <div v-if="row.version" class="plugin-meta">
+              v{{ row.version }}
+              <span v-if="row.installed && row.installed_version && row.installed_version !== row.version" class="muted">
+                (本地 v{{ row.installed_version }})
+              </span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" min-width="300">
@@ -223,6 +234,15 @@ onMounted(() => {
               @click="handleInstall(row)"
             >
               安装
+            </el-button>
+            <el-button
+              v-else-if="row.update_available"
+              type="warning"
+              size="small"
+              :loading="installing.has(row.file_name)"
+              @click="handleInstall(row)"
+            >
+              更新
             </el-button>
             <span v-else class="muted">已安装</span>
           </template>
