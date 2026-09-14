@@ -517,6 +517,8 @@ class AvailablePluginInfo(BaseModel):
     version: str = ""
     author: str = ""
     installed: bool = False
+    installed_version: str = ""      # 已安装版本 (未安装为空); 供前端对比更新
+    update_available: bool = False   # 远程版本 > 本地版本
 
 
 class AvailablePluginListResponse(BaseModel):
