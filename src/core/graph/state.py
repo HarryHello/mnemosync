@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+import operator
+from typing import Annotated, Any, TypedDict
 
 
 class AgentState(TypedDict, total=False):
@@ -72,5 +73,8 @@ class AgentState(TypedDict, total=False):
     relationship_delta: dict[str, Any]
 
     # === 全局 ===
-    errors: list[str]
+    # reducer 必须配 Annotated+operator.add: memory_analysis 与 relationship_analysis
+    # 并行运行, 双双失败时各自写 errors, 无 reducer 会触发
+    # INVALID_CONCURRENT_GRAPH_UPDATE 把整个请求炸成 500 (beta.13 实测)
+    errors: Annotated[list[str], operator.add]
     stream_mode: bool                       # 是否流式响应
