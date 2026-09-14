@@ -12,6 +12,7 @@ import {
   deletePersonaProfile,
   importCharacterCard,
   exportPersona,
+  importPersonaJson,
 } from '@/api/client'
 import type {
   CharacterCardPreview,
@@ -58,6 +59,7 @@ const newProfileName = ref('')
 const newProfileDesc = ref('')
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const personaFileInput = ref<HTMLInputElement | null>(null)
 const importing = ref(false)
 const importDialogVisible = ref(false)
 const importPreview = ref<CharacterCardPreview | null>(null)
@@ -222,6 +224,36 @@ async function onExport() {
   }
 }
 
+function onPickPersonaFile() {
+  personaFileInput.value?.click()
+}
+
+async function onImportPersonaFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''  // 允许重复选择同一文件
+  if (!file) return
+  try {
+    const text = await file.text()
+    const parsed = JSON.parse(text) as Record<string, unknown>
+    const name = typeof parsed.name === 'string' ? parsed.name : '导入的人格'
+    await ElMessageBox.confirm(
+      `导入人格「${name}」? 当前人格将保留为历史版本, 导入内容存为新版本.`,
+      '导入人格',
+      { confirmButtonText: '导入', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return  // 用户取消或文件不可读
+  }
+  try {
+    const res = await importPersonaJson(await file.text())
+    ElMessage.success(`已导入人格「${res.name}」(v${res.version})`)
+    await loadAll()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
 async function onSave() {
   if (!form.name.trim()) {
     ElMessage.warning('人格名称不能为空')
@@ -362,6 +394,14 @@ watch(
         <el-button size="small" @click="newProfileDialogVisible = true">新建人格</el-button>
         <el-button size="small" :loading="importing" @click="onPickImportFile">导入角色卡</el-button>
         <el-button size="small" @click="onExport">导出</el-button>
+        <el-button size="small" @click="onPickPersonaFile">导入人格</el-button>
+        <input
+          ref="personaFileInput"
+          type="file"
+          accept=".json,application/json"
+          style="display: none"
+          @change="onImportPersonaFile"
+        >
         <el-button size="small" @click="openVersions">版本历史</el-button>
       </template>
     </TabHeader>

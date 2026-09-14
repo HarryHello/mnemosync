@@ -136,6 +136,29 @@ export async function importCharacterCard(file: File): Promise<CharacterCardPrev
   return response.json()
 }
 
+/**导入先前导出的人格定义 JSON (存为当前 profile 新版本). */
+export async function importPersonaJson(
+  jsonText: string,
+): Promise<{ success: boolean; name: string; version: string }> {
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  // 直接发送 JSON 原文 (服务端按 PersonaDefinition 解析, 不能二次序列化)
+  const response = await fetch(`${API_BASE}/admin/persona/import`, {
+    method: 'POST',
+    headers,
+    body: jsonText,
+  })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(error.detail || `HTTP ${response.status}`)
+  }
+  return response.json()
+}
+
 /**导出当前激活人格为 JSON 文件 (触发浏览器下载). */
 export async function exportPersona(): Promise<void> {
   const token = getToken()
