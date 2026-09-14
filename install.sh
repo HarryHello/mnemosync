@@ -28,8 +28,8 @@ REPO_URL="${GITHUB_PROXY}https://github.com/HarryHello/mnemosync.git"
 API_URL="${GITHUB_PROXY}https://api.github.com/repos/HarryHello/mnemosync"
 INSTALL_DIR="${MNEMOSYNC_INSTALL_DIR:-${MNEMOSYNC_DIR:-$HOME/.mnemosync}}"
 BIN_DIR="${MNEMOSYNC_BIN_DIR:-$HOME/.local/bin}"
-BRANCH="${MNEMOSYNC_BRANCH:-dev}"
-RELEASE_TAG="${MNEMOSYNC_RELEASE_TAG:-latest}"
+BRANCH="${MNEMOSYNC_BRANCH:-beta}"
+RELEASE_TAG="${MNEMOSYNC_RELEASE_TAG:-preview}"
 
 # 颜色 (使用 printf 兼容 sh)
 RED='\033[0;31m'
