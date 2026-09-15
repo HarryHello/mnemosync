@@ -23,3 +23,11 @@ def last_user_message(messages: list[dict[str, Any]]) -> str:
                 return "\n".join(t for t in texts if t)
             return content if isinstance(content, str) else ""
     return ""
+
+
+def last_user_message_item(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the full dict of the last user message, multimodal content preserved."""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            return m
+    return None

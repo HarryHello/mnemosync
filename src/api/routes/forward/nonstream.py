@@ -130,17 +130,11 @@ async def _handle_non_stream(
     elif new_user_content:
         combined.append({"role": "user", "content": new_user_content})
 
-    # 多模态: 模型支持图片时, 从原始消息恢复 image content parts.
+    # 多模态: 模型支持图片时, 把本轮消息的 image parts 显式接回
+    # (插件重写过文本, 内容前缀匹配不可靠 — 见 attach_current_message_images).
     if model_supports_images and not tool_transaction:
-        from src.api.routes.forward.dispatch import process_images_in_messages
-        original_messages = initial_state.get("_original_messages", [])
-        if original_messages:
-            combined = await process_images_in_messages(
-                combined,
-                model_supports_images=True,
-                original_messages=original_messages,
-            )
-            logger.debug("  🖼️ 多模态 (non-stream): 已恢复图片 content parts")
+        from src.api.routes.forward.dispatch import attach_current_message_images
+        combined = attach_current_message_images(combined, client_messages)
 
     initial_state["messages"] = combined
     if tool_transaction:

@@ -126,88 +126,41 @@ def _normalize_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
     return result
 
 
-async def process_images_in_messages(
-    messages: list[dict[str, Any]],
-    *,
-    model_supports_images: bool,
-    forwarder: Any = None,
-    original_messages: list[dict[str, Any]] | None = None,
+def attach_current_message_images(
+    combined: list[dict[str, Any]],
+    client_messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """处理消息中的图片: 模型支持图片则从原始消息恢复, 否则调用 Vision Agent 转述.
+    """把本轮 user 消息的 image parts 接回重建后的消息列表.
 
-    Args:
-        messages: 规范化后的消息列表 (可能已被展平为纯文本)
-        model_supports_images: 目标模型是否支持图片输入
-        forwarder: MultiForwarder (模型不支持图片时需要)
-        original_messages: 原始请求消息 (含完整 content parts)
-
-    Returns:
-        处理后的消息列表
+    跨前端装填会把当前消息重写为纯文本 (身份插件还会编译 current_speaker
+    标签), 旧实现按 (role, content 前 100 字符) 在原始消息里找对应条目 —
+    插件重写后必然对不上, 图片被静默丢弃 (beta.18 实测)。改为取 client
+    消息里最后一条 user 消息的全部非文本 parts, 显式拼成多模态数组。
     """
-    from src.core.agents.vision import (
-        describe_image,
-        extract_image_parts,
-        has_image_parts,
-        strip_image_parts,
-    )
-
-    if model_supports_images and original_messages:
-        # 模型支持图片, 从原始消息恢复 image parts
-        # 构建原始消息的 role+content 索引
-        orig_map: dict[tuple[str, str], dict[str, Any]] = {}
-        for om in original_messages:
-            role = om.get("role", "")
-            # 用 content 的前100字符作为匹配键
-            content_preview = str(om.get("content", ""))[:100]
-            orig_map[(role, content_preview)] = om
-
-        result = []
-        for m in messages:
-            role = m.get("role", "")
-            content = m.get("content", "")
-            # 尝试从原始消息中找到对应的含图片版本
-            if isinstance(content, str):
-                content_preview = content[:100]
-                orig = orig_map.get((role, content_preview))
-                if orig and has_image_parts(orig.get("content")):
-                    # 恢复原始 content parts
-                    m = {**m, "content": orig["content"]}
-            result.append(m)
-        return result
-
-    if not model_supports_images:
-        # 模型不支持图片, 检查是否有图片需要转述
-        needs_vision = any(has_image_parts(m.get("content")) for m in messages)
-        if not needs_vision:
-            return messages
-
-        if forwarder is None:
-            logger.warning("图片转述需要 forwarder, 降级为纯文本提取")
-            for m in messages:
-                if has_image_parts(m.get("content")):
-                    m["content"] = strip_image_parts(m["content"])
-            return messages
-
-        # 调用 Vision Agent 转述图片
-        result = []
-        for m in messages:
-            content = m.get("content")
-            if has_image_parts(content):
-                image_parts = extract_image_parts(content)
-                text_part = strip_image_parts(content)
-                descriptions = []
-                for img in image_parts:
-                    desc = await describe_image(forwarder, img)
-                    descriptions.append(desc)
-                combined = text_part
-                if descriptions:
-                    desc_text = "\n".join(f"[图片描述] {d}" for d in descriptions)
-                    combined = f"{combined}\n{desc_text}" if combined else desc_text
-                m = {**m, "content": combined.strip()}
-            result.append(m)
-        return result
-
-    return messages
+    if not combined or not client_messages:
+        return combined
+    current = combined[-1]
+    if current.get("role") != "user" or not isinstance(current.get("content"), str):
+        return combined
+    for msg in reversed(client_messages):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        parts = (
+            [p for p in content if isinstance(p, dict) and p.get("type") != "text"]
+            if isinstance(content, list)
+            else []
+        )
+        if parts:
+            return [
+                *combined[:-1],
+                {
+                    **current,
+                    "content": [{"type": "text", "text": current["content"]}, *parts],
+                },
+            ]
+        return combined
+    return combined
 
 
 # ── 工具事务提取 ──────────────────────────────────────────────
