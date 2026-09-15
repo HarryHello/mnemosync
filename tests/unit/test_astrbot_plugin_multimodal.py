@@ -154,3 +154,55 @@ def test_last_user_message_handles_list_content() -> None:
     assert last_user_message([{"role": "user", "content": "hi"}]) == "hi"
     # 无 user 消息返回空
     assert last_user_message([{"role": "assistant", "content": "a"}]) == ""
+
+
+async def test_extract_multimodal_array_content(plugin: AstrBotPlugin) -> None:
+    """回归 (beta.18): AstrBot 始终发数组型 content, extract 曾把原始 list
+    直接喂给正则 → TypeError → 非归属模式 (身份 unknown、短期记忆、
+    关系/记忆分析全部跳过)。修复: extract 也走 _content_to_text 归一化.
+    """
+    actor = SimpleNamespace(id="a1")
+
+    class FakeStore:
+        async def find_or_create_actor(self, external_key: str, frontend: str, display_name: str):
+            assert external_key == "486394990"
+            assert frontend == "astrbot"
+            return actor
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "早上好"},
+                {"type": "text", "text": "<system_reminder>User ID: 486394990, Nickname: 马达\nCurrent datetime: 2026-09-15 11:18 (CST)</system_reminder>"},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "[图片]"},
+                {"type": "text", "text": "[Image Attachment: path x.gif]"},
+                {"type": "text", "text": "<system_reminder>User ID: 486394990, Nickname: 马达\nCurrent datetime: 2026-09-15 11:28 (CST)</system_reminder>"},
+                {"type": "image_url", "image_url": {"url": "data:image/gif;base64,R0lGOD"}},
+            ],
+        },
+    ]
+    result = await plugin.extract(messages, {}, FakeStore())  # type: ignore[arg-type]
+    assert result is not None
+    assert result.external_key == "486394990"
+    assert result.display_name == "马达"
+    assert result.channel_type == "direct"
+    assert result.metadata["actor_id"] == "a1"
+
+
+def test_last_user_message_item_returns_full_dict() -> None:
+    from src.core.utils import last_user_message_item
+
+    item = {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}
+    messages = [
+        {"role": "assistant", "content": "a"},
+        item,
+        {"role": "assistant", "content": "b"},
+    ]
+    assert last_user_message_item(messages) is item
+    assert last_user_message_item([{"role": "assistant", "content": "a"}]) is None

@@ -816,18 +816,15 @@ async def _handle_stream(
         ),
     )
 
-    # 3.5 多模态图片处理: 模型支持图片则从原始消息恢复 image parts
-    if model_supports_images:
-        from src.api.routes.forward.dispatch import process_images_in_messages
+    # 3.5 多模态图片处理: 模型支持图片则把本轮消息的 image parts 显式接回
+    # (插件重写过文本, 内容前缀匹配不可靠 — 见 attach_current_message_images).
+    if model_supports_images and not initial_state.get("tool_transaction"):
+        from src.api.routes.forward.dispatch import attach_current_message_images
 
-        original_messages = initial_state.get("_original_messages", [])
-        if original_messages:
-            messages_with_memory = await process_images_in_messages(
-                messages_with_memory,
-                model_supports_images=True,
-                original_messages=original_messages,
-            )
-            logger.debug("  🖼️ 多模态: 已恢复图片 content parts")
+        messages_with_memory = attach_current_message_images(
+            messages_with_memory,
+            initial_state.get("messages", []),
+        )
 
     # 4. 构造 SSE 流式响应.
     return _make_streaming_response(
