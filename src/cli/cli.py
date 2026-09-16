@@ -259,6 +259,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
     port = args.port or int(os.getenv("PORT", "16125"))
     pid_file = os.path.join(project_root, "data", "mnemosync.pid")
 
+    if _guard_duplicate_start("服务", pid_file, port):
+        return 0
+
     if args.daemon:
         log_file = os.path.join(project_root, "data", "mnemosync.log")
         return _run_daemon(project_root, pid_file, log_file, ["serve"],
@@ -303,6 +306,9 @@ def cmd_backend(args: argparse.Namespace) -> int:
     host = args.host or os.getenv("MNEMOSYNC_BACKEND_HOST", "127.0.0.1")
     port = args.port or int(os.getenv("MNEMOSYNC_BACKEND_PORT", "16126"))
     pid_file = os.path.join(project_root, "data", "backend.pid")
+
+    if _guard_duplicate_start("后端", pid_file, port):
+        return 0
 
     if args.daemon:
         log_file = os.path.join(project_root, "data", "backend.log")
@@ -552,6 +558,42 @@ def _port_alive(host: str, port: int) -> bool:
         return False
 
 
+def _pid_file_alive(pid_file: str) -> int | None:
+    """PID 文件指向的进程是否存活; 返回 PID, 文件缺失/进程已死返回 None."""
+    try:
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        pass  # 进程存在但不属于当前用户, 视为存活
+    return pid
+
+
+def _guard_duplicate_start(kind: str, pid_file: str, port: int) -> bool:
+    """重复启动守卫 (beta.20): 同角色进程已在运行时拒绝再启动.
+
+    uvicorn 先导入再绑端口, 端口冲突的秒死晚于 _run_daemon 的 1.5s
+    观察窗 — 重复 `panel -d` 会得到「假成功 + PID 文件被覆盖 + 失联
+    孤儿」的三重坏状态, 所以必须在派发前检查.
+    Returns: True = 已拦截, 不应继续启动.
+    """
+    pid = _pid_file_alive(pid_file)
+    if pid is not None:
+        print(f"ℹ️  {kind}已在运行 (PID: {pid}), 无需重复启动")
+        print("    如需重启: mnemosync restart; 或先 mnemosync stop 再启动")
+        return True
+    if _port_alive("127.0.0.1", port):
+        print(f"ℹ️  端口 {port} 已被占用但无 PID 记录 (可能为外部启动的进程).")
+        print(f"    可用 `ss -tlnp | grep {port}` 确认后处理, 或 mnemosync stop 清理.")
+        return True
+    return False
+
+
 def cmd_backend_stop(args: argparse.Namespace) -> int:
     """停止后端进程 (分离模式)."""
     project_root = get_project_root()
@@ -586,6 +628,9 @@ def cmd_panel(args: argparse.Namespace) -> int:
     host = args.host or os.getenv("HOST", "0.0.0.0")
     port = args.port or int(os.getenv("PORT", "16125"))
     pid_file = os.path.join(project_root, "data", "panel.pid")
+
+    if _guard_duplicate_start("面板", pid_file, port):
+        return 0
 
     if args.daemon:
         log_file = os.path.join(project_root, "data", "panel.log")
