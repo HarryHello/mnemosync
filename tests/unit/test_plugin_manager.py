@@ -12,20 +12,26 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 import pytest
 from src.core.identity.plugin_manager import (
     AvailablePlugin,
     InstalledPlugin,
     PluginMetadata,
+    _api_contents_url_from_raw,
     _apply_proxy,
     _extract_class_attrs,
+    _fetch_metadata,
     _parse_metadata_from_source,
     _proxy_url,
     _validate_download_url,
     _validate_file_name,
+    install_plugin,
     remove_plugin,
 )
 
@@ -365,3 +371,114 @@ def test_available_route_version_comparison() -> None:
     assert has_update("1.0.0", "1.0.1") is False   # 远程更旧不提示降级
     assert has_update("1.0.1", "") is False        # 本地无版本信息不提示
     assert has_update("", "1.0.0") is False        # 远程无版本信息不提示
+
+
+# ── raw 不可达 → contents API 兜底 (beta.24) ─────────────────────────
+
+
+class _FakeResp:
+    def __init__(self, status_code: int = 200, text: str = "", json_data=None):
+        self.status_code = status_code
+        self.text = text
+        self._json = json_data if json_data is not None else {}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            request = type("R", (), {"status_code": self.status_code})()
+            raise httpx.HTTPStatusError("err", request=request, response=None)  # type: ignore[arg-type]
+
+    def json(self):
+        return self._json
+
+
+class _FakeClient:
+    """按 URL 前缀路由的假 httpx client."""
+
+    routes: dict[str, _FakeResp] = {}
+
+    def __init__(self, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, url: str, **kwargs) -> _FakeResp:
+        for prefix, resp in _FakeClient.routes.items():
+            if url.startswith(prefix):
+                return resp
+        raise httpx.ConnectError(f"no route for {url}", request=None)  # type: ignore[arg-type]
+
+
+PLUGIN_SRC = (
+    'class AstrBotPlugin(IdentityPlugin):\n'
+    '    name = "astrbot"\n'
+    '    version = "1.0.2"\n'
+)
+
+
+class TestRawFallback:
+    """raw.githubusercontent 不可达时回退 contents API (beta.23 实测被墙)."""
+
+    def setup_method(self) -> None:
+        _FakeClient.routes = {}
+
+    def test_fetch_metadata_falls_back_to_api(self, monkeypatch) -> None:
+        raw_url = "https://raw.githubusercontent.com/HarryHello/mnemosync-plugins/main/astrbot.py"
+        encoded = base64.b64encode(
+            b'class AstrBotPlugin(IdentityPlugin):\n    version = "1.0.2"\n'
+        )
+        _FakeClient.routes = {
+            "https://raw.githubusercontent.com/": _FakeResp(503, text=""),
+            "https://api.github.com/repos/HarryHello/mnemosync-plugins/contents/astrbot.py": _FakeResp(
+                200, json_data={"content": encoded.decode()}
+            ),
+        }
+        monkeypatch.setattr("src.core.identity.plugin_manager.httpx.AsyncClient", _FakeClient)
+        metadata = asyncio.run(_fetch_metadata(raw_url))
+        assert metadata is not None
+        assert metadata.version == "1.0.2"
+
+    def test_fetch_metadata_truncated_head_falls_back(self, monkeypatch) -> None:
+        """4KB 头部不含元数据 (截断) 时也走 API 全文兜底."""
+        raw_url = "https://raw.githubusercontent.com/o/r/main/big_plugin.py"
+        _FakeClient.routes = {
+            "https://raw.githubusercontent.com/o/r/main/big_plugin.py": _FakeResp(
+                206, text="# 只是长注释, 4KB 内没有 class 元数据\n" * 200
+            ),
+            "https://api.github.com/repos/o/r/contents/big_plugin.py": _FakeResp(
+                200,
+                json_data={"content": base64.b64encode(
+                    b'class Big(IdentityPlugin):\n    version = "2.0.0"\n'
+                ).decode()},
+            ),
+        }
+        monkeypatch.setattr("src.core.identity.plugin_manager.httpx.AsyncClient", _FakeClient)
+        metadata = asyncio.run(_fetch_metadata(raw_url))
+        assert metadata is not None and metadata.version == "2.0.0"
+
+    def test_fetch_metadata_api_url_derived_from_raw(self) -> None:
+        url = _api_contents_url_from_raw(
+            "https://raw.githubusercontent.com/o/r/main/sub/pkg.py"
+        )
+        assert url == "https://api.github.com/repos/o/r/contents/sub/pkg.py?ref=main"
+        assert _api_contents_url_from_raw("https://evil.com/x") is None
+
+    def test_install_falls_back_to_api(self, tmp_path: Path, monkeypatch) -> None:
+        raw_url = "https://raw.githubusercontent.com/HarryHello/mnemosync-plugins/main/astrbot.py"
+        src = 'class AstrBotPlugin(IdentityPlugin):\n    version = "1.0.2"\n'
+        _FakeClient.routes = {
+            "https://raw.githubusercontent.com/": _FakeResp(503, text=""),
+            "https://api.github.com/repos/HarryHello/mnemosync-plugins/contents/astrbot.py": _FakeResp(
+                200, json_data={"content": base64.b64encode(src.encode()).decode()}
+            ),
+        }
+        monkeypatch.setattr("src.core.identity.plugin_manager.httpx.AsyncClient", _FakeClient)
+        plugin_dir = tmp_path / "plugins"
+        plugin_dir.mkdir()
+        with patch("src.core.identity.plugin_manager.PLUGIN_DIR", plugin_dir):
+            target = asyncio.run(install_plugin("astrbot.py", raw_url))
+        assert (plugin_dir / "astrbot.py").read_text(encoding="utf-8") == src
+        assert target.exists()

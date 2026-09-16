@@ -2,16 +2,22 @@
 
 提供插件的远程浏览、安装、删除和元数据解析功能。
 插件源为 GitHub 仓库，通过 API 获取文件列表，通过 raw URL 下载文件。
+
+beta.24: raw.githubusercontent.com 在国内服务器普遍不可达而
+api.github.com 通常可达 (beta.23 实测: 前者超时, 后者 200) —
+元数据获取与插件下载在 raw 失败时回退 contents API (base64 全文)。
 """
 
 from __future__ import annotations
 
 import ast
 import asyncio
+import base64
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from urllib.parse import quote
 
 import httpx
 
@@ -181,11 +187,20 @@ async def install_plugin(file_name: str, download_url: str) -> Path:
     _ensure_plugin_dir()
 
     target = PLUGIN_DIR / file_name
-    async with httpx.AsyncClient(timeout=30, proxy=_proxy_url()) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        target.write_bytes(resp.content)
+    try:
+        async with httpx.AsyncClient(timeout=30, proxy=_proxy_url()) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            content = resp.content
+    except Exception as raw_error:
+        # raw 不可达 → contents API 兜底 (beta.24, 国内服务器 raw 常超时)
+        api_url = _api_contents_url_from_raw(url)
+        if api_url is None:
+            raise
+        logger.info("raw 下载失败 (%s), 回退 contents API", raw_error)
+        content = await _fetch_github_contents(api_url)
 
+    target.write_bytes(content)
     logger.info("插件已安装: %s → %s", file_name, target)
     return target
 
@@ -219,19 +234,69 @@ def remove_plugin(file_name: str) -> bool:
     return True
 
 
+def _api_contents_url_from_raw(raw_url: str) -> str | None:
+    """把 raw.githubusercontent URL 转为 contents API URL (回退用).
+
+    raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}
+      → api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}
+    非 raw URL 返回 None.
+    """
+    try:
+        stripped = raw_url.split("://", 1)[1]
+        parts = stripped.split("/", 4)
+        if len(parts) != 5 or parts[0] != "raw.githubusercontent.com":
+            return None
+        _, owner, repo, ref, path = parts
+        if not owner or not repo or not path:
+            return None
+        return (
+            f"https://api.github.com/repos/{owner}/{repo}/contents/"
+            f"{quote(path)}?ref={quote(ref)}"
+        )
+    except Exception:
+        return None
+
+
+async def _fetch_github_contents(api_url: str) -> bytes:
+    """经 contents API 拉取单个文件 (base64 解码), 失败抛异常."""
+    async with httpx.AsyncClient(timeout=15, proxy=_proxy_url()) as client:
+        resp = await client.get(
+            _apply_proxy(api_url),
+            headers={"Accept": "application/vnd.github.v3+json"},
+        )
+        resp.raise_for_status()
+        return base64.b64decode(resp.json().get("content") or "")
+
+
 async def _fetch_metadata(url: str) -> PluginMetadata | None:
-    """从远程 URL 获取文件头部并解析元数据."""
+    """从远程 URL 获取文件头部并解析元数据.
+
+    raw 拉 4KB 头部; 失败或头部不含完整元数据时回退 contents API 全文
+    (raw 与 api.github.com 的连通性往往不同, beta.23 服务器实测).
+    """
+    content: str | None = None
     try:
         async with httpx.AsyncClient(timeout=10, proxy=_proxy_url()) as client:
             # 只下载前 4KB 足够读 class 定义
             resp = await client.get(_apply_proxy(url), headers={"Range": "bytes=0-4096"})
-            if resp.status_code not in (200, 206):
-                return None
-            content = resp.text
-        return _parse_metadata_from_source(content)
+            if resp.status_code in (200, 206):
+                content = resp.text
     except Exception as e:
-        logger.debug("解析远程插件元数据失败 (%s): %s", url, e)
+        logger.debug("raw 元数据获取失败 (%s): %s", url, e)
+
+    metadata = _parse_metadata_from_source(content) if content else None
+    if metadata is not None:
+        return metadata
+
+    api_url = _api_contents_url_from_raw(url)
+    if api_url is None:
         return None
+    try:
+        content = (await _fetch_github_contents(api_url)).decode("utf-8", "replace")
+    except Exception as e:
+        logger.warning("获取远程插件元数据失败 (raw 与 API 均失败): %s: %s", url, e)
+        return None
+    return _parse_metadata_from_source(content)
 
 
 def _parse_metadata_from_file(path: Path) -> PluginMetadata | None:
