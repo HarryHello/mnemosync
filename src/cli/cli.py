@@ -580,10 +580,16 @@ def _guard_duplicate_start(kind: str, pid_file: str, port: int) -> bool:
     uvicorn 先导入再绑端口, 端口冲突的秒死晚于 _run_daemon 的 1.5s
     观察窗 — 重复 `panel -d` 会得到「假成功 + PID 文件被覆盖 + 失联
     孤儿」的三重坏状态, 所以必须在派发前检查.
+
+    beta.21 修正: daemon 父进程会先写「子进程自己的 PID」再由子进程
+    走到前台分支 — 子进程读到自己的 PID 时 os.kill(pid, 0) 必然成功,
+    若不排除会把刚派发的自己当成"已在运行"而拒绝启动 (面板永远起不
+    来, beta.21 服务器实测). pid == 自身视为合法状态, 不拦截.
+
     Returns: True = 已拦截, 不应继续启动.
     """
     pid = _pid_file_alive(pid_file)
-    if pid is not None:
+    if pid is not None and pid != os.getpid():
         print(f"ℹ️  {kind}已在运行 (PID: {pid}), 无需重复启动")
         print("    如需重启: mnemosync restart; 或先 mnemosync stop 再启动")
         return True
