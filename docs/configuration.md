@@ -28,7 +28,7 @@ Mnemosync 用**单一配置源**: 项目根目录下的 `config.local.toml`。**
 | `[persona]` | 否 (强烈建议) | 服务器人格 (v0.2.1); 缺省使用内置助手人格 |
 | `[storage]` | 否 | 数据库/向量库路径 (v0.2.6 新增 conversation_db_path / short_term_days) |
 | `[memory]` | 否 | 长期记忆参数 |
-| `[graph]` | 否 | LangGraph 编排 + 代理推理开关 |
+| `[graph]` | 否 | LangGraph 编排 |
 | `[runtime]` | 否 | HOST/PORT/log_level |
 
 > ⚠️ v0.2.3 之前存在的 `[chat]` / `[embedding]` / `[rerank]` 段**已废弃**, 迁到面板 `模型管理` 页统一维护。旧配置文件里保留这些段不影响启动 (会被忽略), 但 CLI 不再读它们。
@@ -103,20 +103,9 @@ context            = "..."
 | 字段 | 默认 | 说明 |
 |------|------|------|
 | `checkpoint_backend` | `memory` | LangGraph checkpoint 后端 (`memory` / `sqlite`); v0.2.6 起 checkpoint 仅作单请求内节点共享 state 用, 不再承担跨请求短期记忆 |
-| `proxy_thinking_default` | false | 代理推理的**兜底**开关: 请求无 `reasoning_effort` 等提示、主模型也没原生推理时, 是否强制启用 |
-| `proxy_thinking_native_reasoning_models` | 见下 | 视为具备原生推理的模型前缀白名单 (命中即 skip 代理推理) |
 | `prompt_clean_max_concurrency` | 20 | (v0.4.1) 提示词清洗全局并发上限 (所有进行中模块清洗的并发总额); 低配额 key 可调小 |
 
-**默认前缀白名单**:
-```
-["o1*", "o3*", "o4*",
- "deepseek-r1*", "deepseek-reasoner*",
- "qwen3-*-thinking", "qwq*",
- "gpt-5-thinking-*"]
-```
-末尾 `*` 通配。除静态前缀外, 流式路径会自适应观察: 上游 chunk 出现 `reasoning_content` 字段 → 该模型加入进程内 `_native_cache`, 下次自动跳过 (重启清空)。
-
-**代理推理决策规则**: 由 [src/api/reasoning_control.py](../src/api/reasoning_control.py) 的 `should_use_proxy_thinking()` 判定, 优先级 tools → 原生识别 → 前台点名推理 → `proxy_thinking_default`。详见 [agents.md](modules/agents.md)。
+**已退役字段 (beta.20)**: `proxy_thinking_default` / `proxy_thinking_native_reasoning_models` — 代理推理 Agent 已移除 (现代模型均具备原生推理), 旧配置文件里的这两个键仍可解析, 但不再被读取。
 
 ### 3.5 [runtime]
 
@@ -195,13 +184,6 @@ retrieval_top_k    = 5
 # ---- Graph ----
 [graph]
 checkpoint_backend = "memory"
-proxy_thinking_default = false
-proxy_thinking_native_reasoning_models = [
-  "o1*", "o3*", "o4*",
-  "deepseek-r1*", "deepseek-reasoner*",
-  "qwen3-*-thinking", "qwq*",
-  "gpt-5-thinking-*",
-]
 
 # ---- 运行时 ----
 [runtime]

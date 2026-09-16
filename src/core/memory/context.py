@@ -114,22 +114,6 @@ def _format_addressing(rel: Relationship) -> str:
     return "；".join(bits)
 
 
-def _proxy_thinking_section(proxy_thinking_result: str | None) -> str:
-    """当 proxy_thinking 有内容时, 生成完整段落; 否则空串.
-
-    段落自带前导 '\\n---\\n', 直接拼在模板末尾即可.
-    """
-    if not proxy_thinking_result:
-        return ""
-    return (
-        "\n---\n"
-        "## 思考辅助\n"
-        "以下是对用户消息的预先分析，供你参考——请自然地吸收这些理解，\n"
-        "而不是逐条复述：\n\n"
-        + proxy_thinking_result
-    )
-
-
 def _channel_label(channel_type: str | None) -> str:
     if channel_type == "group":
         return "群聊"
@@ -216,7 +200,6 @@ def render_main_dialogue_system(
     permanent_memories: list[MemoryEntry],
     retrieved_memories: list[MemoryEntry],
     relationship: Relationship | None,
-    proxy_thinking_result: str | None = None,
     *,
     current_speaker: str | None = None,
     channel_type: str | None = None,
@@ -261,7 +244,6 @@ def render_main_dialogue_system(
         )
         .replace("__LOREBOK_ENTRIES__", lorebook_section)
         .replace("__MOOD_STATE__", mood_state_section or "（暂无特别的状态信息）")
-        .replace("__PROXY_THINKING_SECTION__", _proxy_thinking_section(proxy_thinking_result))
     )
 
 
@@ -273,7 +255,6 @@ def build_main_dialogue_messages(
     retrieved_memories: list[MemoryEntry],
     relationship: Relationship | None,
     conversation_history: list[dict[str, Any]],
-    proxy_thinking_result: str | None = None,
     *,
     current_speaker: str | None = None,
     channel_type: str | None = None,
@@ -296,7 +277,6 @@ def build_main_dialogue_messages(
         retrieved_memories: 语义检索到的相关记忆
         relationship: 用户关系状态
         conversation_history: 当前对话历史 (跨前端流水, 已在 short_term 裁剪)
-        proxy_thinking_result: 代理思考结果（可选）
         current_speaker: 模型可读的当前发言者身份
         channel_type: direct / group / None
         space_label: 模型可读的空间名称
@@ -315,7 +295,6 @@ def build_main_dialogue_messages(
         permanent_memories=permanent_memories,
         retrieved_memories=retrieved_memories,
         relationship=relationship,
-        proxy_thinking_result=proxy_thinking_result,
         current_speaker=current_speaker,
         channel_type=channel_type,
         space_label=space_label,

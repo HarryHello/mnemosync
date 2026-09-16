@@ -72,7 +72,6 @@ async def _run_non_stream(question: str, source_user: str, persona: str, persona
         "current_speaker": source_user,
         "persona": persona,
         "persona_name": persona_name,
-        "proxy_thinking_enabled": False,
         "stream_mode": False,
     }
 
@@ -205,7 +204,6 @@ async def _run_stream(question: str, source_user: str, persona: str, persona_nam
         "current_speaker": source_user,
         "persona": persona,
         "persona_name": persona_name,
-        "proxy_thinking_enabled": False,
         "stream_mode": True,
         "response": response_text,
         "response_chunks": chunks,

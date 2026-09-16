@@ -10,19 +10,18 @@
 
 ## 1. 概述
 
-Mnemosync 一次请求由 LangGraph + API 层编排 **6 个 Agent + 1 个前置情绪/mood 通道** 完成。其中代理推理是**原生推理的补齐** (详见 §4), 提示词清洗是**服务器人格权威的守门员** (详见 §6), Expressor 是**拟人化表达的最后防线** (详见 §3)。
+Mnemosync 一次请求由 LangGraph + API 层编排 **5 个 Agent + 1 个前置情绪/mood 通道** 完成 (beta.20 起移除代理推理)。提示词清洗是**服务器人格权威的守门员** (详见 §6), Expressor 是**拟人化表达的最后防线** (详见 §3)。
 
 ### 1.1 Agent 全景
 
 | # | Agent | 推理方法 | 使用模型 | 触发时机 | 输出 |
 |---|-------|---------|---------|---------|------|
 | 1 | 主对话 | 直接推理 | 主模型 | 每次请求必跑 | 回复文本 + 工具调用 |
-| 2 | 代理推理 | CoT (无工具) | 辅助模型 | 主模型无原生推理 & (前台点名推理 或 `proxy_thinking_default=true`) 时启用 | 供主对话参考的思考文本 + 前台 `reasoning_content` 字段 |
 | 3 | Expressor | 单次改写 | 辅助模型 | 群聊最终文本（finish_reason=stop），≥10 字符 | 改写后的口语化回复 |
 | 4 | 记忆分析 | ReAct | 辅助模型 | 主对话后, 与关系分析并行 | 新记忆候选 + 衰减评估 JSON |
 | 5 | 关系分析 | ReAct | 辅助模型 | 主对话后, 与记忆分析并行 | 好感度增量 JSON (v0.4.1: 单 `favor_delta`, 可负) |
 | 6 | 提示词清洗 | ReAct | 辅助模型 | API 层预处理, 客户端 system 消息非空时 | 保留的功能性指令 + 丢弃的人格描述 JSON |
-| 7 | 情绪 + mood 通道 | 单次 completion | 辅助模型 | v0.4.1: API 层三路并行预处理 (gather), 每次请求必跑 (失败降级) | (emotion_analysis, mood_state) |
+| 6 | 情绪 + mood 通道 | 单次 completion | 辅助模型 | v0.4.1: API 层三路并行预处理 (gather), 每次请求必跑 (失败降级) | (emotion_analysis, mood_state) |
 
 **代码位置**: 所有 Agent 的执行函数集中在 [src/core/agents/factory.py](../../src/core/agents/factory.py); ReAct 循环由 [src/core/agents/base.py](../../src/core/agents/base.py) 的 `run_react_loop` 驱动。
 
@@ -34,8 +33,6 @@ Mnemosync 一次请求由 LangGraph + API 层编排 **6 个 Agent + 1 个前置�
       ▼
 parse_request
       │
-      ├─ proxy_thinking_enabled? ──► proxy_thinking
-      │                                   │
       └───────────────────────────────► main_dialogue
                                             │
                               ┌─────────────┴─────────────┐
@@ -49,10 +46,10 @@ parse_request
 
 **要点**:
 - `parse_request` 不是 Agent, 是纯 Python 预处理节点 (提取新消息 + 用户标识)
-- **提示词清洗 Agent 不在图中**: 在 [forward 包](../../src/api/routes/forward/__init__.py) API 层运行, v0.4.1 起经 [dispatch._run_parallel_preprocess](../../src/api/routes/forward/dispatch.py) 与情绪+mood、Vision 转写**三路 gather 并行** (代理推理不入并行 — 它是主模型的思考, 串行于主对话之前); 输出的最终 persona 通过 `initial_state["persona"]` 注入图, 清洗结果落到 `state["prompt_cleaning_result"]` 便于观察 (详见 §6)
+- **提示词清洗 Agent 不在图中**: 在 [forward 包](../../src/api/routes/forward/__init__.py) API 层运行, v0.4.1 起经 [dispatch._run_parallel_preprocess](../../src/api/routes/forward/dispatch.py) 与情绪+mood、Vision 转写**三路 gather 并行**; 输出的最终 persona 通过 `initial_state["persona"]` 注入图, 清洗结果落到 `state["prompt_cleaning_result"]` 便于观察 (详见 §6)
 - `relationship_analysis` 和 `memory_analysis` 是**并行边**, 主对话完成后同时触发
 - 向量索引 (嵌入写入 Chroma) 在 `memory_analysis` 节点内部由 `MemoryLifecycle.store_candidate()` 顺手完成, **不是独立节点**
-- **流式路径不经过图**: [forward/stream.py `_handle_stream`](../../src/api/routes/forward/stream.py) 在 API 层直接编织 "加载记忆 → 三路并行预处理 → 代理推理 (可选, 同步) → 合成 reasoning SSE 帧 → 上游 chat_stream 透传 → 后台记忆图", 图仅用于后台跑记忆/关系两个分析节点, 主对话与代理推理在 API 层就完成。见 [forward.md](forward.md) §6
+- **流式路径不经过图**: [forward/stream.py `_handle_stream`](../../src/api/routes/forward/stream.py) 在 API 层直接编织 "加载记忆 → 三路并行预处理 → 上游 chat_stream 透传 → 后台记忆图", 图仅用于后台跑记忆/关系两个分析节点, 主对话在 API 层就完成。见 [forward.md](forward.md) §6
 
 ### 1.3 与嵌入/重排模型的关系
 
@@ -76,7 +73,6 @@ parse_request
 
 ```
 [0] system  ─ persona_prompt + user_name + 关系状态 + 永久记忆 + 检索记忆
-              + (可选) proxy_thinking_result
 [1..N] user/assistant ─ 会话历史 (去掉原始 system)
 ```
 
@@ -223,79 +219,10 @@ Expressor 仅在同时满足以下条件时调用：
 
 ---
 
-## 5. 代理推理 Agent
+## 5. (已移除) 代理推理 Agent
 
-**代码**: [factory.py:226 `run_proxy_thinking`](../../src/core/agents/factory.py#L226) · 决策与 SSE 合成: [src/api/reasoning_control.py](../../src/api/reasoning_control.py)
-**Prompt**: 默认 [prompts/defaults/proxy_thinking.md](../../src/core/agents/prompts/defaults/proxy_thinking.md); 用户覆盖见 [§7](#7-自定义-agent-提示词). Builder: [`build_proxy_thinking_prompt`](../../src/core/agents/prompts/proxy_thinking.py)
-
-### 4.1 定位 (⚠️ 与直觉相反, 请仔细看)
-
-代理推理是**原生推理的补齐 / 替代**, 不是可选优化。核心语义:
-
-> "前台点名要推理" 是**必须提供推理**的信号 — 由原生或代理**任一**满足。
->
-> 若主模型不具备原生推理却收到 `reasoning_effort` / `reasoning` / `thinking` 参数, Mnemosync **必须**启动代理推理去补齐, 否则前台永远看不到"思考"面板内容。
-
-这与常见的"用户显式要求就跳过我们的层"直觉相反。原因: 客户端 (Cherry Studio / ChatBox 等) 在启用"深度思考"开关后会带上 `reasoning_effort`, 用户期待看到思考过程 — 如果我们此时静默 skip, 用户会认为"Mnemosync 破坏了思考功能"。
-
-### 4.2 决策规则
-
-由 [`should_use_proxy_thinking()`](../../src/api/reasoning_control.py) 判定, 优先级由上至下:
-
-| # | 条件 | 结果 |
-|---|------|------|
-| 1 | 请求带 `tools` | **skip** (工具调用轮次多, 叠推理延迟不划算) |
-| 2 | 主模型具备原生推理 (前缀表命中 或 自适应缓存) | **skip** (让原生接管) |
-| 3 | 前台请求体带 `reasoning_effort` / `reasoning` / `thinking` | **enable** (补齐必须的推理) |
-| 4 | fallback | 用 `[graph].proxy_thinking_default` |
-
-**原生推理识别双通道**:
-- 静态前缀表: `[graph].proxy_thinking_native_reasoning_models` (默认含 `o1*` / `o3*` / `o4*` / `deepseek-r1*` / `deepseek-reasoner*` / `qwen3-*-thinking` / `qwq*` / `gpt-5-thinking-*`)
-- 自适应缓存: 流式路径观察到上游 chunk 含 `"reasoning_content"` 字段 → 记入进程内 `_native_cache` → 下次同模型自动 skip (进程重启后自动重学)
-
-### 4.3 前台输出协议
-
-代理推理的结果通过 OpenAI 兼容的 `reasoning_content` 字段回吐 (DeepSeek 首创, Cherry Studio / ChatBox / LibreChat / OpenWebUI 等均支持):
-
-- **非流式**: `response.choices[0].message.reasoning_content` = 推理全文
-- **流式**: 上游正文流之前先注入合成的 SSE 帧, 逐段 `delta.reasoning_content`, 然后是正常的 `delta.content` 流
-
-客户端渲染折叠"思考"面板, 与真原生推理模型 (DeepSeek-R1 等) 行为一致。
-
-### 4.4 双通道注入
-
-同一份 `reasoning_text` 一份数据两个用途:
-
-1. **注入主对话 prompt**: 通过 `build_main_dialogue_messages(proxy_thinking_result=...)` 作为"## 思考辅助"段拼进 system prompt, 让主模型基于该分析生成更好的回复
-2. **回吐前台**: 作为 `reasoning_content` 字段/帧给客户端展示
-
-### 4.5 工具
-
-`run_proxy_thinking` 接受可选 `tools` 参数:
-- `tools=None` (当前 nodes.py 传法) → 走 `run_simple_completion` 单次调用, 关闭 thinking, 无工具
-- `tools=[...]` → 走 `run_react_loop`, 支持在循环中调工具
-
-Prompt 里已注入永久记忆和关系状态, 通常无需再检索。
-
-### 4.6 输出格式
-
-模型自由文本 (非 JSON), 结构如下:
-
-```
-### 1. User Intent
-### 2. Background Connection
-### 3. Emotion Analysis
-### 4. Response Strategy
-```
-
-主对话节点通过 `state["proxy_thinking_result"]` 读取此字符串, 拼进 system prompt。
-
-### 4.7 失败降级
-
-代理推理抛异常 → `reasoning_text=None` → 不合成帧, 不注入 prompt, 正常转发主对话流 → 用户端等同于未启用。记 warning, 不阻塞主对话。
-
----
-
+**beta.20 已移除** — 代理推理 Agent 随 v0.4.1 结束退役: 现代模型均具备原生推理 (reasoning_content), 该层不再有存在必要。
+历史设计与决策规则见 git 历史。
 ## 6. 关系分析 Agent
 
 **代码**: [factory.py:190 `run_relationship_analysis`](../../src/core/agents/factory.py#L190)
@@ -456,7 +383,6 @@ persona + 保留的指令
 | `relationship_analysis` | 关系分析 Agent | `CURRENT_REL`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `CONVERSATION`, `PERSONA_NAME`, `PERSONA_ADDRESSING`, `USER_ADDRESSING`, `RELATION_CONTEXT`, `EMOTION_ANALYSIS` |
 | `prompt_cleaning_system` | 提示词清洗 Agent 的 system prompt | (无) |
 | `prompt_cleaning_user` | 提示词清洗 Agent 的 user prompt | `SYSTEM_MESSAGE` |
-| `proxy_thinking` | 代理推理 Agent | `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `RELATIONSHIP`, `MEMORIES`, `USER_MESSAGE` |
 | `main_dialogue_frame` | 主对话上下文框架 | `PERSONA_NAME`, `PERSONA_PROMPT`, `CURRENT_SPEAKER`, `CHANNEL_TYPE`, `SPACE_LABEL`, `ACTIVE_PARTICIPANTS`, `TRIGGER_REASON`, `TOOL_CAPABILITY_HINT`, `RELATIONSHIP`, `PERMANENT_MEMORIES`, `RETRIEVED_MEMORIES`, `PROXY_THINKING_SECTION`, `MOOD_STATE` (v0.4.1) |
 
 权威列表: [`src/core/prompts/registry.py`](../../src/core/prompts/registry.py) 的 `PROMPT_REGISTRY`. 未在 registry 中的 name 一律拒绝加载/保存 (**路径穿越防御**)。
@@ -537,7 +463,6 @@ class AgentState(TypedDict, total=False):
     persona_name: str
     persona_id: str                # v0.3.0: 人格标识 (当前固定 "default", 从 state 读不再硬编码)
     thread_id: str
-    proxy_thinking_enabled: bool
     space_id: str | None           # v0.3.0: 会话空间 ID (群聊分区)
     channel_type: str | None       # v0.3.0: "direct" | "group" | None
     current_speaker: str | None    # v0.3.0: 模型可读的当前发言者身份

@@ -16,7 +16,7 @@ from src.persistence.agent_run_store import AgentRunStore
 class TestAgentSpec:
     def test_all_specs_registered(self):
         expected = {
-            "prompt_cleaning", "expressor", "proxy_thinking",
+            "prompt_cleaning", "expressor",
             "memory_analysis", "relationship_analysis",
             "vision_description",
         }
@@ -39,7 +39,7 @@ class TestAgentSpec:
         for name, spec in AGENT_SPECS.items():
             assert spec.name == name
             assert spec.purpose
-            assert spec.model_role in ("MAIN", "ASSIST")
+            assert spec.model_role in ("MAIN", "ASSIST", "VISION")
             assert spec.runner_type in ("simple", "react")
             assert spec.timeout_seconds > 0
             assert spec.max_iterations >= 1
@@ -78,7 +78,7 @@ class TestAgentRunStore:
         assert record.usage == {"total_tokens": 100}
 
     async def test_finish_run_with_error(self, run_store: AgentRunStore):
-        await run_store.create_run("run-003", "req-xyz", "proxy_thinking")
+        await run_store.create_run("run-003", "req-xyz", "expressor")
         await run_store.finish_run("run-003", status="timeout", error="timed out")
         record = await run_store.get_by_id("run-003")
         assert record.status == "timeout"
@@ -181,7 +181,7 @@ class TestRunAgentTracked:
         # Use a spec with long timeout so the cancel fires before timeout
         coro = cancellable()
         task = asyncio.create_task(
-            run_agent_tracked("proxy_thinking", coro, store=run_store)
+            run_agent_tracked("vision_description", coro, store=run_store)
         )
         await asyncio.sleep(0.01)
         task.cancel()

@@ -161,7 +161,6 @@ async def _prepare_context(
         retrieved_memories=retrieved_entries,
         relationship=rel,
         conversation_history=conversation_history,
-        proxy_thinking_result=state.get("proxy_thinking_result"),
         current_speaker=state.get("current_speaker"),
         channel_type=state.get("channel_type"),
         space_label=state.get("space_id"),

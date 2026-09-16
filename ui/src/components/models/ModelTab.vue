@@ -23,6 +23,7 @@ const ROLE_TITLES: Record<UpstreamModelType, string> = {
   main: '主模型',
   assist: '辅助模型',
   embedding: '嵌入模型',
+  vision: '视觉转写',
   rerank: '重排序模型',
 }
 
@@ -30,6 +31,7 @@ const bindings = ref<Record<UpstreamModelType, RoleBindingItem[]>>({
   main: [],
   assist: [],
   embedding: [],
+  vision: [],
   rerank: [],
 })
 const services = ref<UpstreamService[]>([])
@@ -48,7 +50,7 @@ async function refresh() {
       listRegistryModels(),
     ])
     const grouped: Record<UpstreamModelType, RoleBindingItem[]> = {
-      main: [], assist: [], embedding: [], rerank: [],
+      main: [], assist: [], vision: [], embedding: [], rerank: [],
     }
     for (const item of all.items) {
       grouped[item.role].push(item)

@@ -13,6 +13,7 @@ interface RoleMeta {
 const ROLES: RoleMeta[] = [
   { key: 'main',      title: '主模型',     desc: '主对话与工具调用, 影响用户体验最直接',       singleBinding: false },
   { key: 'assist',    title: '辅助模型',   desc: '记忆/关系分析等后台任务, 通常选便宜些的',    singleBinding: false },
+  { key: 'vision',    title: '视觉转写',   desc: '图片转文字描述; 未绑定回退辅助模型, 可选',  singleBinding: false },
   { key: 'embedding', title: '嵌入模型',   desc: '记忆向量化; 单绑定, 更换需重建向量库',     singleBinding: true  },
   { key: 'rerank',    title: '重排序模型', desc: '召回后的相关性重排; 可选',                singleBinding: false },
 ]

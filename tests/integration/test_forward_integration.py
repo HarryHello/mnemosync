@@ -73,7 +73,6 @@ def _make_initial_state(*, stream: bool = False) -> dict[str, Any]:
         "persona_name": "assistant",
         "persona_id": "default",
         "persona_definition": None,
-        "proxy_thinking_enabled": False,
         "stream_mode": stream,
         "main_model": "test-model",
         "source_frontend": None,
@@ -345,7 +344,7 @@ class TestStreamBasicFlow:
             patch("src.api.routes.forward.stream._run_memory_graph", new=AsyncMock()),
         ):
             retriever_cls.return_value.search = AsyncMock(return_value=[])
-            response = await _handle_stream(http_request, initial_state, request, False)
+            response = await _handle_stream(http_request, initial_state, request)
             chunks = [chunk async for chunk in response.body_iterator]
 
         # Should have content chunks + finish chunk + [DONE]
@@ -400,7 +399,7 @@ class TestStreamBasicFlow:
             patch("src.api.routes.forward.stream._run_memory_graph", mock_run_memory),
         ):
             retriever_cls.return_value.search = AsyncMock(return_value=[])
-            response = await _handle_stream(http_request, initial_state, request, False)
+            response = await _handle_stream(http_request, initial_state, request)
             # Consume the stream to trigger post-stream callbacks
             _ = [chunk async for chunk in response.body_iterator]
 
@@ -467,7 +466,7 @@ class TestStreamBasicFlow:
             patch("src.api.routes.forward.stream._run_memory_graph", new=AsyncMock()),
         ):
             retriever_cls.return_value.search = AsyncMock(return_value=[])
-            response = await _handle_stream(http_request, initial_state, request, False)
+            response = await _handle_stream(http_request, initial_state, request)
             _ = [chunk async for chunk in response.body_iterator]
 
         # relationship_store.get_relationship should have been called
@@ -637,7 +636,7 @@ class TestToolCallFlow:
             patch("src.api.routes.forward.stream._run_memory_graph", new=AsyncMock()),
         ):
             retriever_cls.return_value.search = AsyncMock(return_value=[])
-            response = await _handle_stream(http_request, initial_state, request, False)
+            response = await _handle_stream(http_request, initial_state, request)
             chunks = [chunk async for chunk in response.body_iterator]
 
         # Verify tool_calls appear in the collected SSE data
@@ -719,7 +718,7 @@ class TestErrorHandling:
             patch("src.api.routes.forward.stream._run_memory_graph", new=AsyncMock()),
         ):
             retriever_cls.return_value.search = AsyncMock(return_value=[])
-            response = await _handle_stream(http_request, initial_state, request, False)
+            response = await _handle_stream(http_request, initial_state, request)
             chunks = [chunk async for chunk in response.body_iterator]
 
         # Should contain an error frame
@@ -765,7 +764,7 @@ class TestErrorHandling:
             patch("src.api.routes.forward.stream._run_memory_graph", new=AsyncMock()),
         ):
             retriever_cls.return_value.search = AsyncMock(return_value=[])
-            response = await _handle_stream(http_request, initial_state, request, False)
+            response = await _handle_stream(http_request, initial_state, request)
             chunks = [chunk async for chunk in response.body_iterator]
 
         all_data = b"".join(chunks)
@@ -816,7 +815,7 @@ class TestErrorHandling:
             patch("src.api.routes.forward.stream._run_memory_graph", new=AsyncMock()),
         ):
             retriever_cls.return_value.search = AsyncMock(return_value=[])
-            response = await _handle_stream(http_request, initial_state, request, False)
+            response = await _handle_stream(http_request, initial_state, request)
             chunks = [chunk async for chunk in response.body_iterator]
 
         all_data = b"".join(chunks)

@@ -3,7 +3,7 @@ import asyncio
 import os
 import tempfile
 
-from src.core.agents import run_memory_analysis, run_proxy_thinking, run_relationship_analysis
+from src.core.agents import run_memory_analysis, run_relationship_analysis
 from src.core.config import get_settings
 from src.core.memory import MemoryEntry, MemoryType
 from src.infra import Forwarder, ForwarderConfig, VectorStore
@@ -51,13 +51,6 @@ async def main():
         tools=[make_emotion_analyzer_tool(fwd)], max_iterations=3,
     )
     print(f"delta={r.intimacy_delta} type={r.new_relationship_type}")
-
-    print("\n=== 代理思考 Agent ===")
-    pt = await run_proxy_thinking(
-        forwarder=fwd, user_name="马达", relationship="friend 0.5",
-        memories="花生过敏", user_message="最近压力大睡不好", tools=None,
-    )
-    print(f"result_len={len(pt)}")
 
     print("\nALL TESTS PASSED")
     await fwd.close()

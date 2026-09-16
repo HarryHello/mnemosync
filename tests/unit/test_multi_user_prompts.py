@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from src.core.agents.prompts.memory_analysis import build_memory_analysis_prompt
-from src.core.agents.prompts.proxy_thinking import build_proxy_thinking_prompt
 from src.core.agents.prompts.relationship_analysis import build_relationship_analysis_prompt
 
 
@@ -41,20 +40,4 @@ def test_relationship_analysis_only_counts_signals_addressed_to_persona() -> Non
     assert "只计算当前发言者直接面向人格的关系信号" in prompt
     assert "当前发言者对另一位群友说" in prompt
     assert "不更新其与人格的关系" in prompt
-    assert "__" not in prompt
-
-
-def test_proxy_thinking_requires_group_privacy_and_intervention_check() -> None:
-    prompt = build_proxy_thinking_prompt(
-        user_name="马达",
-        relationship="friend",
-        memories="正在准备面试",
-        user_message="Harry 你怎么看？",
-        channel_type="group",
-    )
-
-    assert "当前发言者：马达" in prompt
-    assert "会话类型：群聊" in prompt
-    assert "是否有必要介入" in prompt
-    assert "不能公开表达" in prompt
     assert "__" not in prompt

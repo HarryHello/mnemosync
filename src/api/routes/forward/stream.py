@@ -1,4 +1,4 @@
-"""流式处理: 加载记忆 → 代理推理 → 转发上游 → 后台记忆图."""
+"""流式处理: 加载记忆 → 转发上游 → 后台记忆图."""
 
 import asyncio
 import logging
@@ -12,16 +12,9 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 
 from src.api.deps import _state
-from src.api.reasoning_control import (
-    build_reasoning_stream_frames,
-    chunk_has_native_reasoning,
-    mark_native_reasoning,
-)
 from src.api.schemas.forward import ChatCompletionRequest
 from src.api.tool_policies import filter_tool_calls, validate_tool_arguments
 from src.api.tool_transactions import append_tool_transaction_context
-from src.core.agents import run_proxy_thinking
-from src.core.agents.tracking import run_agent_tracked
 from src.core.config import Settings, get_settings
 from src.core.constants import VIRTUAL_MODEL_ANY
 from src.core.memory import MemoryEntry, Relationship, format_relationship
@@ -61,7 +54,6 @@ class _StreamAssemblyResult:
     """
 
     collected_chunks: list[bytes] = field(default_factory=list)
-    saw_native: bool = False
     errored: bool = False
 
 
@@ -104,24 +96,14 @@ async def _assemble_deltas(
     temperature: float | None,
     max_tokens: int | None,
     passthrough: dict[str, Any],
-    reasoning_text: str | None,
     chatcmpl_id: str,
-    main_model: str,
 ) -> AsyncGenerator[bytes, None]:
-    """Yield SSE frames: proxy-reasoning deltas followed by upstream content.
+    """Yield SSE frames: upstream content.
 
     Collects every raw upstream chunk in *result* so the caller can
     post-process them after the stream ends.  On upstream errors an SSE
     error frame is yielded and the generator stops (no exception escapes).
     """
-    if reasoning_text:
-        for frame in build_reasoning_stream_frames(
-            reasoning_text,
-            chatcmpl_id=chatcmpl_id,
-            model=main_model,
-        ):
-            yield frame
-
     try:
         logger.debug("🚀 开始流式转发 (带记忆上下文)...")
         with use_agent("main_dialogue_stream"):
@@ -133,8 +115,6 @@ async def _assemble_deltas(
                 **passthrough,
             ):
                 result.collected_chunks.append(chunk)
-                if not result.saw_native and chunk_has_native_reasoning(chunk):
-                    result.saw_native = True
                 yield chunk
         logger.debug("✅ 流式转发完成, chunks: %d", len(result.collected_chunks))
     except (
@@ -147,9 +127,6 @@ async def _assemble_deltas(
         yield _handle_stream_errors(exc)
         return
 
-    if result.saw_native:
-        mark_native_reasoning(main_model)
-
 
 async def _dispatch_callbacks(
     http_request: Request,
@@ -160,7 +137,6 @@ async def _dispatch_callbacks(
     new_user_content: str,
     conversation_store: SqliteConversationStore,
     collected_chunks: list[bytes],
-    reasoning_text: str | None,
     stream_result: StreamResult,
 ) -> None:
     """Post-stream: filter tool calls, persist events, record idempotency,
@@ -379,48 +355,6 @@ async def _describe_images_if_needed(
     return f"{new_user_content}\n{desc_text}" if new_user_content else desc_text
 
 
-async def _run_proxy_thinking(
-    http_request: Request,
-    initial_state: dict[str, Any],
-    *,
-    use_proxy_thinking: bool,
-    multi_forwarder: MultiForwarder,
-    current_speaker: str,
-    rel: Relationship | None,
-    perms: list[MemoryEntry],
-    new_user_content: str,
-) -> str | None:
-    """(可选) 代理推理, 与检索串行; 失败时退化为普通转发."""
-    reasoning_text: str | None = None
-    if use_proxy_thinking:
-        logger.debug("🤔 [代理推理] 开始 (ASSIST role)")
-        try:
-            perms_text = "\n".join(f"- {e.content}" for e in perms) or "（无）"
-            _st = getattr(http_request.app, "state", None)
-            reasoning_text = await run_agent_tracked(
-                "proxy_thinking",
-                run_proxy_thinking(
-                    forwarder=multi_forwarder,
-                    user_name=current_speaker,
-                    relationship=format_relationship(rel) if rel else "新用户",
-                    memories=perms_text,
-                    user_message=new_user_content,
-                    tools=None,
-                    channel_type=initial_state.get("channel_type"),
-                ),
-                store=getattr(_st, "agent_run_store", None) if _st else None,
-                debug_bus=getattr(_st, "debug_bus", None) if _st else None,
-                parent_request_id=initial_state.get("interaction_id"),
-            )
-            logger.debug(
-                "  ✅ 代理推理完成, 长度: %d", len(reasoning_text) if reasoning_text else 0
-            )
-        except Exception as e:
-            logger.warning("代理推理失败, 退化为普通转发: %s", e)
-            reasoning_text = None
-    return reasoning_text
-
-
 async def _build_stream_mood_section(
     http_request: Request,
     initial_state: dict[str, Any],
@@ -450,7 +384,6 @@ async def _build_stream_messages(
     rel: Relationship | None,
     perms: list[MemoryEntry],
     retrieved_entries: list[MemoryEntry],
-    reasoning_text: str | None,
     new_user_content: str,
     space_id: str | None,
     source_user: str,
@@ -468,7 +401,6 @@ async def _build_stream_messages(
         permanent_memories=perms,
         retrieved_memories=retrieved_entries,
         relationship=rel,
-        proxy_thinking_result=reasoning_text,
         current_speaker=current_speaker,
         channel_type=initial_state.get("channel_type"),
         space_label=space_id,
@@ -514,7 +446,6 @@ async def _build_stream_messages(
         retrieved_memories=retrieved_entries,
         relationship=rel,
         conversation_history=conversation_history,
-        proxy_thinking_result=reasoning_text,
         current_speaker=current_speaker,
         channel_type=initial_state.get("channel_type"),
         space_label=space_id,
@@ -546,7 +477,6 @@ def _make_streaming_response(
     conversation_store: SqliteConversationStore,
     messages_with_memory: list[dict[str, Any]],
     new_user_content: str,
-    reasoning_text: str | None,
 ) -> StreamingResponse:
     """构造 SSE 流式响应: stream_generator 转发 + locked_stream 后处理.
 
@@ -598,9 +528,7 @@ def _make_streaming_response(
             temperature=request.temperature,
             max_tokens=request.max_tokens,
             passthrough=passthrough,
-            reasoning_text=reasoning_text,
             chatcmpl_id=chatcmpl_id,
-            main_model=main_model,
         ):
             yield chunk
 
@@ -620,7 +548,6 @@ def _make_streaming_response(
             new_user_content=new_user_content,
             conversation_store=conversation_store,
             collected_chunks=result.collected_chunks,
-            reasoning_text=reasoning_text,
             stream_result=stream_result,
         )
 
@@ -640,9 +567,6 @@ def _make_streaming_response(
         finish_reason = _gen_result.get("assistant_finish_reason")
         assistant_text = _gen_result.get("assistant_text", "")
 
-        initial_state["proxy_thinking_enabled"] = False
-        if reasoning_text:
-            initial_state["proxy_thinking_result"] = reasoning_text
 
         # Skip memory graph for tool-only intermediate rounds.
         if finish_reason == "tool_calls" and not assistant_text:
@@ -722,14 +646,8 @@ async def _handle_stream(
     http_request: Request,
     initial_state: dict[str, Any],
     request: ChatCompletionRequest,
-    use_proxy_thinking: bool,
 ) -> StreamingResponse:
-    """流式: 加载记忆 → (可选) 代理推理 → 合成 reasoning_content SSE
-    → 转发上游 → 后台记忆图.
-
-    代理推理结果 (a) 作为 system prompt 注入主对话, (b) 拆帧作为
-    delta.reasoning_content 提前吐给客户端, 与上游正文流拼接成完整回复.
-    """
+    """流式: 加载记忆 → 转发上游 → 后台记忆图."""
     settings = get_settings()
     source_user = initial_state.get("source_user") or ""
     current_speaker = initial_state.get("current_speaker") or "未知参与者"
@@ -781,18 +699,6 @@ async def _handle_stream(
     elif vision_content:
         new_user_content = (new_user_content + " " + vision_content).strip()
 
-    # 2. (可选) 代理推理.
-    reasoning_text = await _run_proxy_thinking(
-        http_request,
-        initial_state,
-        use_proxy_thinking=use_proxy_thinking,
-        multi_forwarder=multi_forwarder,
-        current_speaker=current_speaker,
-        rel=rel,
-        perms=perms,
-        new_user_content=new_user_content,
-    )
-
     # 3. 装填短期历史 + 拼装 messages.
     messages_with_memory = await _build_stream_messages(
         initial_state,
@@ -804,7 +710,6 @@ async def _handle_stream(
         rel=rel,
         perms=perms,
         retrieved_entries=retrieved_entries,
-        reasoning_text=reasoning_text,
         new_user_content=new_user_content,
         space_id=space_id,
         source_user=source_user,
@@ -836,5 +741,4 @@ async def _handle_stream(
         conversation_store=conversation_store,
         messages_with_memory=messages_with_memory,
         new_user_content=new_user_content,
-        reasoning_text=reasoning_text,
     )

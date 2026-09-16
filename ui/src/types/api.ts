@@ -304,7 +304,7 @@ export interface PromptHistoryResponse {
 // Upstream LLM Services (Admin)
 // ============================================================================
 
-export type UpstreamModelType = 'main' | 'assist' | 'embedding' | 'rerank'
+export type UpstreamModelType = 'main' | 'assist' | 'vision' | 'embedding' | 'rerank'
 
 export interface UpstreamService {
   id: string

@@ -17,7 +17,6 @@ from src.core.agents.base import (
 from src.core.agents.prompts import (
     build_memory_analysis_prompt,
     build_prompt_cleaning_user_prompt,
-    build_proxy_thinking_prompt,
     build_relationship_analysis_prompt,
     load_prompt_cleaning_system,
 )
@@ -438,40 +437,4 @@ async def run_prompt_cleaning(
         logger.warning("提示词清洗异常: %s, 降级为全部丢弃", e)
         return PromptCleaningOutput(
             clean_prompt="", reasoning=str(e), raw_output="", steps=[],
-        )
-
-
-async def run_proxy_thinking(
-    forwarder: MultiForwarder,
-    user_name: str,
-    relationship: str,
-    memories: str,
-    user_message: str,
-    tools: list[Any] | None = None,
-    max_iterations: int = 3,
-    channel_type: str | None = None,
-) -> str:
-    """代理思考 Agent: CoT, 输出推理过程供主对话参考."""
-    user_prompt = build_proxy_thinking_prompt(
-        user_name=user_name,
-        relationship=relationship,
-        memories=memories or "（无）",
-        user_message=user_message,
-        channel_type=channel_type,
-    )
-    if tools:
-        with use_agent("proxy_thinking"):
-            result = await run_react_loop(
-                forwarder=forwarder, role=ModelType.ASSIST,
-                system_prompt="你是代理思考助手。可调用工具检索记忆，然后输出分析。",
-                user_prompt=user_prompt, tools=tools, max_iterations=max_iterations,
-                temperature=0.3,
-            )
-        return result.output
-    with use_agent("proxy_thinking"):
-        return await run_simple_completion(
-            forwarder=forwarder, role=ModelType.ASSIST,
-            system_prompt="你是代理思考助手。输出供主 AI 参考的推理分析。",
-            user_prompt=user_prompt, temperature=0.3,
-            extra_body={"enable_thinking": False},
         )

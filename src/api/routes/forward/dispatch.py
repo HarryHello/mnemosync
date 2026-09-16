@@ -390,7 +390,6 @@ async def _run_parallel_preprocess(
 
     三者输入在请求早期就绪、互不依赖, 用 gather 并发发出 (省 ~2/3 的
     LLM 往返时间, 融入首 token 延迟的只有最慢那一个).
-    代理推理 (proxy_thinking) 不入此并行 — 它是主模型的"思考", 必须串行于主对话之前.
 
     Returns:
         (persona, prompt_cleaning_result, emotion_analysis, mood_state,
@@ -777,7 +776,6 @@ def _build_initial_state(
     persona: str,
     persona_name: str,
     persona_definition: Any,
-    use_proxy: bool,
     main_model: str,
     source_frontend: str | None,
     space_id: str | None,
@@ -807,7 +805,6 @@ def _build_initial_state(
         "persona_name": persona_name,
         "persona_id": _PID,
         "persona_definition": persona_definition,
-        "proxy_thinking_enabled": use_proxy,
         "stream_mode": bool(request.stream),
         "main_model": main_model,
         "source_frontend": source_frontend,
