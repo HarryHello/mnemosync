@@ -55,6 +55,32 @@ def _apply_proxy(url: str) -> str:
     return proxy.rstrip("/") + "/" + url
 
 
+_RETRY_ATTEMPTS = 3
+
+
+async def _get_with_retry(
+    url: str, *, headers: dict[str, str], timeout: float,
+) -> httpx.Response:
+    """GET 带传输层错误重试 (beta.25).
+
+    国内服务器到 GitHub 的 DNS/连接抖动是常态 (beta.24 服务器实测:
+    api.github.com 间歇 Errno -2, 甚至被污染应答 400), 单次请求
+    随机失败, 短退避重试 3 次. 仅传输层错误重试; HTTP 状态错误
+    (400/404 等) 重试无意义, 原样返回/抛出.
+    """
+    last_error: Exception | None = None
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            async with httpx.AsyncClient(timeout=timeout, proxy=_proxy_url()) as client:
+                return await client.get(_apply_proxy(url), headers=headers)
+        except httpx.RequestError as e:
+            last_error = e
+            if attempt < _RETRY_ATTEMPTS - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+    assert last_error is not None
+    raise last_error
+
+
 @dataclass
 class PluginMetadata:
     """插件元数据 (从文件 AST 解析, 不执行代码)."""
@@ -93,10 +119,9 @@ async def list_available(source_url: str | None = None) -> list[AvailablePlugin]
     plugins: list[AvailablePlugin] = []
 
     try:
-        async with httpx.AsyncClient(timeout=15, proxy=_proxy_url()) as client:
-            resp = await client.get(_apply_proxy(url), headers={"Accept": "application/vnd.github.v3+json"})
-            resp.raise_for_status()
-            files = resp.json()
+        resp = await _get_with_retry(url, headers={"Accept": "application/vnd.github.v3+json"}, timeout=15)
+        resp.raise_for_status()
+        files = resp.json()
 
         if not isinstance(files, list):
             logger.warning("插件源返回非列表: %s", url)
@@ -188,10 +213,9 @@ async def install_plugin(file_name: str, download_url: str) -> Path:
 
     target = PLUGIN_DIR / file_name
     try:
-        async with httpx.AsyncClient(timeout=30, proxy=_proxy_url()) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            content = resp.content
+        resp = await _get_with_retry(url, headers={}, timeout=30)
+        resp.raise_for_status()
+        content = resp.content
     except Exception as raw_error:
         # raw 不可达 → contents API 兜底 (beta.24, 国内服务器 raw 常超时)
         api_url = _api_contents_url_from_raw(url)
@@ -259,13 +283,11 @@ def _api_contents_url_from_raw(raw_url: str) -> str | None:
 
 async def _fetch_github_contents(api_url: str) -> bytes:
     """经 contents API 拉取单个文件 (base64 解码), 失败抛异常."""
-    async with httpx.AsyncClient(timeout=15, proxy=_proxy_url()) as client:
-        resp = await client.get(
-            _apply_proxy(api_url),
-            headers={"Accept": "application/vnd.github.v3+json"},
-        )
-        resp.raise_for_status()
-        return base64.b64decode(resp.json().get("content") or "")
+    resp = await _get_with_retry(
+        api_url, headers={"Accept": "application/vnd.github.v3+json"}, timeout=15,
+    )
+    resp.raise_for_status()
+    return base64.b64decode(resp.json().get("content") or "")
 
 
 async def _fetch_metadata(url: str) -> PluginMetadata | None:
@@ -276,11 +298,11 @@ async def _fetch_metadata(url: str) -> PluginMetadata | None:
     """
     content: str | None = None
     try:
-        async with httpx.AsyncClient(timeout=10, proxy=_proxy_url()) as client:
-            # 只下载前 4KB 足够读 class 定义
-            resp = await client.get(_apply_proxy(url), headers={"Range": "bytes=0-4096"})
-            if resp.status_code in (200, 206):
-                content = resp.text
+        resp = await _get_with_retry(
+            url, headers={"Range": "bytes=0-4096"}, timeout=10,
+        )
+        if resp.status_code in (200, 206):
+            content = resp.text
     except Exception as e:
         logger.debug("raw 元数据获取失败 (%s): %s", url, e)
 
