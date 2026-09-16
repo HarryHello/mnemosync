@@ -62,6 +62,36 @@ def test_guard_blocks_when_pid_alive(tmp_path) -> None:
         proc.wait()
 
 
+def test_guard_passes_when_pid_is_self(tmp_path) -> None:
+    """回归 (beta.21): daemon 父进程写的是子进程自己的 PID.
+
+    子进程读到自己的 PID 时不得把自己当成"已在运行"而拒绝启动 —
+    否则面板永远起不来 (beta.21 服务器实测: panel -d 假成功后子进程
+    自我拒绝退出, 日志里留下「面板已在运行 (PID: 自身)」).
+    """
+    import os
+
+    pid_file = tmp_path / "p.pid"
+    pid_file.write_text(str(os.getpid()))
+
+    # 端口空闲 → 不拦截
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    free_port = srv.getsockname()[1]
+    srv.close()
+    assert _guard_duplicate_start("面板", str(pid_file), free_port) is False
+
+    # 端口被占 → 仍要拦截 (真重复)
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    try:
+        occupied = srv.getsockname()[1]
+        assert _guard_duplicate_start("面板", str(pid_file), occupied) is True
+    finally:
+        srv.close()
+
+
 def test_guard_blocks_when_port_occupied(tmp_path) -> None:
     srv = socket.socket()
     srv.bind(("127.0.0.1", 0))
