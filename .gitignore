@@ -1,45 +1,49 @@
-# System files
+# Agent / IDE / system files
 .DS_Store
+.claude/
+.idea/
+.vscode/
+.vs/
+.qwen/
+.ai/
+.kimi-code/
 
-# Agent and IDE files
-.claude
-.idea
-.vscode
-.vs
-.qwen
-.ai
-
-# Python files
-.venv
+# Python
+.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# Data files
-data/
-*.db
-*.db-shm
-*.db-wal
+# Frontend build artifacts
+node_modules/
+dist/
 
-# Local configuration files
+# Local config and secrets
 .env
 .env.local
 config.local.toml
 config.local.yaml
 config.local.json
+
+# Runtime data
+data/
+*.db
+*.db-shm
+*.db-wal
 *.log
-.coverage
-.coverage.*
-htmlcov/
 
-
-tmp/
-.codegraph/
-node_modules/
-dist/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# sub projects
+# Subprojects
 plugins/
 mnemo-bot/
+
+# Local research notes and temp files
+tmp/
+docs/research/
+
+# CodeGraph index cache
+.codegraph/
