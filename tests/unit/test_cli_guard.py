@@ -7,11 +7,16 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import sys
 
-from src.cli.cli import _guard_duplicate_start, _pid_file_alive
+from src.cli.cli import (
+    _guard_duplicate_start,
+    _pid_file_alive,
+    _stop_pid_file,
+)
 
 
 def _spawn_sleeper() -> subprocess.Popen:
@@ -90,6 +95,48 @@ def test_guard_passes_when_pid_is_self(tmp_path) -> None:
         assert _guard_duplicate_start("面板", str(pid_file), occupied) is True
     finally:
         srv.close()
+
+
+def test_stop_pid_file_refuses_foreign_process(tmp_path) -> None:
+    """回归 (beta.22): PID 复用防护 — pid 文件指向无关进程时不得杀.
+
+    服务器重启后 PID 段重排, 陈旧 pid 文件可能被无关进程接手;
+    stop 必须核对 /proc cmdline 含 mnemosync 标识才允许 SIGTERM.
+    macOS 无 /proc (防护不可用, 保持旧行为), 仅 Linux 验证.
+    """
+    if not os.path.isdir("/proc"):
+        import pytest
+
+        pytest.skip("PID 复用防护依赖 /proc, 仅 Linux")
+    proc = _spawn_sleeper()
+    try:
+        pid_file = tmp_path / "foreign.pid"
+        pid_file.write_text(str(proc.pid))
+        stopped = _stop_pid_file(str(pid_file), "面板")
+        assert stopped is False  # 拒绝
+        assert proc.poll() is None  # 进程还活着 (未被 SIGTERM)
+        assert not pid_file.exists()  # 陈旧文件已清理
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_stop_pid_file_kills_mnemosync_like_process(tmp_path) -> None:
+    """cmdline 含 mnemosync 标识的进程照常停止."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)", "mnemosync"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        pid_file = tmp_path / "ours.pid"
+        pid_file.write_text(str(proc.pid))
+        assert _stop_pid_file(str(pid_file), "服务") is True
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
 
 def test_guard_blocks_when_port_occupied(tmp_path) -> None:
