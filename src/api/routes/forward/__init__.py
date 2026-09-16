@@ -12,7 +12,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from src.api.reasoning_control import should_use_proxy_thinking
 from src.api.schemas.forward import (
     ChatCompletionRequest,
     ModelInfo,
@@ -135,7 +134,6 @@ async def _handle_bind_response(
         persona=focused_persona,
         persona_name=persona_name,
         persona_definition=persona_definition,
-        use_proxy=False,  # 跳过代理推理
         main_model=VIRTUAL_MODEL_ANY,
         source_frontend=source_frontend,
         space_id=space_id,
@@ -167,7 +165,7 @@ async def _handle_bind_response(
     try:
         if request.stream:
             return await _handle_stream(
-                http_request, initial_state, request, use_proxy_thinking=False,
+                http_request, initial_state, request,
             )
         else:
             return await _handle_non_stream(http_request, initial_state, request)
@@ -397,12 +395,6 @@ async def create_chat_completion(
             require_tools=bool(allowed_tools),
             streaming=bool(request.stream),
         )
-    use_proxy = should_use_proxy_thinking(request, settings, main_model=main_model)
-    if tool_transaction:
-        use_proxy = False
-    logger.debug("  proxy_thinking: %s (main_model=%s)",
-                 "enabled" if use_proxy else "skipped", main_model)
-
     # 14. 工具续轮验证 + 调试事件
     if tool_transaction and allowed_tools is not request.tools:
         allowed_names = {f.get("function", {}).get("name") for f in (allowed_tools or [])}
@@ -449,7 +441,7 @@ async def create_chat_completion(
         interaction_id=interaction_id, internal_tool_names=internal_tool_names,
         source_user=source_user, current_speaker=current_speaker,
         actor_id=actor_id, persona=persona, persona_name=persona_name,
-        persona_definition=persona_definition, use_proxy=use_proxy,
+        persona_definition=persona_definition,
         main_model=main_model, source_frontend=source_frontend,
         space_id=space_id, channel_type=channel_type,
         external_event_id=external_event_id, api_key_id=api_key_id,
@@ -483,7 +475,7 @@ async def create_chat_completion(
     initial_state["_space_lock_key"] = lock_key
     try:
         if request.stream:
-            return await _handle_stream(http_request, initial_state, request, use_proxy)
+            return await _handle_stream(http_request, initial_state, request)
         else:
             return await _handle_non_stream(http_request, initial_state, request)
     finally:

@@ -214,7 +214,7 @@ v0.2.3 把 `main / assist / embedding / rerank` 全部纳入 `role_bindings` 优
 
 ### Agent 标签点
 
-- `run_main_dialogue` / `run_memory_analysis` / `run_relationship_analysis` / `run_prompt_cleaning` / `run_proxy_thinking` 各在 [`factory.py`](../src/core/agents/factory.py) 用 `with use_agent(...)` 包住
+- `run_main_dialogue` / `run_memory_analysis` / `run_relationship_analysis` / `run_prompt_cleaning` 各在 [`factory.py`](../src/core/agents/factory.py) 用 `with use_agent(...)` 包住
 - 流式主对话在 [`forward.py`](../src/api/routes/forward.py) 用 `use_agent("main_dialogue_stream")`
 - 向量检索 [`vector_search.py`](../src/tools/vector_search.py) 用 `use_agent("memory_retriever")`
 - 记忆入库 [`lifecycle.py`](../src/core/memory/lifecycle.py) 用 `use_agent("memory_lifecycle")`
@@ -453,7 +453,7 @@ v0.4 前只用 raw httpx 手写 OpenAI Chat Completions 转发, 无法兼容 Ant
 ### 决策
 
 1. **BindContext 数据对象**: 拦截绑定指令后**确定性**生成/验证验证码 (不依赖模型), 返回 `BindContext` (含结果 + 提示词)
-2. **走 LLM 自然回复**: 构建精简 state (跳过记忆/关系/代理推理), 注入绑定提示词, 模型用自己的语气回复, 兼容流式/非流式
+2. **走 LLM 自然回复**: 构建精简 state (跳过记忆/关系分析), 注入绑定提示词, 模型用自己的语气回复, 兼容流式/非流式
 3. **自绑定拒绝**: 同账号绑定被拒绝
 4. **内部工具加 `mnemosync_` 前缀**: 避免与客户端工具重名 (`mnemosync_initiate_identity_binding` 等)
 

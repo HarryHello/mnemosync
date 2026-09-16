@@ -16,7 +16,8 @@ class ModelType(StrEnum):
     """模型角色."""
 
     MAIN = "main"            # 主模型：主对话 Agent
-    ASSIST = "assist"        # 辅助模型：记忆分析/关系分析/代理思考 Agent
+    ASSIST = "assist"        # 辅助模型：记忆分析/关系分析 Agent
+    VISION = "vision"        # 视觉转写模型：图片转文字描述 (未绑定候选时回退 assist)
     EMBEDDING = "embedding"  # 嵌入模型：向量化
     RERANK = "rerank"        # 重排序模型
 

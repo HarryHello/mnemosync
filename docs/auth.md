@@ -287,7 +287,7 @@ A: 数据模型支持, 但当前 UI/CLI 只暴露默认管理员; 需要手动�
 A: v0.3.0 起 Mnemosync 内置单人格多用户身份体系: 服务器按 API Key 绑定的策略从请求中解析参与者 (Actor), 管理员可在面板「身份管理」页或 `mnemosync identity` CLI 中把同一人的多平台 Actor 绑定到用户组, 记忆与关系按 effective_user_id 隔离/共享。不依赖任何前端配合。详见 [modules/identity.md](modules/identity.md)。多人格仍是未来规划 (v1.0+)。
 
 **Q: API Key 与代理思考的关系?**
-A: 独立。API Key 只做鉴权与身份策略绑定; 代理思考是否启用由 [`src/api/reasoning_control.py`](../src/api/reasoning_control.py) 的 `should_use_proxy_thinking()` 按 4 条规则决策 (tools 存在 → 关; 原生思考模型 → 关; 前台点名 `reasoning_effort` / `thinking` / `reasoning` → 开; 否则回落 `[graph].proxy_thinking_default`)。详见 [agents.md](modules/agents.md) §4。
+A: 独立。API Key 只做鉴权与身份策略绑定。 (代理推理已于 beta.20 移除, 现代模型均具备原生推理。)
 
 ---
 

@@ -91,7 +91,6 @@ mnemosync/
     │   ├── lifespan.py             # 应用启动/关闭: 连库 + 后台清理任务
     │   ├── deps.py                 # FastAPI 依赖注入
     │   ├── middleware.py           # HTTP 日志中间件 (含 debug_bus emit)
-    │   ├── reasoning_control.py    # 代理推理决策 (should_use_proxy_thinking)
     │   ├── tool_policies.py        # 工具策略过滤 (白名单/黑名单/冷却)
     │   ├── tool_transactions.py    # 工具续轮尾部校验
     │   ├── state.py                # AppState 数据类

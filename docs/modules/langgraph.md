@@ -31,12 +31,9 @@ class AgentState(TypedDict, total=False):
     persona_name: str
     persona_id: str                         # 人格标识 (v0.3.0, 不再硬编码)
     thread_id: str
-    proxy_thinking_enabled: bool
     space_id: str | None                    # 会话空间 ID (v0.3.0)
     channel_type: str | None                # "direct" | "group" (v0.3.0)
 
-    # proxy_thinking 写入
-    proxy_thinking_result: str | None
 
     # main_dialogue 写入
     response: str
@@ -99,7 +96,6 @@ relationship_analysis        memory_analysis
 | 节点 | 类型 | 职责 | 是否阻塞响应 |
 |------|------|------|-------------|
 | `parse_request` | 预处理 | 消息提取 + user 标识 | 是 |
-| `proxy_thinking` | Agent (CoT) | 可选; 为主对话生成 CoT 推理 | 是 (若启用) |
 | `main_dialogue` | Agent | 拼上下文 + 预计算情绪 + 生成回复 | 是 |
 | `memory_analysis` | Agent (ReAct) | 提取候选记忆 + 受众过滤查重 + 向量入库; 非归属模式跳过 | 否 (流式模式下后台跑) |
 | `relationship_analysis` | Agent (ReAct) | 好感度增量分析 (v0.4.1: 单 `favor_delta`, 可负, 慢热快冷); 非归属模式跳过 | 否 (流式模式下后台跑) |
@@ -174,8 +170,6 @@ async def memory_analysis_node(state: AgentState) -> dict:
 ```
 parse_request
       │
-      ├─ proxy_thinking_enabled? ──► proxy_thinking
-      │                                   │
       └───────────────────────────────► main_dialogue
                                             │
                               ┌─────────────┴─────────────┐  (并行 fan-out)

@@ -61,16 +61,15 @@ Forwarder ([src/infra/forwarder/](../src/infra/forwarder/)) 不属于任何单�
 
 ### 3.2 Agent 一览
 
-一次请求最多 6 个 Agent (不含 Expressor), 默认路径激活 3 个 (代理思考/Expressor/视觉转述默认关):
+一次请求最多 5 个 Agent (不含 Expressor, beta.20 移除代理思考):
 
 | # | Agent | 推理方法 | 触发时机 |
 |---|-------|---------|---------|
 | 1 | 主对话 | 直接推理 | 每次请求必跑 |
-| 2 | 代理思考 | CoT (可选) | `proxy_thinking_enabled=True` 时, 在主对话前 |
-| 3 | 记忆分析 | ReAct | 主对话后, 与关系分析并行 |
-| 4 | 关系分析 | ReAct | 主对话后, 与记忆分析并行 |
-| 5 | 视觉转述 (v0.4) | 直接推理 | 用户消息含图片 & MAIN 模型不支持视觉时 |
-| 3 | Expressor | ASSIST 调用 (可选) | 群聊非流式, 主对话后, 文本 > 10 字符 |
+| 2 | 记忆分析 | ReAct | 主对话后, 与关系分析并行 |
+| 3 | 关系分析 | ReAct | 主对话后, 与记忆分析并行 |
+| 4 | 视觉转述 (v0.4) | 直接推理 | 用户消息含图片 & MAIN 模型不支持视觉时 (VISION 角色) |
+| 5 | Expressor | ASSIST 调用 (可选) | 群聊非流式, 主对话后, 文本 > 10 字符 |
 
 详细规格见 [modules/agents.md](modules/agents.md)。
 
@@ -81,8 +80,6 @@ Forwarder ([src/infra/forwarder/](../src/infra/forwarder/)) 不属于任何单�
 ```
 parse_request (纯预处理节点)
       │
-      ├─ proxy_thinking_enabled? ──► proxy_thinking
-      │                                   │
       └───────────────────────────────► main_dialogue
                                             │
                               ┌─────────────┴─────────────┐
@@ -115,15 +112,12 @@ class AgentState(TypedDict, total=False):
     persona_name: str
     persona_id: str                 # v0.3.0: 人格标识 (当前固定 "default", 从 state 读)
     thread_id: str
-    proxy_thinking_enabled: bool
     space_id: str | None            # v0.3.0: 会话空间 (群聊分区)
     channel_type: str | None        # v0.3.0: "direct" | "group" | None
     current_speaker: str | None     # v0.3.0: 模型可读的当前发言者身份
     active_participants: list[str]  # v0.3.0: 裁剪后短期历史中的活跃参与者
     prompt_cleaning_result: dict | None  # v0.2.1: {clean_prompt, reasoning}
 
-    # proxy_thinking 写入
-    proxy_thinking_result: str | None
 
     # main_dialogue 写入
     main_model: str                 # v0.2.3: 由 RoleResolver 解析
@@ -248,7 +242,7 @@ Mnemosync 的核心不变量: **同一个用户 (effective_user_id) 的多个前
 | Agent 编排 | LangGraph + langchain-core | StateGraph、tools 协议 |
 | 上游 SDK (v0.4) | openai / anthropic | Chat Completions / Messages / Responses 三种格式转发 |
 | 主模型 | 大参数对话模型 | 生成回复 |
-| 辅助模型 | 支持 function_call 的轻量模型 | 记忆/关系/代理思考/视觉转述 Agent |
+| 辅助模型 | 支持 function_call 的轻量模型 | 记忆/关系 Agent + 视觉转述回退 |
 | 嵌入模型 | 服务商 API | 文本 → 向量 |
 | 重排模型 | 服务商 API | 检索精排 |
 | 向量存储 | ChromaDB | 本地嵌入式 |

@@ -16,7 +16,6 @@ from .factory import (
     run_main_dialogue,
     run_memory_analysis,
     run_prompt_cleaning,
-    run_proxy_thinking,
     run_relationship_analysis,
 )
 from .spec import AGENT_SPECS, AgentSpec, get_spec
@@ -37,7 +36,6 @@ __all__ = [
     "MemoryAnalysisOutput",
     "run_relationship_analysis",
     "RelationshipAnalysisOutput",
-    "run_proxy_thinking",
     "run_prompt_cleaning",
     "PromptCleaningOutput",
 ]

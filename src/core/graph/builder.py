@@ -1,7 +1,7 @@
 """LangGraph StateGraph 构建与编译.
 
 流程:
-    parse_request → [proxy_thinking?] → main_dialogue
+    parse_request → main_dialogue
     → [relationship_analysis ∥ memory_analysis] → writeback → END
 
 各节点通过 AgentState (TypedDict) 通信.
@@ -18,19 +18,11 @@ from .nodes import (
     main_dialogue_node,
     memory_analysis_node,
     parse_request_node,
-    proxy_thinking_node,
     relationship_analysis_node,
 )
 from .state import AgentState
 
 # ── 路由函数 ──────────────────────────────────────────────────
-
-
-def _route_after_parse(state: AgentState) -> str:
-    """parse_request 完成后, 根据 proxy_thinking_enabled 分支."""
-    if state.get("proxy_thinking_enabled"):
-        return "proxy_thinking"
-    return "main_dialogue"
 
 
 def _route_after_main_dialogue(state: AgentState) -> str:
@@ -55,7 +47,6 @@ def build_graph() -> CompiledStateGraph[AgentState, Any, AgentState, AgentState]
 
     # ── 注册节点 ──
     graph.add_node("parse_request", parse_request_node)
-    graph.add_node("proxy_thinking", proxy_thinking_node)
     graph.add_node("main_dialogue", main_dialogue_node)
     graph.add_node("relationship_analysis", relationship_analysis_node)
     graph.add_node("memory_analysis", memory_analysis_node)
@@ -63,18 +54,8 @@ def build_graph() -> CompiledStateGraph[AgentState, Any, AgentState, AgentState]
     # ── 入口 ──
     graph.set_entry_point("parse_request")
 
-    # ── 条件边: parse_request → proxy_thinking | main_dialogue ──
-    graph.add_conditional_edges(
-        "parse_request",
-        _route_after_parse,
-        {
-            "proxy_thinking": "proxy_thinking",
-            "main_dialogue": "main_dialogue",
-        },
-    )
-
     # ── 顺序边 ──
-    graph.add_edge("proxy_thinking", "main_dialogue")
+    graph.add_edge("parse_request", "main_dialogue")
 
     # ── 并行分支: main_dialogue → relationship_analysis + memory_analysis ──
     graph.add_edge("main_dialogue", "relationship_analysis")

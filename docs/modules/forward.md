@@ -36,7 +36,7 @@ v0.2.3 起, 顶层入口是 `MultiForwarder` — 它按角色 (`main`/`assist`/`
 |-------|------|------|------|
 | 主对话 Agent (非流式) | `MultiForwarder.chat()` | 生成回复 | main |
 | 主对话 (流式路径 forward/stream.py) | `MultiForwarder.chat_stream()` | SSE 透传给客户端 | main |
-| 记忆分析 / 关系分析 / 代理思考 | `MultiForwarder.chat()` (含 tools) | ReAct 循环 | assist |
+| 记忆分析 / 关系分析 | `MultiForwarder.chat()` (含 tools) | ReAct 循环 | assist |
 | MemoryRetriever / MemoryLifecycle | `MultiForwarder.embed()` | 文本 → 向量 | embedding |
 | MemoryRetriever | `MultiForwarder.rerank()` | 检索精排 | rerank |
 | LLM 服务管理 | `Forwarder.list_models()` | 拉取服务商模型列表 (直接实例, 不走 Multi) |

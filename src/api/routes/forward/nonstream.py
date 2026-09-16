@@ -161,7 +161,7 @@ async def _handle_non_stream(
     response_text = final_state.get("response", "")
     response_message = final_state.get("response_message")
     finish_reason = final_state.get("finish_reason") or "stop"
-    reasoning = final_state.get("proxy_thinking_result") or None
+    reasoning: str | None = None
     upstream_usage = final_state.get("upstream_usage") or {}
     response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     main_model = initial_state.get("main_model") or await _resolve_main_model(http_request)

@@ -294,6 +294,8 @@ class GraphConfig:
     """LangGraph 编排配置."""
 
     checkpoint_backend: str = "memory"  # memory | sqlite
+    # ⚠️ 已退役 (beta.20): 代理推理 Agent 已移除, 现代模型均具备原生推理.
+    # 字段仅为兼容旧 config.local.toml 保留, 不再被读取.
     proxy_thinking_default: bool = False
     proxy_thinking_native_reasoning_models: list[str] = field(
         default_factory=lambda: list(DEFAULT_NATIVE_REASONING_MODELS)

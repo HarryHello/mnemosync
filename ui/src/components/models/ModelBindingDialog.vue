@@ -24,6 +24,7 @@ import type {
 const ROLE_TITLES: Record<UpstreamModelType, string> = {
   main: '主模型',
   assist: '辅助模型',
+  vision: '视觉转写',
   embedding: '嵌入模型',
   rerank: '重排序模型',
 }

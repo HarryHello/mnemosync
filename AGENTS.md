@@ -61,7 +61,6 @@ mnemosync/
 │   │   ├── lifespan.py         # 应用启动/关闭: 打开 store 长连接 + 后台清理任务
 │   │   ├── deps.py             # FastAPI 依赖注入
 │   │   ├── middleware.py       # HTTP 日志 + 调试总线 emit
-│   │   ├── reasoning_control.py # 代理推理决策 + 自适应缓存 + SSE 合成
 │   │   ├── tool_policies.py    # 工具策略过滤
 │   │   ├── tool_transactions.py # 工具续轮 (tool_roundtrip) 尾部校验
 │   │   ├── state.py            # AppState 数据类
@@ -267,17 +266,16 @@ docker compose down               # 停止
 ```
 [API 层三路并行预处理: 清洗 ∥ 情绪+mood ∥ Vision] (v0.4.1)
                        ↓
-parse_request → [proxy_thinking?] → main_dialogue
-                                     ↓ (并行)
-                              relationship_analysis + memory_analysis → END
+parse_request → main_dialogue
+                     ↓ (并行)
+              relationship_analysis + memory_analysis → END
 ```
 
-**5 个节点:**
+**4 个节点:**
 1. **parse_request** — 消息提取 + 用户标识解析 (轻量, 无 LLM)
-2. **proxy_thinking** — 可选代理思考 Agent (为不具备原生推理的模型补齐 CoT)
-3. **main_dialogue** — 主对话 Agent: 加载记忆 + 拼装上下文 + 调用 MAIN 角色 LLM
-4. **relationship_analysis** — 关系分析 Agent: 计算好感度增量 (favor_delta, 可负, 慢热快冷)
-5. **memory_analysis** — 记忆分析 Agent: 提取候选记忆 + 确定性衰减
+2. **main_dialogue** — 主对话 Agent: 加载记忆 + 拼装上下文 + 调用 MAIN 角色 LLM
+3. **relationship_analysis** — 关系分析 Agent: 计算好感度增量 (favor_delta, 可负, 慢热快冷)
+4. **memory_analysis** — 记忆分析 Agent: 提取候选记忆 + 确定性衰减
 
 节点之间通过 `AgentState` (TypedDict) 通信。共享 store 通过 `config["configurable"]` 传入。
 
@@ -302,7 +300,7 @@ parse_request → [proxy_thinking?] → main_dialogue
 - 删除人格级联删除其所有版本
 
 ### Role Bindings (v0.2.3+)
-- `main` / `assist` / `embedding` / `rerank` 四种角色
+- `main` / `assist` / `vision` / `embedding` / `rerank` 五种角色 (vision: 视觉转写, 未绑定回退 assist, beta.20)
 - 每个角色维护优先级候选列表 (存 `role_bindings` 表)
 - 主对话与辅助 Agent 上游失败自动 fallback 到下一候选
 - **嵌入角色单绑定**: 换嵌入模型必须走 Reindex 走完再服务
@@ -325,11 +323,6 @@ parse_request → [proxy_thinking?] → main_dialogue
 - 平台重发消息按事件 ID 幂等重放
 - 命中幂等时不产生任何 LLM 开销与记忆副作用
 - 空响应不缓存
-
-### Proxy Thinking (v0.2.0+)
-- 为不具备原生推理的模型补齐 reasoning_content
-- 自适应缓存: 遇到上游吐 reasoning_content 就记住, 下次跳过
-- 前缀模式配置: `proxy_thinking_native_reasoning_models`
 
 ---
 

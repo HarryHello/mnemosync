@@ -119,13 +119,11 @@ from ._main_dialogue import (  # noqa: F401, E402 – re-exported for backward c
 )
 from ._memory_analysis import memory_analysis_node  # noqa: E402
 from ._parse_request import parse_request_node  # noqa: E402
-from ._proxy_thinking import proxy_thinking_node  # noqa: E402
 from ._relationship_analysis import relationship_analysis_node  # noqa: E402
 
 __all__ = [
     # Node implementations
     "parse_request_node",
-    "proxy_thinking_node",
     "main_dialogue_node",
     "memory_analysis_node",
     "relationship_analysis_node",

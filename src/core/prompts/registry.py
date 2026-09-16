@@ -5,7 +5,8 @@ Registry 是所有 Agent 提示词的白名单. 只有列在此处的 name 才�
 `PromptStore` 加载/保存, 从而防止路径穿越 (HTTP path 参数、CLI arg 直接
 进入文件系统操作前必须经过 registry 校验).
 
-v0.2.12: 移除 memory_analysis_decay_header(衰减已改为确定性公式)和
+v0.4.1: 移除 proxy_thinking(代理推理已退役, 现代模型均具备原生推理).
+更早: v0.2.12 移除 memory_analysis_decay_header(衰减已改为确定性公式)和
 sentence_classifier(提示词清洗已改为单次重写).
 memory_analysis placeholders 移除 DECAY_TARGETS, 新增 EMOTION_ANALYSIS.
 relationship_analysis placeholders 新增 EMOTION_ANALYSIS.
@@ -73,12 +74,10 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
         placeholders=("SYSTEM_MESSAGE",),
         description="提示词清洗 Agent: user prompt",
     ),
-    "proxy_thinking": PromptSpec(
-        name="proxy_thinking",
-        placeholders=(
-            "CURRENT_SPEAKER", "CHANNEL_TYPE", "RELATIONSHIP", "MEMORIES", "USER_MESSAGE",
-        ),
-        description="代理推理 Agent",
+    "vision_description": PromptSpec(
+        name="vision_description",
+        placeholders=(),
+        description="视觉转写 Agent: 图片转文字描述 (VISION 角色模型)",
     ),
     "main_dialogue_frame": PromptSpec(
         name="main_dialogue_frame",
@@ -95,7 +94,6 @@ PROMPT_REGISTRY: dict[str, PromptSpec] = {
             "PERMANENT_MEMORIES",
             "RETRIEVED_MEMORIES",
             "LOREBOK_ENTRIES",
-            "PROXY_THINKING_SECTION",
         ),
         description="主对话框架 (行为准则 / section 标题 / 记忆容器)",
     ),

@@ -38,14 +38,6 @@ AGENT_SPECS: dict[str, AgentSpec] = {
         timeout_seconds=10,
         max_iterations=1,
     ),
-    "proxy_thinking": AgentSpec(
-        name="proxy_thinking",
-        purpose="生成代理推理",
-        model_role="ASSIST",
-        runner_type="simple",
-        timeout_seconds=30,
-        max_iterations=1,
-    ),
     "memory_analysis": AgentSpec(
         name="memory_analysis",
         purpose="提取候选记忆",
@@ -67,7 +59,7 @@ AGENT_SPECS: dict[str, AgentSpec] = {
     "vision_description": AgentSpec(
         name="vision_description",
         purpose="将图片转述为文字描述",
-        model_role="ASSIST",
+        model_role="VISION",
         runner_type="simple",
         timeout_seconds=20,
         max_iterations=1,

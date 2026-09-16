@@ -171,7 +171,7 @@ async def test_stream_tool_result_appends_validated_transaction_to_upstream_mess
         patch("src.api.routes.forward.stream._run_memory_graph", new=AsyncMock()),
     ):
         retriever_cls.return_value.search = AsyncMock(return_value=[])
-        response = await _handle_stream(http_request, initial_state, request, False)
+        response = await _handle_stream(http_request, initial_state, request)
         chunks = [chunk async for chunk in response.body_iterator]
 
     assert any(b"done" in chunk for chunk in chunks)
