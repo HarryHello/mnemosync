@@ -428,6 +428,28 @@ def cmd_login_docker(args: argparse.Namespace) -> int:
 # 通用命令
 # ============================================================================
 
+def _proc_cmdline(pid: int) -> str | None:
+    """读取 /proc/<pid>/cmdline (空格分隔); 非 Linux 或进程已消失返回 None."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return f.read().replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+    except OSError:
+        return None
+
+
+def _is_mnemosync_process(pid: int) -> bool:
+    """核对 PID 是否真是 mnemosync 进程 (PID 复用防护).
+
+    pid 数字在系统运行/重启后会被复用: 陈旧 PID 文件可能指向无关进程,
+    stop 按文件盲杀会误伤他人. /proc cmdline 可读时必须含 mnemosync
+    标识; 不可读 (macOS 无 /proc) 时退回旧行为.
+    """
+    cmd = _proc_cmdline(pid)
+    if cmd is None:
+        return True  # 无 /proc 可查 (macOS/进程恰好退出), 不拦
+    return "mnemosync" in cmd or "src.cli.cli" in cmd
+
+
 def _stop_pid_file(pid_file: str, label: str = "服务") -> bool:
     """尝试停止 PID 文件指向的进程. 返回是否成功停止."""
     if not os.path.exists(pid_file):
@@ -438,6 +460,12 @@ def _stop_pid_file(pid_file: str, label: str = "服务") -> bool:
 
         # 检查进程是否存在
         os.kill(pid, 0)
+        # PID 复用防护 (beta.22): 文件里的 PID 可能已被无关进程接手
+        if not _is_mnemosync_process(pid):
+            print(f"⚠️  PID {pid} 已不是 mnemosync 进程 (PID 被复用), 不予停止.")
+            print("    清理陈旧 PID 文件后跳过.")
+            os.remove(pid_file)
+            return False
         # 进程存在，发送终止信号
         print(f"⏹  停止{label} (PID: {pid})...")
         os.kill(pid, 15)  # SIGTERM

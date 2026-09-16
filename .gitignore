@@ -1,16 +1,26 @@
+# System files
 .DS_Store
+
+# Agent and IDE files
 .claude
 .idea
 .vscode
 .vs
+.qwen
+.ai
+
+# Python files
 .venv
 __pycache__/
 *.pyc
+
+# Data files
 data/
-plugins/
 *.db
 *.db-shm
 *.db-wal
+
+# Local configuration files
 .env
 .env.local
 config.local.toml
@@ -20,9 +30,8 @@ config.local.json
 .coverage
 .coverage.*
 htmlcov/
-.DS_Store
-.qwen
-.ai
+
+
 tmp/
 .codegraph/
 node_modules/
@@ -30,3 +39,7 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# sub projects
+plugins/
+mnemo-bot/
