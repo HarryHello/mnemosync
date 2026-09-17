@@ -530,13 +530,16 @@ class SqliteConversationStore(SqliteStore):
     ) -> list[ConversationTurn]:
         """按用户过滤的对话流水 (空间未指定时的安全回退).
 
-        与 list_since 相同, 但只返回 effective_user_id 匹配的记录.
-        防止未归属用户 (space_id=None) 看到其他用户的对话上下文.
+        与 list_since 相同, 但只返回 effective_user_id 匹配的记录,
+        且 **只含无空间轮次** (space_id IS NULL, 2026-09-16 议定):
+        用户在群空间的发言不属于私聊上下文 — 跨场景知识应经长期记忆
+        (受众过滤后) 流通, 而非原始对话流水混装.
         """
         async with self._conn() as db:
             async with db.execute(
                 f"SELECT {_SELECT_COLUMNS} FROM conversation_turns "
-                "WHERE effective_user_id = ? AND ts >= ? ORDER BY ts ASC, id ASC LIMIT ?",
+                "WHERE effective_user_id = ? AND space_id IS NULL AND ts >= ? "
+                "ORDER BY ts ASC, id ASC LIMIT ?",
                 (effective_user_id, since.isoformat(), limit),
             ) as cur:
                 return [self._row_to_turn(row) for row in await cur.fetchall()]
