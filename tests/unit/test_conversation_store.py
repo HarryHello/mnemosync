@@ -353,3 +353,28 @@ async def test_migration_normalizes_mixed_timezone_text_for_sorting(tmp_path: Pa
         assert all(turn.ts.utcoffset() == timedelta(0) for turn in turns)
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_list_since_for_user_excludes_spaced_turns(store: SqliteConversationStore) -> None:
+    """回归 (2026-09-16 议定): 无空间回退只装填该用户的无空间轮次.
+
+    用户在群空间的发言带 space_id=群名, 不得进入私聊 (无空间) 上下文;
+    跨场景知识应经长期记忆 (受众过滤) 流通.
+    """
+    now = datetime.now(UTC)
+    uid = "user-mix-test"
+    await store.append("user", "私聊的话", token_count=10,
+                       ts=now - timedelta(hours=2), effective_user_id=uid)
+    await store.append("user", "我在群里的发言", token_count=10,
+                       space_id="some-group", ts=now - timedelta(hours=1),
+                       effective_user_id=uid)
+    # 其他用户的无空间轮次 (应被用户过滤挡住)
+    await store.append("user", "别人的私聊", token_count=10,
+                       ts=now - timedelta(hours=1), effective_user_id="other-uid")
+
+    turns = await store.list_since_for_user(
+        uid, since=now - timedelta(days=7),
+    )
+    contents = [t.content for t in turns]
+    assert contents == ["私聊的话"]

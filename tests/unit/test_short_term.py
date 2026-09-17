@@ -142,13 +142,16 @@ async def test_build_short_term_history_space_isolation(tmp_path: Path) -> None:
         )
         assert [m["content"] for m in built.conversation_history] == ["群A的话", "群A回复"]
 
-        # 不指定 space 但指定 user: 该用户的所有流水
+        # 不指定 space 但指定 user: 只装填该用户的**无空间**轮次 —
+        # 用户在群空间的发言不进私聊上下文 (2026-09-16 议定),
+        # 跨场景知识经长期记忆流通
         built_user = await build_short_term_history(
             store=store, now=now, window_days=7,
             context_length=32_000, system_text="sys", new_user_text="q",
             max_tokens_hint=1024, source_user=uid,
         )
-        assert built_user.total_candidates == 4
+        assert built_user.total_candidates == 1
+        assert [m["content"] for m in built_user.conversation_history] == ["私聊的话"]
     finally:
         await store.close()
 

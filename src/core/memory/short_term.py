@@ -169,8 +169,10 @@ async def build_short_term_history(
         max_tokens_hint: 客户端 max_tokens (用来定应答保留区)
         space_id: 会话空间 ID (v0.3.0). 非空时只装填本空间流水 —
             群聊上下文绝不能混入其他空间 (别的群/私聊) 的对话;
-            为空时退化为全局跨前端流水 (单用户私聊场景).
-        source_user: 有效用户 ID. 用于 space_id 为空时按用户隔离对话历史,
+            为空时装填该用户的**无空间**轮次 (space_id IS NULL) —
+            跨前端私聊合并的池; 用户在群空间的发言不进私聊上下文,
+            跨场景信息经长期记忆 (受众过滤) 流通 (2026-09-16 议定).
+        source_user: 有效用户 ID. space_id 为空时按用户隔离对话历史,
             防止不同用户的上下文混杂.
     """
     since = now - timedelta(days=window_days)
