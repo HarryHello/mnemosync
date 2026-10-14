@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listLogs, getLog, clearLogs } from '@/api/client'
-import type { HttpLog } from '@/types/api'
+import { listLogs, clearLogs, getLogTimeline } from '@/api/client'
+import type { HttpLog, HttpLogTimelineResponse } from '@/types/api'
 import PageHeader from '@/components/common/PageHeader.vue'
 import LogsTable from '@/components/request-logs/LogsTable.vue'
 import LogDetailDrawer from '@/components/request-logs/LogDetailDrawer.vue'
@@ -23,7 +23,7 @@ const pageSize = ref(20)
 
 const drawer = ref(false)
 const detailLoading = ref(false)
-const detail = ref<HttpLog | null>(null)
+const timeline = ref<HttpLogTimelineResponse | null>(null)
 
 async function refresh() {
   loading.value = true
@@ -31,6 +31,7 @@ async function refresh() {
     const res = await listLogs({
       page: page.value,
       page_size: pageSize.value,
+      scope: 'model',
       ...currentFilters.value,
     })
     rows.value = res.items
@@ -49,10 +50,10 @@ function onFilter(filters: { method?: string; status?: number; path?: string }) 
 
 async function onOpen(row: HttpLog) {
   drawer.value = true
-  detail.value = null
+  timeline.value = null
   detailLoading.value = true
   try {
-    detail.value = await getLog(row.id)
+    timeline.value = await getLogTimeline(row.id)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
     drawer.value = false
@@ -91,7 +92,7 @@ watch(pageSize, () => { page.value = 1; refresh() })
   <div class="page-container">
     <PageHeader
       title="请求日志"
-      subtitle="由 HTTP 中间件异步写入, 记录所有 /panel/ 与 /v1/ 请求的入参、响应与耗时。"
+      subtitle="每次模型请求一条记录: 点击展开完整链路 — 下游请求体、管线中各 agent 的上游请求/返回、下游响应体。面板自身请求不在列表中。"
     >
       <template #actions>
         <el-button :loading="loading" @click="refresh">
@@ -117,7 +118,7 @@ watch(pageSize, () => { page.value = 1; refresh() })
 
     <LogDetailDrawer
       v-model="drawer"
-      :detail="detail"
+      :timeline="timeline"
       :detail-loading="detailLoading"
     />
   </div>

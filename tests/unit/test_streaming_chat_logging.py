@@ -43,7 +43,8 @@ def _app(store: HttpLogStore) -> FastAPI:
 
 
 _COLS = ("id", "method", "path", "query_params", "request_headers", "request_body",
-         "response_status", "response_body", "duration_ms", "client_ip", "created_at")
+         "response_status", "response_body", "duration_ms", "client_ip", "created_at",
+         "correlation_id", "direction", "agent")
 
 
 async def _wait_row(store: HttpLogStore) -> dict | None:
