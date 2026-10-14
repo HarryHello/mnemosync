@@ -59,6 +59,19 @@ class HttpLogResponse(BaseModel):
     duration_ms: float | None
     client_ip: str | None
     created_at: str
+    correlation_id: str | None = None
+    direction: str = "downstream"
+    agent: str | None = None
+
+
+class HttpLogTimelineResponse(BaseModel):
+    """一次下游请求的完整链路 (beta.27).
+
+    items[0] 为下游请求行, 其余为管线中各 agent 的上游调用行 (按写入顺序).
+    """
+
+    correlation_id: str | None
+    items: list[HttpLogResponse]
 
 
 class HttpLogListResponse(BaseModel):
@@ -97,6 +110,9 @@ def _row_to_log(row: tuple[Any, ...]) -> HttpLogResponse:
         duration_ms=row[8],
         client_ip=row[9],
         created_at=row[10],
+        correlation_id=row[11] if len(row) > 11 else None,
+        direction=(row[12] if len(row) > 12 and row[12] else "downstream"),
+        agent=row[13] if len(row) > 13 else None,
     )
 
 
@@ -162,12 +178,16 @@ async def list_logs(
     status: int | None = None,
     since: str | None = Query(None, description="ISO 8601 时间, 只返回 >= 该时间的记录"),
     until: str | None = Query(None, description="ISO 8601 时间, 只返回 <= 该时间的记录"),
+    scope: str | None = Query(None, description="model = 只看 /v1/ 下游模型请求"),
     store: HttpLogStore = Depends(get_http_log_store),
 ) -> HttpLogListResponse:
     """查询 HTTP 日志."""
-    total = await store.count(method=method, path=path, status=status, since=since, until=until)
+    total = await store.count(
+        method=method, path=path, status=status, since=since, until=until, scope=scope,
+    )
     rows = await store.list_paginated(
-        page=page, page_size=page_size, method=method, path=path, status=status, since=since, until=until
+        page=page, page_size=page_size, method=method, path=path, status=status,
+        since=since, until=until, scope=scope,
     )
     items = [_row_to_log(r) for r in rows]
     return HttpLogListResponse(
@@ -184,6 +204,28 @@ async def get_log(
     if not row:
         raise HTTPException(status_code=404, detail="Log not found")
     return _row_to_log(row)
+
+
+@router.get("/logs/{log_id}/timeline", response_model=HttpLogTimelineResponse)
+async def get_log_timeline(
+    log_id: int, store: HttpLogStore = Depends(get_http_log_store),
+) -> HttpLogTimelineResponse:
+    """一次下游请求的完整链路 (beta.27).
+
+    以该行的 correlation_id 聚合同一次请求的全部日志: 下游请求体 →
+    管线中各 agent 的上游请求/返回 → 下游响应体, 按发生顺序返回.
+    旧数据 (无 correlation_id) 只含该行自身.
+    """
+    row = await store.get_by_id(log_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Log not found")
+    entry = _row_to_log(row)
+    cid = entry.correlation_id
+    if not cid:
+        return HttpLogTimelineResponse(correlation_id=None, items=[entry])
+    rows = await store.get_by_correlation_id(cid)
+    items = [_row_to_log(r) for r in rows] or [entry]
+    return HttpLogTimelineResponse(correlation_id=cid, items=items)
 
 
 @router.delete("/logs")

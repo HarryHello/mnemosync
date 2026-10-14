@@ -109,6 +109,7 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                             "response_body": None,
                             "duration_ms": 0,
                             "client_ip": scope.get("client", ("",))[0] if scope.get("client") else None,
+                            "direction": "downstream",
                         })
                     except Exception:
                         pass
@@ -139,8 +140,10 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
 
         # 流式路径也要有 correlation_id (beta.12: 调试事件全挂 no-cid 的原因)
+        cid: str | None = None
         if path.startswith("/v1/"):
-            set_correlation_id(new_correlation_id())
+            cid = new_correlation_id()
+            set_correlation_id(cid)
 
         # ── 窥探请求体: 预读 + replay ─────────────────────────────────
         buffered: deque[bytes] = deque()
@@ -217,6 +220,8 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                         "response_body": response_text or None,
                         "duration_ms": round((time.time() - start_time) * 1000, 1),
                         "client_ip": scope.get("client", ("",))[0] if scope.get("client") else None,
+                        "correlation_id": cid,
+                        "direction": "downstream",
                     })
                 except Exception:
                     pass
@@ -321,6 +326,8 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                     "response_body": None,
                     "duration_ms": duration_ms,
                     "client_ip": request.client.host if request.client else None,
+                    "correlation_id": cid,
+                    "direction": "downstream",
                 })
             return response
 
@@ -357,6 +364,8 @@ class HttpLogMiddleware(BaseHTTPMiddleware):
                 "response_body": response_body,
                 "duration_ms": duration_ms,
                 "client_ip": request.client.host if request.client else None,
+                "correlation_id": cid,
+                "direction": "downstream",
             })
 
         # 收集响应体

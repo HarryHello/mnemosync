@@ -1,6 +1,6 @@
 /**Core API: 健康检查、仪表盘统计、HTTP 日志. */
 
-import type { HealthResponse, HttpLog, HttpLogListResponse } from '@/types/api'
+import type { HealthResponse, HttpLog, HttpLogListResponse, HttpLogTimelineResponse } from '@/types/api'
 import { API_BASE, buildQuery } from '@/utils/constants'
 import { apiDelete, apiGet, apiPost, apiPut, request } from './http'
 
@@ -37,6 +37,7 @@ export interface LogListParams {
   status?: number
   since?: string
   until?: string
+  scope?: string
 }
 
 export async function listLogs(
@@ -49,6 +50,12 @@ export async function listLogs(
 
 export async function getLog(logId: number): Promise<HttpLog> {
   return apiGet<HttpLog>(`/admin/logs/${logId}`)
+}
+
+export async function getLogTimeline(
+  logId: number,
+): Promise<HttpLogTimelineResponse> {
+  return apiGet<HttpLogTimelineResponse>(`/admin/logs/${logId}/timeline`)
 }
 
 export async function clearLogs(): Promise<void> {

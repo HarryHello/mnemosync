@@ -93,6 +93,14 @@ export interface HttpLog {
   duration_ms: number | null
   client_ip: string | null
   created_at: string
+  correlation_id?: string | null
+  direction?: string
+  agent?: string | null
+}
+
+export interface HttpLogTimelineResponse {
+  correlation_id: string | null
+  items: HttpLog[]
 }
 
 export interface HttpLogListResponse {

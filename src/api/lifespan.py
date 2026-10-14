@@ -197,6 +197,11 @@ async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     debug_bus.set_grace_callback(_cleanup_debug_keys)
     set_debug_bus(debug_bus)
 
+    # 上游 agent 调用的常驻日志 sink (beta.27): 转发器每次打上游都落一行
+    from src.infra.forwarder.debug_utils import set_http_log_sink
+
+    set_http_log_sink(instances["http_log_store"])
+
     # 启动时清孤儿 panel-debug key
     try:
         orphan = await instances["api_key_store"].delete_by_source(API_KEY_SOURCE_PANEL_DEBUG)

@@ -68,7 +68,7 @@ class HttpLogStore(SqliteStore):
 
     @staticmethod
     async def _init_schema(db: aiosqlite.Connection) -> None:
-        from src.persistence.migrations import MigrationRunner
+        from src.persistence.migrations import MigrationRunner, add_column_if_missing
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS http_logs (
@@ -97,9 +97,35 @@ class HttpLogStore(SqliteStore):
                 "CREATE INDEX IF NOT EXISTS idx_http_logs_path ON http_logs(path)"
             )
 
+        async def _idx_correlation_id(db: aiosqlite.Connection) -> None:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_http_logs_correlation "
+                "ON http_logs(correlation_id)"
+            )
+
         await MigrationRunner([
             ("001_create_idx_created_at", _idx_created_at),
             ("002_create_idx_path", _idx_path),
+            (
+                "003_request_pipeline_cols",
+                add_column_if_missing(
+                    "http_logs", "correlation_id", "TEXT"
+                ),
+            ),
+            (
+                "004_request_direction",
+                add_column_if_missing(
+                    "http_logs", "direction", "TEXT DEFAULT 'downstream'"
+                ),
+            ),
+            (
+                "005_request_agent",
+                add_column_if_missing("http_logs", "agent", "TEXT"),
+            ),
+            (
+                "006_create_idx_correlation",
+                _idx_correlation_id,
+            ),
         ]).apply(db)
 
     def enqueue(self, entry: dict[str, Any]) -> None:
@@ -190,8 +216,9 @@ class HttpLogStore(SqliteStore):
                 """
                 INSERT INTO http_logs
                 (method, path, query_params, request_headers, request_body,
-                 response_status, response_body, duration_ms, client_ip)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 response_status, response_body, duration_ms, client_ip,
+                 correlation_id, direction, agent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -207,6 +234,9 @@ class HttpLogStore(SqliteStore):
                         if e.get("response_body") is not None else None,
                         e.get("duration_ms"),
                         e.get("client_ip"),
+                        e.get("correlation_id"),
+                        e.get("direction", "downstream"),
+                        e.get("agent"),
                     )
                     for e in batch
                 ],
@@ -224,8 +254,9 @@ class HttpLogStore(SqliteStore):
         status: int | None = None,
         since: str | None = None,
         until: str | None = None,
+        scope: str | None = None,
     ) -> int:
-        conditions, params = self._build_filter(method, path, status, since, until)
+        conditions, params = self._build_filter(method, path, status, since, until, scope)
         where = " AND ".join(conditions) if conditions else "1=1"
         async with self._conn() as db:
             async with db.execute(
@@ -243,8 +274,9 @@ class HttpLogStore(SqliteStore):
         status: int | None = None,
         since: str | None = None,
         until: str | None = None,
+        scope: str | None = None,
     ) -> list[tuple[Any, ...]]:
-        conditions, params = self._build_filter(method, path, status, since, until)
+        conditions, params = self._build_filter(method, path, status, since, until, scope)
         where = " AND ".join(conditions) if conditions else "1=1"
         offset = (page - 1) * page_size
         async with self._conn() as db:
@@ -252,6 +284,19 @@ class HttpLogStore(SqliteStore):
                 f"SELECT * FROM http_logs WHERE {where} "
                 f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 params + [page_size, offset],
+            ) as cur:
+                rows = await cur.fetchall()
+                return [tuple(r) for r in rows]
+
+    async def get_by_correlation_id(self, correlation_id: str) -> list[tuple[Any, ...]]:
+        """取同一次请求 (correlation_id) 的全部日志行, 按写入顺序.
+
+        首行 = 下游请求; 其余 = 管线中各 agent 的上游调用 (beta.27).
+        """
+        async with self._conn() as db:
+            async with db.execute(
+                "SELECT * FROM http_logs WHERE correlation_id = ? ORDER BY id ASC",
+                (correlation_id,),
             ) as cur:
                 rows = await cur.fetchall()
                 return [tuple(r) for r in rows]
@@ -289,6 +334,7 @@ class HttpLogStore(SqliteStore):
         status: int | None,
         since: str | None = None,
         until: str | None = None,
+        scope: str | None = None,
     ) -> tuple[list[str], list[Any]]:
         conditions: list[str] = []
         params: list[Any] = []
@@ -307,4 +353,9 @@ class HttpLogStore(SqliteStore):
         if until:
             conditions.append("created_at <= ?")
             params.append(until)
+        if scope == "model":
+            # 模型请求视图: 只看 /v1/* 的下游请求 (上游 agent 调用挂在
+            # timeline 里, 不进列表)
+            conditions.append("path LIKE '/v1/%'")
+            conditions.append("(direction IS NULL OR direction = 'downstream')")
         return conditions, params
